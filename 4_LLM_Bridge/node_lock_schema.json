@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NodeLock",
+  "type": "object",
+  "required": ["node_id", "street", "locks"],
+  "properties": {
+    "node_id": {
+      "type": "string"
+    },
+    "street": {
+      "type": "string",
+      "enum": ["flop", "turn", "river"]
+    },
+    "locks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "frequency"],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "meta": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

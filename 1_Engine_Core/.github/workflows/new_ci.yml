@@ -1,0 +1,301 @@
+name: CMake CI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v2.0.0)'
+        required: true
+        default: 'v2.0.0'
+
+jobs:
+  build-mac-intel:
+    name: Build on macOS (Intel)
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies (macOS)
+        run: |
+          brew update
+          brew install tbb cmake libpng jpeg zlib
+          brew install --build-from-source fltk
+
+      - name: Configure & build
+        run: |
+          BREW_PREFIX=$(brew --prefix)
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_CXX_EXTENSIONS=OFF \
+            -DCMAKE_CXX_FLAGS="-O3 -ffast-math" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
+            -DCMAKE_PREFIX_PATH="$BREW_PREFIX"
+          cmake --build build --config Release --target shark --parallel "$(sysctl -n hw.logicalcpu)"
+
+      - name: Code sign app bundle
+        run: codesign --force --deep -s - build/shark.app
+
+      - name: Package macOS build
+        run: |
+          cd build
+          tar czf shark_macOS_intel.tar.gz shark.app
+
+      - name: Upload macOS Intel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shark_macOS_intel
+          path: build/shark_macOS_intel.tar.gz
+
+  build-mac-compatible:
+    name: Build on macOS (Apple Silicon - Compatible)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies (macOS)
+        run: |
+          brew update
+          brew install tbb cmake libpng jpeg zlib
+          brew install --build-from-source fltk
+
+      - name: Configure & build
+        run: |
+          BREW_PREFIX=$(brew --prefix)
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_CXX_EXTENSIONS=OFF \
+            -DCMAKE_CXX_FLAGS="-O3 -ffast-math" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_PREFIX_PATH="$BREW_PREFIX"
+          cmake --build build --config Release --target shark --parallel "$(sysctl -n hw.logicalcpu)"
+
+      - name: Code sign app bundle
+        run: codesign --force --deep -s - build/shark.app
+
+      - name: Package macOS build
+        run: |
+          cd build
+          tar czf shark_macOS_compatible.tar.gz shark.app
+
+      - name: Upload macOS Compatible artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shark_macOS_compatible
+          path: build/shark_macOS_compatible.tar.gz
+
+  build-mac-latest:
+    name: Build on macOS (Apple Silicon - Latest)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies (macOS)
+        run: |
+          brew update
+          brew install tbb cmake libpng jpeg zlib
+          brew install --build-from-source fltk
+
+      - name: Configure & build
+        run: |
+          BREW_PREFIX=$(brew --prefix)
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_CXX_EXTENSIONS=OFF \
+            -DCMAKE_CXX_FLAGS="-O3 -ffast-math" \
+            -DCMAKE_PREFIX_PATH="$BREW_PREFIX"
+          cmake --build build --config Release --target shark --parallel "$(sysctl -n hw.logicalcpu)"
+
+      - name: Code sign app bundle
+        run: codesign --force --deep -s - build/shark.app
+
+      - name: Package macOS build
+        run: |
+          cd build
+          tar czf shark_macOS_latest.tar.gz shark.app
+
+      - name: Upload macOS Latest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shark_macOS_latest
+          path: build/shark_macOS_latest.tar.gz
+
+  build-win:
+    name: Build on Windows (MinGW)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-fltk
+            mingw-w64-x86_64-tbb
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ntldd-git
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-libjpeg-turbo
+            mingw-w64-x86_64-zlib
+
+      - name: Configure & build
+        shell: msys2 {0}
+        run: |
+          mkdir -p build
+          cd build
+          cmake -G "MinGW Makefiles" .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_CXX_EXTENSIONS=OFF \
+            -DCMAKE_CXX_FLAGS="-O3 -ffast-math -s"
+          mingw32-make shark -j$(nproc)
+
+      - name: Copy required DLLs
+        shell: msys2 {0}
+        run: |
+          cd build
+          for lib in \
+            /mingw64/bin/libgcc_s_seh-1.dll \
+            /mingw64/bin/libstdc++-6.dll \
+            /mingw64/bin/libwinpthread-1.dll \
+            /mingw64/bin/libfltk*.dll \
+            /mingw64/bin/libtbb*.dll \
+            /mingw64/bin/libpng*.dll \
+            /mingw64/bin/libjpeg*.dll \
+            /mingw64/bin/zlib*.dll; do
+            [ -f "$lib" ] && cp -u -v "$lib" .
+          done
+
+          echo "Scanning shark.exe for dependencies..."
+          ntldd "shark.exe" | awk '{print $3}' | while read -r dll; do
+            if [[ -f "$dll" && "$dll" != /c/Windows/* && "$dll" != /C/Windows/* ]]; then
+              cp -u -v "$dll" .
+            fi
+          done
+
+      - name: Verify no missing DLLs
+        shell: msys2 {0}
+        run: |
+          cd build
+          echo "Verifying shark.exe"
+          if ntldd "shark.exe" | grep "not found"; then
+            echo "Missing DLLs in shark.exe"
+            exit 1
+          else
+            echo "All DLLs found for shark.exe"
+          fi
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\shark.exe,build\*.dll -DestinationPath build\shark_windows.zip
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shark_windows
+          path: build/shark_windows.zip
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-mac-intel, build-mac-compatible, build-mac-latest, build-win]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS Intel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: shark_macOS_intel
+          path: ./mac-intel
+
+      - name: Download macOS Compatible artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: shark_macOS_compatible
+          path: ./mac-compatible
+
+      - name: Download macOS Latest artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: shark_macOS_latest
+          path: ./mac-latest
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: shark_windows
+          path: ./win
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          release_name: Shark ${{ inputs.version || github.ref_name }}
+          draft: false
+          prerelease: false
+
+      - name: Upload macOS Intel tarball to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./mac-intel/shark_macOS_intel.tar.gz
+          asset_name: shark_macOS_intel.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload macOS Compatible tarball to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./mac-compatible/shark_macOS_compatible.tar.gz
+          asset_name: shark_macOS_compatible.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload macOS Latest tarball to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./mac-latest/shark_macOS_latest.tar.gz
+          asset_name: shark_macOS_latest.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload Windows ZIP to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./win/shark_windows.zip
+          asset_name: shark_windows.zip
+          asset_content_type: application/zip

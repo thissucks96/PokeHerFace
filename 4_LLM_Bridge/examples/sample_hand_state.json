@@ -1,0 +1,18 @@
+{
+  "hand_id": "demo_0001",
+  "street": "turn",
+  "board": ["Ah", "7d", "2c", "Ks"],
+  "pot_size": 120.0,
+  "effective_stack": 880.0,
+  "hero_position": "SB",
+  "villain_position": "BB",
+  "action_history": [
+    "preflop: SB raises 2.5bb",
+    "preflop: BB calls",
+    "flop: SB checks",
+    "flop: BB bets 33%",
+    "flop: SB calls",
+    "turn: SB checks"
+  ],
+  "objective": "produce exploitative node-lock frequencies for current node"
+}

@@ -1,0 +1,10 @@
+# Universal Python dependencies for PokerBotV1 workspace.
+# Note: for RTX 4090 usage, install a CUDA-enabled torch wheel from pytorch.org
+# if your environment does not already provide one.
+
+torch>=1.10
+numpy>=1.26
+requests>=2.31
+loguru>=0.7
+fastapi>=0.115
+uvicorn>=0.30

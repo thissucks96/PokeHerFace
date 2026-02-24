@@ -1,0 +1,104 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phevaluator"
+version = "0.5.3.1"
+requires-python = ">=3.8, <4"
+authors = [
+    {name = "Henry Lee", email = "lee0906@hotmail.com"}
+]
+maintainers = [
+    {name = "azriel1rf", email = "azriel.1rf@gmail.com"}
+]
+description = "PH Evaluator - an efficient Poker Hand Evaluator based on a Perfect Hash algorithm"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {file = "LICENSE"}
+keywords = ["poker", "texas-holdem", "poker-evaluator"]
+classifiers = [
+    # How mature is this project? Common values are
+    #   3 - Alpha
+    #   4 - Beta
+    #   5 - Production/Stable
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/HenryRLee/PokerHandEvaluator"
+# TODO(@azriel1rf): Add a link to documentation for Python after it's published
+# https://github.com/HenryRLee/PokerHandEvaluator/issues/105
+Documentation = "https://github.com/HenryRLee/PokerHandEvaluator/tree/master/Documentation"
+Repository = "https://github.com/HenryRLee/PokerHandEvaluator"
+Issues = "https://github.com/HenryRLee/PokerHandEvaluator/issues"
+# TODO(@azriel1rf): Add a link to the changelog after it's published
+# https://github.com/HenryRLee/PokerHandEvaluator/issues/106
+Changelog = "https://github.com/HenryRLee/PokerHandEvaluator/tags"
+Source = "https://github.com/HenryRLee/PokerHandEvaluator/tree/master/python"
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "ruff",
+    "twine",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+phevaluator = ["tables/*.dat"]
+
+[tool.mypy]
+exclude = ["phevaluator/tables/"]
+python_version = "3.8"
+
+[tool.ruff]
+exclude = ["phevaluator/tables/"]
+target-version = "py38"
+fix = true
+show-fixes = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D211",   # no-blank-line-before-class is incompatible with D203 (one-blank-line-before-class)
+    "D213",   # multi-line-summary-second-line is incompatible with D212 (multi-line-summary-first-line)
+    "E741",   # ambiguous-variable-name is incompatible with N806 (non-lowercase-variable-in-function)
+    "COM812", # missing-trailing-comma is incompatible with Ruff formatter
+    "ISC001", # single-line-implicit-string-concatenation is incompatible with Ruff formatter
+    "ANN101", # will be deprecated
+    "ANN102", # will be deprecated
+    "FIX002", # We use "TODO" comments to provide context for future work
+    "PT",     # We don't use pytests and this causes false positives
+    "ERA001", # False positive
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "D",    # Exclude test files from pydocstyle checks
+    "S101", # We allow asserts in tests
+]
+"./*.py" = [
+    "D",    # Exclude sample codes from pydocstyle checks
+    "T201", # We allow print statements in sample codes
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+skip-magic-trailing-comma = true

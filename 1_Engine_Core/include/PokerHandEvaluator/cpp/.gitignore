@@ -1,0 +1,27 @@
+unit_tests
+
+# CMake files
+Makefile
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+_deps/
+phevaluatorConfig.cmake
+phevaluatorConfigVersion.cmake
+
+# Google Test files
+googletest-build/
+googletest-download/
+googletest-src/
+
+zig-out/
+zig-cache/
+
+# This file has been compressed to src/tables_plo5.tar.gz
+# We only track src/tables_plo5.tar.gz in git
+src/tables_plo5.c
+
+# This file has been compressed to src/tables_plo6.tar.gz
+# We only track src/tables_plo6.tar.gz in git
+src/tables_plo6.c

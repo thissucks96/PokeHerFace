@@ -1,0 +1,64 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# C/C++ / CMake build outputs
+**/build/
+**/build_*/
+**/cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/Makefile
+**/*.obj
+**/*.o
+**/*.pdb
+**/*.lib
+**/*.a
+**/*.dll
+**/*.so
+**/*.dylib
+**/*.exe
+
+# Logs
+*.log
+
+# Local third-party binaries
+libs/libtorch/
+libs/*.zip
+
+# Local data artifacts
+3_Hand_Histories/**
+1_Engine_Core/testing/fixtures/result*.json
+
+# Neural model binaries (keep code, skip large model weights)
+2_Neural_Brain/data/models/**/*.pt
+2_Neural_Brain/data/models/**/*.tar
+2_Neural_Brain/src/**/*.pt
+2_Neural_Brain/src/**/*.pkl
+2_Neural_Brain/src/**/*.sqlite
+2_Neural_Brain/src/**/*.tar
+2_Neural_Brain/src/**/*.model
+
+# LLM bridge local outputs / secrets
+4_LLM_Bridge/.env
+4_LLM_Bridge/node_lock_outputs/
+4_LLM_Bridge/examples/out_*.json
+4_LLM_Bridge/examples/solve_response*.json
+4_LLM_Bridge/examples/benchmark*.json
+4_LLM_Bridge/examples/spot.from_phh*.json
+
+# vcpkg manifest install artifacts (local build outputs)
+1_Engine_Core/vcpkg_installed/

@@ -1,0 +1,22 @@
+{
+  "node_id": "turn_sb_check_vs_bb_bet33",
+  "street": "turn",
+  "locks": [
+    {
+      "action": "fold",
+      "frequency": 0.18
+    },
+    {
+      "action": "call",
+      "frequency": 0.62
+    },
+    {
+      "action": "raise_66pot",
+      "frequency": 0.2
+    }
+  ],
+  "meta": {
+    "source": "llm_hybrid_demo",
+    "confidence": 0.73
+  }
+}

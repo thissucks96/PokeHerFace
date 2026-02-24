@@ -1,0 +1,14 @@
+{
+  "node_id": "root",
+  "street": "flop",
+  "locks": [
+    {
+      "action": "check",
+      "frequency": 1.0,
+      "notes": "Example root lock: force check at 100%."
+    }
+  ],
+  "meta": {
+    "source": "sample_fixture"
+  }
+}
