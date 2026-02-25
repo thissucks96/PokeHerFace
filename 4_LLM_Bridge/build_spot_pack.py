@@ -17,6 +17,11 @@ from phh_to_spot import (
     DEFAULT_VILLAIN_RANGE,
     build_spot_from_phh,
 )
+from phh_features.aggregate import (
+    AggregationConfig,
+    aggregate_opponent_features,
+    build_spot_opponent_profile,
+)
 
 
 VALID_STREETS = {"flop", "turn", "river"}
@@ -157,6 +162,24 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--thread-count", type=int, default=14)
     parser.add_argument(
+        "--opponent-profile-mode",
+        choices=["off", "pool"],
+        default="pool",
+        help="Attach opponent profile features into spot.meta.opponent_profile.",
+    )
+    parser.add_argument("--opponent-alpha", type=float, default=2.0, help="Opponent profile smoothing alpha.")
+    parser.add_argument("--opponent-beta", type=float, default=2.0, help="Opponent profile smoothing beta.")
+    parser.add_argument(
+        "--opponent-big-bet-threshold",
+        type=float,
+        default=0.75,
+        help="River big-bet threshold for fold_to_river_bigbet extraction.",
+    )
+    parser.add_argument(
+        "--opponent-profile-summary",
+        help="Optional output path for aggregate opponent profile summary JSON.",
+    )
+    parser.add_argument(
         "--benchmark-mode",
         action="store_true",
         help="Force benchmark-friendly spot settings (currently sets remove_donk_bets=false).",
@@ -177,6 +200,22 @@ def main() -> int:
         entries = _load_manifest(Path(args.manifest))
     else:
         entries = [_build_entry_defaults(path, phh_dir, args.street) for path in _iter_phh_files(phh_dir)]
+
+    opponent_profiles = None
+    if args.opponent_profile_mode != "off":
+        opponent_profiles = aggregate_opponent_features(
+            _iter_phh_files(phh_dir),
+            config=AggregationConfig(
+                alpha=args.opponent_alpha,
+                beta=args.opponent_beta,
+                big_bet_threshold=args.opponent_big_bet_threshold,
+                allowed_variants=("NT",),
+            ),
+        )
+        if args.opponent_profile_summary:
+            profile_summary_path = Path(args.opponent_profile_summary)
+            profile_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_summary_path.write_text(json.dumps(opponent_profiles, indent=2) + "\n", encoding="utf-8")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +334,12 @@ def main() -> int:
         out_path = output_dir / filename
 
         spot.setdefault("meta", {})
+        if opponent_profiles is not None:
+            spot["meta"]["opponent_profile"] = build_spot_opponent_profile(
+                opponent_profiles,
+                source_phh_path=str(phh_path),
+                mode=args.opponent_profile_mode,
+            )
         spot["meta"].update(
             {
                 "source": "phh",
@@ -332,6 +377,10 @@ def main() -> int:
         "phh_dir": str(phh_dir),
         "output_dir": str(output_dir),
         "output_manifest": str(out_manifest_path),
+        "opponent_profile_mode": args.opponent_profile_mode,
+        "opponent_profile_summary": (
+            opponent_profiles.get("summary") if isinstance(opponent_profiles, dict) else None
+        ),
         "total_entries": len(results),
         "status_counts": dict(counters),
         "street_counts": dict(Counter(r.get("street", "unknown") for r in results if r.get("status") == "ok")),
