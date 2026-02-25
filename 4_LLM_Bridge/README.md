@@ -257,6 +257,7 @@ This computes smoothed baseline metrics:
 
 - `fold_to_turn_probe`
 - `fold_to_river_bigbet`
+- `river_bluff_rate` (river big-bets shown at showdown with no pair+ on 7-card hand)
 
 ## Build Canonical Turn-20 Pack
 

@@ -24,6 +24,7 @@ This workspace is organized to keep the engine, neural models, hand history data
 - PHH opponent-feature extraction is available via `4_LLM_Bridge/extract_opponent_features.py`:
   - `fold_to_turn_probe` (smoothed),
   - `fold_to_river_bigbet` (smoothed),
+  - `river_bluff_rate` (smoothed),
   - optional per-player profiles + pool profile.
 - Generated spot packs now include `spot.meta.opponent_profile` (pool profile by default) for LLM prompt conditioning.
 - Canonical acceptance tooling is available:
