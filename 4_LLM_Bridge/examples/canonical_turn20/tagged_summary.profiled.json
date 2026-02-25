@@ -1,0 +1,25 @@
+{
+  "spots_total": 20,
+  "error_count": 0,
+  "profile_missing_count": 0,
+  "street_counts": {
+    "turn": 20
+  },
+  "class_counts": {
+    "turn_probe_punish": 20,
+    "river_bigbet_overfold_punish": 0,
+    "river_underbluff_defense": 0
+  },
+  "thresholds": {
+    "turn_probe_min": 0.58,
+    "turn_probe_min_opp": 20,
+    "river_bigbet_fold_min": 0.55,
+    "river_bigbet_min_opp": 20,
+    "river_bluff_rate_max": 0.35,
+    "river_underbluff_min_opp": 20
+  },
+  "manifest": null,
+  "spot_dir": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_turn20\\profiled_spots",
+  "output_manifest": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_turn20\\tagged_manifest.profiled.json",
+  "write_spot_meta": true
+}
