@@ -22,6 +22,7 @@ Production local policy defaults to `qwen3-coder:30b` only; challenger local mod
 - `build_canonical_pack.py`: deterministic stratified canonical pack builder (e.g., fixed turn-20 set).
 - `benchmark_models.py`: runs capped model benchmarks against `/solve`.
 - `run_acceptance_gate.py`: CI-style acceptance gate with preflight filtering and pass/fail thresholds.
+- `tag_spot_classes.py`: rollout class tagger for controlled multi-node experiments.
 - `node_lock_schema.json`: schema reference.
 - `examples/`: sample payloads.
 
@@ -304,6 +305,17 @@ python .\4_LLM_Bridge\run_acceptance_gate.py `
   --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.json
 ```
 
+Profile-conditioned run (inject `spot.meta.opponent_profile`):
+
+```powershell
+python .\4_LLM_Bridge\run_acceptance_gate.py `
+  --spot-dir .\4_LLM_Bridge\examples\canonical_turn20\profiled_spots `
+  --preset local_qwen3_coder_30b `
+  --ev-keep-margin 0.001 `
+  --use-spot-opponent-profile `
+  --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.profiled.json
+```
+
 Gate criteria defaults:
 
 - `fallback_rate <= 0.05`
@@ -321,6 +333,24 @@ Repository-level CI helper (PowerShell):
 ```
 
 `test_ci.ps1` starts missing local services (Ollama + bridge), runs the acceptance gate, and exits `1` if any gate criterion fails.
+
+## Tag Rollout Classes
+
+Tag spots into the three rollout classes:
+
+```powershell
+python .\4_LLM_Bridge\tag_spot_classes.py `
+  --spot-dir .\4_LLM_Bridge\examples\canonical_turn20\profiled_spots `
+  --write-spot-meta `
+  --output-manifest .\4_LLM_Bridge\examples\canonical_turn20\tagged_manifest.profiled.json `
+  --summary .\4_LLM_Bridge\examples\canonical_turn20\tagged_summary.profiled.json
+```
+
+Classes:
+
+- `turn_probe_punish`
+- `river_bigbet_overfold_punish`
+- `river_underbluff_defense`
 
 ## Batch Benchmarking (Provider-Aware Caps)
 

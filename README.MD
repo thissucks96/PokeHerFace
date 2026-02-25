@@ -28,7 +28,8 @@ This workspace is organized to keep the engine, neural models, hand history data
 - Generated spot packs now include `spot.meta.opponent_profile` (pool profile by default) for LLM prompt conditioning.
 - Canonical acceptance tooling is available:
   - `4_LLM_Bridge/build_canonical_pack.py` creates fixed, stratified canonical packs across configurable streets (`--streets`, `--min-per-street`).
-  - `4_LLM_Bridge/run_acceptance_gate.py` runs preflight filtering + pass/fail gate + EV noise calibration.
+  - `4_LLM_Bridge/run_acceptance_gate.py` runs preflight filtering + pass/fail gate + EV noise calibration, with optional `spot.meta.opponent_profile` injection.
+  - `4_LLM_Bridge/tag_spot_classes.py` tags spots for phased multi-node rollout classes.
 - LLM provider selection is supported in the bridge:
   - mock
   - OpenAI API (`gpt-4o-mini`, `gpt-4o`)
