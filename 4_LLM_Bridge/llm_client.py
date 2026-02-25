@@ -32,6 +32,9 @@ try:
     TURN_MAX_TARGETS = int(os.environ.get("TURN_MAX_TARGETS", "2"))
 except ValueError:
     TURN_MAX_TARGETS = 2
+RIVER_ROOT_SIZE_POLICY = str(os.environ.get("RIVER_ROOT_SIZE_POLICY", "split")).strip().lower()
+if RIVER_ROOT_SIZE_POLICY not in {"split", "largest", "highest_frequency"}:
+    RIVER_ROOT_SIZE_POLICY = "split"
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
@@ -156,6 +159,11 @@ def _build_messages(
             "Keep frequencies normalized per target. Prefer 1-3 targets. "
             "If uncertain, return one valid root target only."
         )
+        if expected_street == "river":
+            multi_hint += (
+                " For river root locks, use at most one sized bet/raise action "
+                "plus optional check/call/fold."
+            )
     else:
         schema_hint = (
             "{\"node_id\":\"root\",\"street\":\""
@@ -475,6 +483,49 @@ def _inject_root_check_floor_if_needed(
     return _aggregate_and_normalize_locks(adjusted)
 
 
+def _collapse_river_root_sized_actions_if_needed(
+    locks: list[Dict[str, Any]],
+    *,
+    node_id: str,
+    expected_street: str,
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    if node_id != "root":
+        return locks
+    if expected_street != "river":
+        return locks
+    policy = RIVER_ROOT_SIZE_POLICY
+    if policy == "split":
+        return locks
+
+    aggressive: list[Dict[str, Any]] = []
+    passive: list[Dict[str, Any]] = []
+    for item in locks:
+        action = str(item.get("action", "")).strip().lower()
+        if action.startswith("bet:") or action.startswith("raise:"):
+            aggressive.append({"action": action, "frequency": float(item.get("frequency", 0.0))})
+        else:
+            passive.append({"action": action, "frequency": float(item.get("frequency", 0.0))})
+    if len(aggressive) <= 1:
+        return locks
+
+    def _amount(action_label: str) -> int:
+        try:
+            return int(action_label.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return 0
+
+    if policy == "largest":
+        chosen = max(aggressive, key=lambda row: _amount(row["action"]))
+    else:
+        chosen = max(aggressive, key=lambda row: (row["frequency"], _amount(row["action"])))
+
+    agg_total = sum(max(0.0, row["frequency"]) for row in aggressive)
+    collapsed = passive + [{"action": chosen["action"], "frequency": agg_total}]
+    issues.append(f"river_root_single_size_applied:{policy}")
+    return _aggregate_and_normalize_locks(collapsed)
+
+
 def _cap_river_targets_if_needed(
     targets: list[Dict[str, Any]],
     *,
@@ -687,6 +738,12 @@ def _normalize_target(
         node_id=node_id,
         expected_street=expected_street,
         allowed_root_actions=allowed_actions,
+        issues=issues,
+    )
+    normalized_locks = _collapse_river_root_sized_actions_if_needed(
+        normalized_locks,
+        node_id=node_id,
+        expected_street=expected_street,
         issues=issues,
     )
     if not normalized_locks:
