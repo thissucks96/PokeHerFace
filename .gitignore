@@ -58,6 +58,7 @@ libs/*.zip
 4_LLM_Bridge/examples/out_*.json
 4_LLM_Bridge/examples/solve_response*.json
 4_LLM_Bridge/examples/benchmark*.json
+4_LLM_Bridge/examples/backtest*.json
 4_LLM_Bridge/examples/spot.from_phh*.json
 4_LLM_Bridge/examples/benchmark_acceptance_*/
 4_LLM_Bridge/examples/run_logs/
@@ -65,6 +66,14 @@ libs/*.zip
 4_LLM_Bridge/examples/**/acceptance_records.json
 4_LLM_Bridge/examples/**/acceptance_records*.json
 4_LLM_Bridge/examples/**/acceptance_summary.ci.json
+4_LLM_Bridge/examples/**/multinode_*_spots/
+4_LLM_Bridge/examples/**/multinode_*_spots.*
+4_LLM_Bridge/examples/**/multinode_*.tagged_manifest.json
+4_LLM_Bridge/examples/**/profile_input_manifest*.json
+
+# Local planning / notes
+task.md
+[Ll]og.md
 
 # vcpkg manifest install artifacts (local build outputs)
 1_Engine_Core/vcpkg_installed/
