@@ -70,6 +70,16 @@ def _load_spot(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _extract_spot_opponent_profile(spot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    meta = spot.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    profile = meta.get("opponent_profile")
+    if isinstance(profile, dict):
+        return profile
+    return None
+
+
 def _resolve_spots(manifest_path: Optional[Path], spot_dir: Optional[Path]) -> List[Path]:
     if manifest_path:
         rows = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -130,6 +140,15 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="Path to acceptance summary JSON.")
     parser.add_argument("--details", help="Optional path to write per-call records JSON.")
     parser.add_argument("--shark-cli", help="Path to shark_cli for preflight/noise runs.")
+    parser.add_argument(
+        "--use-spot-opponent-profile",
+        action="store_true",
+        help="Attach spot.meta.opponent_profile to each solve request if available.",
+    )
+    parser.add_argument(
+        "--opponent-profile-file",
+        help="Optional JSON file with static opponent profile attached to all solve requests.",
+    )
     args = parser.parse_args()
 
     manifest = Path(args.canonical_manifest).resolve() if args.canonical_manifest else None
@@ -149,6 +168,12 @@ def main() -> int:
     preflight_rows: List[Dict[str, Any]] = []
     eligible_spots: List[Path] = []
     noise_ranges: List[float] = []
+    static_opponent_profile: Optional[Dict[str, Any]] = None
+    if args.opponent_profile_file:
+        static_candidate = json.loads(Path(args.opponent_profile_file).read_text(encoding="utf-8"))
+        if not isinstance(static_candidate, dict):
+            raise SystemExit("opponent-profile-file must contain a JSON object.")
+        static_opponent_profile = static_candidate
 
     for spot_path in spots:
         if not spot_path.exists():
@@ -181,8 +206,15 @@ def main() -> int:
                 noise_ranges.append(max(exploits) - min(exploits))
 
     records: List[Dict[str, Any]] = []
+    spot_profile_used = 0
+    static_profile_used = 0
     for spot_path in eligible_spots:
         spot = _load_spot(spot_path)
+        spot_profile = _extract_spot_opponent_profile(spot) if args.use_spot_opponent_profile else None
+        if spot_profile is not None:
+            spot_profile_used += 1
+        if static_opponent_profile is not None:
+            static_profile_used += 1
         for _ in range(calls_per_spot):
             payload = {
                 "spot": spot,
@@ -191,6 +223,10 @@ def main() -> int:
                 "ev_keep_margin": args.ev_keep_margin,
                 "llm": {"preset": args.preset, "mode": "benchmark"},
             }
+            if static_opponent_profile is not None:
+                payload["opponent_profile"] = static_opponent_profile
+            elif spot_profile is not None:
+                payload["opponent_profile"] = spot_profile
             started = time.perf_counter()
             resp = requests.post(args.endpoint, json=payload, timeout=args.timeout)
             elapsed = time.perf_counter() - started
@@ -226,6 +262,7 @@ def main() -> int:
                     "lock_confidence_tag": metrics.get("lock_confidence_tag"),
                     "lock_quality_score": metrics.get("lock_quality_score"),
                     "node_lock_target_count": metrics.get("node_lock_target_count"),
+                    "opponent_profile_used": bool("opponent_profile" in payload),
                     "llm_time_sec": metrics.get("llm_time_sec"),
                     "solver_time_sec": metrics.get("solver_time_sec"),
                     "total_bridge_time_sec": metrics.get("total_bridge_time_sec"),
@@ -270,6 +307,10 @@ def main() -> int:
         "spots_total": len(spots),
         "spots_eligible": len(eligible_spots),
         "spots_skipped_trivial": sum(1 for row in preflight_rows if row.get("status") == "skipped_trivial"),
+        "use_spot_opponent_profile": bool(args.use_spot_opponent_profile),
+        "static_opponent_profile_file": str(Path(args.opponent_profile_file).resolve()) if args.opponent_profile_file else None,
+        "spot_opponent_profiles_detected": spot_profile_used,
+        "static_opponent_profile_applied_to_spots": static_profile_used,
         "calls_total": total_calls,
         "calls_http_ok": total_ok,
         "fallback_rate": fallback_rate,
