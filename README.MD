@@ -58,6 +58,16 @@ Run preflight validation (toolchain + runtime DLL staging + shark launch smoke t
 
 For C++ builds you also need MSVC build tools (`cl.exe`, `nmake`) via Visual Studio Build Tools with the Desktop C++ workload.
 
+## CI Gate Command
+
+Run the canonical acceptance gate (local default model):
+
+```powershell
+.\scripts\test_ci.ps1 -Preset local_qwen3_coder_30b -EvKeepMargin 0.001
+```
+
+This command starts required local services if needed, runs the 20-spot canonical gate, and exits non-zero on gate failure.
+
 ## Quick Start (WSL / Linux)
 
 ```bash

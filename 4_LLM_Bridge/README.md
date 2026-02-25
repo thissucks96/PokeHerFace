@@ -263,6 +263,16 @@ Gate criteria defaults:
 
 The script exits non-zero on failure and writes a summary JSON with criteria, metrics, and preflight details.
 
+Repository-level CI helper (PowerShell):
+
+```powershell
+.\scripts\test_ci.ps1 `
+  -Preset local_qwen3_coder_30b `
+  -EvKeepMargin 0.001
+```
+
+`test_ci.ps1` starts missing local services (Ollama + bridge), runs the acceptance gate, and exits `1` if any gate criterion fails.
+
 ## Batch Benchmarking (Provider-Aware Caps)
 
 `benchmark_models.py` uses provider-aware call caps:
