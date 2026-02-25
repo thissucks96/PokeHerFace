@@ -19,11 +19,11 @@ This workspace is organized to keep the engine, neural models, hand history data
   - baseline no-lock solve,
   - legal-action-constrained lock generation,
   - locked solve,
-  - automatic selection of better result (baseline if lock is worse/equal).
+  - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.005`).
 - LLM provider selection is supported in the bridge:
   - mock
   - OpenAI API (`gpt-4o-mini`, `gpt-4o`)
-  - local OpenAI-compatible endpoints (for models like `gpt-oss:20b`, Llama, DeepSeek via local runtime)
+  - local OpenAI-compatible endpoints (default production model: `qwen3-coder:30b`)
 
 ## Current Limits
 

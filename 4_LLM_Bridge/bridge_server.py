@@ -19,6 +19,16 @@ from llm_client import get_llm_intuition
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SHARK_CLI = ROOT / "1_Engine_Core" / "build_ninja_vcpkg_rel" / "shark_cli.exe"
+DEFAULT_LOCAL_MODEL = os.environ.get("BRIDGE_DEFAULT_LOCAL_MODEL", "qwen3-coder:30b")
+DEFAULT_LLM_CONFIG = {
+    "provider": "local",
+    "model": DEFAULT_LOCAL_MODEL,
+    "preset": "local_qwen3_coder_30b",
+}
+try:
+    DEFAULT_EV_KEEP_MARGIN = float(os.environ.get("EV_KEEP_MARGIN", "0.005"))
+except ValueError:
+    DEFAULT_EV_KEEP_MARGIN = 0.005
 
 
 class SolveRequest(BaseModel):
@@ -33,10 +43,16 @@ class SolveRequest(BaseModel):
         default=True,
         description="If true, run baseline+locked and return whichever has lower exploitability.",
     )
+    ev_keep_margin: float = Field(
+        default=DEFAULT_EV_KEEP_MARGIN,
+        ge=0.0,
+        le=1.0,
+        description="Keep lock only if locked_exploitability + margin < baseline_exploitability.",
+    )
     llm: Optional[Dict[str, Any]] = Field(
         default=None,
         description=(
-            "LLM selector config. Examples: "
+            "LLM selector config. Defaults to local qwen3-coder:30b when omitted. Examples: "
             "{'preset':'mock'} | {'preset':'openai_fast'} | {'preset':'openai_52'} | "
             "{'preset':'local_gpt_oss_20b'} | {'preset':'local_qwen3_coder_30b'} | "
             "{'preset':'local_deepseek_coder_33b'} | "
@@ -185,7 +201,9 @@ def health() -> Dict[str, Any]:
     return {
         "status": "ok",
         "shark_cli": str(shark_cli),
-        "llm_default_preset": "mock",
+        "llm_default_provider": DEFAULT_LLM_CONFIG["provider"],
+        "llm_default_model": DEFAULT_LLM_CONFIG["model"],
+        "ev_keep_margin": DEFAULT_EV_KEEP_MARGIN,
     }
 
 
@@ -210,7 +228,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     llm_started = time.perf_counter()
     llm_error = None
     node_lock = None
-    llm_config = dict(request.llm or {})
+    llm_config = dict(request.llm or DEFAULT_LLM_CONFIG)
     llm_config["allowed_root_actions"] = allowed_root_actions
     try:
         node_lock = get_llm_intuition(request.spot, llm_config)
@@ -240,14 +258,15 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     result = baseline_result
     node_lock_kept = False
     if request.auto_select_best and locked_result is not None and baseline_exp is not None and locked_exp is not None:
-        if locked_exp < baseline_exp:
+        keep_threshold = baseline_exp - request.ev_keep_margin
+        if locked_exp < keep_threshold:
             selected_strategy = "llm_locked"
             selection_reason = "locked_result_improved_exploitability"
             result = locked_result
             node_lock_kept = True
         else:
             selected_strategy = "baseline_gto"
-            selection_reason = "locked_result_not_better_than_baseline"
+            selection_reason = "locked_result_not_better_than_baseline_with_margin"
             result = baseline_result
             node_lock_kept = False
     elif locked_result is not None and not request.auto_select_best:
@@ -291,6 +310,12 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "baseline_exploitability_pct": baseline_result.get("final_exploitability_pct"),
             "locked_exploitability_pct": locked_result.get("final_exploitability_pct") if locked_result else None,
             "exploitability_delta_pct": exploitability_delta,
+            "ev_keep_margin": request.ev_keep_margin,
+            "locked_beats_margin_gate": (
+                (locked_exp is not None and baseline_exp is not None and locked_exp < (baseline_exp - request.ev_keep_margin))
+                if request.auto_select_best
+                else None
+            ),
             "llm_error": llm_error,
         },
     }

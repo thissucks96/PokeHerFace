@@ -41,7 +41,16 @@ $env:OPENAI_API_KEY = "sk-..."
 # Local OpenAI-compatible provider (example: Ollama / vLLM)
 $env:LOCAL_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
 $env:LOCAL_LLM_API_KEY = "local"
+
+# Optional production defaults
+$env:BRIDGE_DEFAULT_LOCAL_MODEL = "qwen3-coder:30b"
+$env:EV_KEEP_MARGIN = "0.005"
 ```
+
+Default production routing when `llm` is omitted:
+
+- provider: `local`
+- model: `qwen3-coder:30b` (or `BRIDGE_DEFAULT_LOCAL_MODEL`)
 
 ## Response Metrics
 
@@ -57,6 +66,8 @@ $env:LOCAL_LLM_API_KEY = "local"
 - `baseline_exploitability_pct`
 - `locked_exploitability_pct`
 - `exploitability_delta_pct` (`locked - baseline`)
+- `ev_keep_margin`
+- `locked_beats_margin_gate`
 - `llm_error` (if lock generation failed and baseline was used)
 
 Top-level response also includes:
@@ -65,6 +76,10 @@ Top-level response also includes:
 - `selection_reason`
 - `node_lock_kept`
 - `allowed_root_actions`
+
+Lock keep rule:
+
+- keep lock iff `locked_exploitability + ev_keep_margin < baseline_exploitability`
 
 ## Solve Request Example
 
@@ -76,6 +91,17 @@ python .\4_LLM_Bridge\bridge_client.py `
   --output .\4_LLM_Bridge\examples\solve_response.sample.json `
   --endpoint http://127.0.0.1:8000/solve `
   --llm-preset mock
+```
+
+Raw request example with explicit margin:
+
+```json
+{
+  "spot": { "...": "..." },
+  "auto_select_best": true,
+  "ev_keep_margin": 0.005,
+  "llm": { "provider": "local", "model": "qwen3-coder:30b" }
+}
 ```
 
 ## LLM Selectors

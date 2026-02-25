@@ -39,6 +39,12 @@ def main() -> int:
         help="Request a second no-lock solve to compute exploitability delta.",
     )
     parser.add_argument(
+        "--ev-keep-margin",
+        type=float,
+        default=None,
+        help="Override EV keep margin gate (locked + margin < baseline).",
+    )
+    parser.add_argument(
         "--llm-preset",
         default="mock",
         help=(
@@ -69,6 +75,8 @@ def main() -> int:
             "preset": args.llm_preset,
         },
     }
+    if args.ev_keep_margin is not None:
+        request_payload["ev_keep_margin"] = args.ev_keep_margin
     if args.llm_provider:
         request_payload["llm"]["provider"] = args.llm_provider
     if args.llm_model:
