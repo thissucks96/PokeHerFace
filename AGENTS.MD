@@ -29,3 +29,8 @@ Example:
 
 ### Documentation Maintenance
 - When significant code changes are made (new capabilities, major behavior changes, or new workflows), update `README.MD` in the same workstream.
+
+### Response Standard
+- In every meaningful project update response, include:
+  - the current status of the app, and
+  - the next best steps.
