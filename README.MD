@@ -76,6 +76,34 @@ Run the canonical acceptance gate (local default model):
 
 This command starts required local services if needed, runs the 20-spot canonical gate, and exits non-zero on gate failure.
 
+## PowerShell Test Runners
+
+Run class-specific acceptance suites:
+
+```powershell
+.\scripts\test_acceptance.ps1 -Suite turn_class1 -Preset local_qwen3_coder_30b
+.\scripts\test_acceptance.ps1 -Suite river_class23 -Preset local_qwen3_coder_30b
+```
+
+Run A/B/C routing backtest (`baseline_gto`, `class1_live_shadow23`, `full_multi_node_benchmark`):
+
+```powershell
+.\scripts\test_backtest_abc.ps1 -Preset local_qwen3_coder_30b -MaxSpots 40
+```
+
+Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
+
+```powershell
+.\scripts\test_multiseed_gauntlet.ps1 -Preset local_qwen3_coder_30b
+```
+
+Run the full stack in one command (`CI + turn/river acceptance + A/B/C`; gauntlet optional):
+
+```powershell
+.\scripts\test_all.ps1 -Preset local_qwen3_coder_30b
+.\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -IncludeGauntlet
+```
+
 ## Quick Start (WSL / Linux)
 
 ```bash
