@@ -8,6 +8,8 @@ This folder now contains the Python orchestration layer that:
 4. runs a locked solve,
 5. auto-selects the better result (lower exploitability), defaulting to baseline when lock is not better.
 
+Production local policy defaults to `qwen3-coder:30b` only; challenger local models must set `llm.mode="benchmark"`.
+
 ## Files
 
 - `bridge_server.py`: FastAPI server with `POST /solve`.
@@ -48,6 +50,7 @@ $env:LOCAL_LLM_API_KEY = "local"
 # Optional production defaults
 $env:BRIDGE_DEFAULT_LOCAL_MODEL = "qwen3-coder:30b"
 $env:EV_KEEP_MARGIN = "0.001"
+$env:ENFORCE_PRIMARY_LOCAL_ONLY = "1"
 ```
 
 Default production routing when `llm` is omitted:
@@ -72,6 +75,7 @@ Default production routing when `llm` is omitted:
 - `ev_keep_margin`
 - `locked_beats_margin_gate`
 - `llm_error` (if lock generation failed and baseline was used)
+- `lock_confidence`, `lock_confidence_tag`, `lock_quality_score`, `node_lock_target_count`
 
 Top-level response also includes:
 
@@ -103,9 +107,16 @@ Raw request example with explicit margin:
   "spot": { "...": "..." },
   "auto_select_best": true,
   "ev_keep_margin": 0.001,
+  "opponent_profile": {"vpip": 35, "pfr": 25, "agg": 1.8},
+  "enable_multi_node_locks": false,
   "llm": { "provider": "local", "model": "qwen3-coder:30b" }
 }
 ```
+
+Notes:
+
+- `enable_multi_node_locks=false` keeps strict root-only generation/validation (recommended production default).
+- `enable_multi_node_locks=true` allows multiple `node_locks` targets when the model and spot support it.
 
 ## LLM Selectors
 
@@ -231,7 +242,20 @@ python .\4_LLM_Bridge\build_canonical_pack.py `
   --spot-dir .\3_Hand_Histories\spot_pack_runs\20260224_202331\spots `
   --output-dir .\4_LLM_Bridge\examples\canonical_turn20 `
   --count 20 `
-  --street turn `
+  --streets turn `
+  --seed 4090 `
+  --benchmark-mode
+```
+
+Mixed-street canonical example:
+
+```powershell
+python .\4_LLM_Bridge\build_canonical_pack.py `
+  --spot-dir .\3_Hand_Histories\spot_pack_runs\20260224_202331\spots `
+  --output-dir .\4_LLM_Bridge\examples\canonical_turn_river20 `
+  --count 20 `
+  --streets turn river `
+  --min-per-street 6 `
   --seed 4090 `
   --benchmark-mode
 ```
@@ -300,5 +324,5 @@ The response JSON includes:
 - Root node-lock generation supports dynamic legal-action filtering from baseline `root_actions`.
 - Duplicate lock actions are aggregated and frequencies are renormalized.
 - Bridge performs two-pass scoring and rejects non-improving locks by selecting baseline GTO.
-- Shark enforces root node-locks in CFR when selected.
-- Non-root node ids are currently parsed but not enforced yet.
+- Shark enforces node-lock targets by `node_id` + `street` in CFR (root and non-root).
+- Baseline solve exposes `node_lock_catalog` so prompts can target known action nodes.

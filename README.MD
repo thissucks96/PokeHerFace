@@ -14,24 +14,25 @@ This workspace is organized to keep the engine, neural models, hand history data
 
 - `shark.exe` (GUI) builds and launches on Windows.
 - `shark_cli.exe` (headless) accepts JSON input/output for automated solves.
-- Root node-locks are enforced in CFR (`node_id: "root"`).
+- Node-lock targets are enforced in CFR by `node_id` + `street` (root and non-root).
 - Python bridge server (`POST /solve`) runs a two-pass safety loop:
   - baseline no-lock solve,
-  - legal-action-constrained lock generation,
+  - legal-action-constrained lock generation (with opponent profile + node catalog context),
   - locked solve,
   - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.001`).
 - Spot pack tooling is available via `4_LLM_Bridge/build_spot_pack.py` for bulk PHH -> tagged spot conversion with manifest/report output.
 - Canonical acceptance tooling is available:
-  - `4_LLM_Bridge/build_canonical_pack.py` creates a fixed, stratified turn-20 pack.
+  - `4_LLM_Bridge/build_canonical_pack.py` creates fixed, stratified canonical packs across configurable streets (`--streets`, `--min-per-street`).
   - `4_LLM_Bridge/run_acceptance_gate.py` runs preflight filtering + pass/fail gate + EV noise calibration.
 - LLM provider selection is supported in the bridge:
   - mock
   - OpenAI API (`gpt-4o-mini`, `gpt-4o`)
   - local OpenAI-compatible endpoints (default production model: `qwen3-coder:30b`)
+- Bridge production policy can enforce local routing to `qwen3-coder:30b` only (challengers allowed in `mode=benchmark`).
 
 ## Current Limits
 
-- Non-root node ids are parsed but not enforced yet.
+- Multi-node lock generation from the LLM is available but should stay gated (`enable_multi_node_locks=false` by default) until broader acceptance metrics are stable.
 - Hand-history ingestion from `3_Hand_Histories` into spot generation is not fully automated yet.
 - LLM quality benchmarking and routing policy tuning are still in progress (current local front-runner: `qwen3-coder:30b`).
 
@@ -114,8 +115,8 @@ A:\PokeHerFace\Version1\1_Engine_Core\build_ninja_vcpkg_rel\shark_cli.exe `
 ```
 
 - Input schema: `spot.json` (`hero_range`, `villain_range`, `board`, solve params).
-- Optional input: `node_lock.json` (root-node locks are enforced in CFR; non-root ids are currently ignored).
-- Output schema: `result.json` (timing, exploitability, tree stats, root action frequencies, warnings).
+- Optional input: `node_lock.json` (`node_locks` array preferred; legacy single-target fields still accepted).
+- Output schema: `result.json` (timing, exploitability, tree stats, root action frequencies, node-lock catalog, warnings).
 
 ## Project Direction
 
@@ -126,7 +127,7 @@ This project combines:
 
 ### Near-Term Direction
 
-1. Run canonical acceptance gate regularly and track `fallback_rate`, `lock_applied_rate`, and `keep_rate`.
+1. Run canonical acceptance gate regularly and track `fallback_rate`, `lock_applied_rate`, `keep_rate`, and lock-quality telemetry.
 2. Benchmark local challengers (`gpt-oss:20b`, Qwen, DeepSeek) vs OpenAI presets on the same canonical pack.
-3. Expand node-lock support beyond root to node-path targeting.
+3. Expand/validate multi-node lock prompts against canonical packs before enabling by default.
 4. Continue PHH -> spot pack automation with stronger depth/position tagging coverage.
