@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from llm_client import get_llm_intuition
+from llm_client import get_llm_intuition, get_llm_intuition_candidates
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,10 @@ try:
     DEFAULT_EV_KEEP_MARGIN = float(os.environ.get("EV_KEEP_MARGIN", "0.001"))
 except ValueError:
     DEFAULT_EV_KEEP_MARGIN = 0.001
+try:
+    TURN_CANDIDATE_COUNT = int(os.environ.get("TURN_CANDIDATE_COUNT", "3"))
+except ValueError:
+    TURN_CANDIDATE_COUNT = 3
 
 
 class SolveRequest(BaseModel):
@@ -228,6 +232,16 @@ def _extract_node_lock_catalog(result_payload: Dict[str, Any]) -> list[Dict[str,
     return out
 
 
+def _detect_spot_street(spot: Dict[str, Any]) -> str:
+    board = spot.get("board", [])
+    if isinstance(board, list):
+        if len(board) >= 5:
+            return "river"
+        if len(board) == 4:
+            return "turn"
+    return "flop"
+
+
 def _avg_lock_confidence(node_lock: Optional[Dict[str, Any]]) -> Optional[float]:
     if not isinstance(node_lock, dict):
         return None
@@ -324,6 +338,7 @@ def health() -> Dict[str, Any]:
         "prod_class1_multi_node_live": PROD_CLASS1_MULTI_NODE_LIVE,
         "prod_river_multi_node_shadow": PROD_RIVER_MULTI_NODE_SHADOW,
         "benchmark_mode_bypass_routing": BENCHMARK_MODE_BYPASS_ROUTING,
+        "turn_candidate_count": TURN_CANDIDATE_COUNT,
     }
 
 
@@ -352,19 +367,80 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     llm_error = None
     node_lock = None
     multi_node_enabled, multi_node_policy_reason, rollout_classes = _resolve_multi_node_policy(request, llm_config)
+    spot_street = _detect_spot_street(request.spot)
+    candidate_mode_enabled = (
+        multi_node_enabled
+        and spot_street == "turn"
+        and _is_local_request(llm_config)
+        and TURN_CANDIDATE_COUNT > 1
+    )
     llm_config["allowed_root_actions"] = allowed_root_actions
     llm_config["node_lock_catalog"] = node_lock_catalog
     llm_config["opponent_profile"] = dict(request.opponent_profile or {})
     llm_config["enable_multi_node_locks"] = multi_node_enabled
+    llm_candidates: list[Dict[str, Any]] = []
     try:
-        node_lock = get_llm_intuition(request.spot, llm_config)
+        if candidate_mode_enabled:
+            llm_candidates = get_llm_intuition_candidates(
+                request.spot,
+                llm_config,
+                candidate_count=TURN_CANDIDATE_COUNT,
+            )
+        else:
+            node_lock = get_llm_intuition(request.spot, llm_config)
+            if node_lock is not None:
+                llm_candidates = [node_lock]
     except Exception as exc:  # pylint: disable=broad-except
         llm_error = str(exc)
     llm_elapsed = time.perf_counter() - llm_started
 
     locked_result = None
     locked_solver_time = 0.0
-    if node_lock is not None:
+    locked_solver_time_total = 0.0
+    locked_candidate_solve_count = 0
+    candidate_errors: list[str] = []
+    if llm_candidates:
+        candidate_runs: list[Dict[str, Any]] = []
+        for idx, candidate in enumerate(llm_candidates):
+            try:
+                locked_run = _run_shark_cli(
+                    shark_cli,
+                    spot_payload=request.spot,
+                    node_lock_payload=candidate,
+                    timeout_sec=request.timeout_sec,
+                    quiet=request.quiet,
+                )
+            except HTTPException as exc:
+                if len(candidate_errors) < 5:
+                    candidate_errors.append(f"candidate_{idx}:{exc.detail}")
+                continue
+
+            candidate_result = locked_run["result"]
+            candidate_time = locked_run["solver_wall_time_sec"]
+            candidate_exp = _to_float_or_none(candidate_result.get("final_exploitability_pct"))
+            locked_solver_time_total += candidate_time
+            locked_candidate_solve_count += 1
+            candidate_runs.append(
+                {
+                    "node_lock": candidate,
+                    "result": candidate_result,
+                    "solver_time": candidate_time,
+                    "exploitability": candidate_exp,
+                }
+            )
+
+        if candidate_runs:
+            best = min(
+                candidate_runs,
+                key=lambda row: row["exploitability"] if row["exploitability"] is not None else float("inf"),
+            )
+            node_lock = best["node_lock"]
+            locked_result = best["result"]
+            locked_solver_time = float(best["solver_time"])
+        elif llm_error is None:
+            llm_error = "all_locked_candidate_solves_failed"
+    elif node_lock is not None:
+        # Back-compat path: if a direct node_lock exists and candidates list is empty, still solve once.
         locked_run = _run_shark_cli(
             shark_cli,
             spot_payload=request.spot,
@@ -374,6 +450,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         )
         locked_result = locked_run["result"]
         locked_solver_time = locked_run["solver_wall_time_sec"]
+        locked_solver_time_total = locked_solver_time
+        locked_candidate_solve_count = 1
 
     baseline_exp = _to_float_or_none(baseline_result.get("final_exploitability_pct"))
     locked_exp = _to_float_or_none(locked_result.get("final_exploitability_pct")) if locked_result else None
@@ -387,7 +465,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         keep_threshold = baseline_exp - request.ev_keep_margin
         if locked_exp < keep_threshold:
             selected_strategy = "llm_locked"
-            selection_reason = "locked_result_improved_exploitability"
+            selection_reason = (
+                "locked_result_improved_exploitability_best_of_n"
+                if candidate_mode_enabled
+                else "locked_result_improved_exploitability"
+            )
             result = locked_result
             node_lock_kept = True
         else:
@@ -442,6 +524,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "solver_time_sec": locked_solver_time if selected_strategy == "llm_locked" else baseline_solver_time,
             "baseline_solver_time_sec": baseline_solver_time,
             "locked_solver_time_sec": locked_solver_time,
+            "locked_solver_time_total_sec": locked_solver_time_total,
             "total_bridge_time_sec": total_bridge_time,
             "lock_applied": bool(result.get("node_lock", {}).get("applied", False)),
             "lock_applications": result.get("node_lock", {}).get("applications", 0),
@@ -463,6 +546,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 if isinstance(node_lock, dict) and isinstance(node_lock.get("node_locks"), list)
                 else 0
             ),
+            "llm_candidate_mode_enabled": candidate_mode_enabled,
+            "llm_candidate_target_count": TURN_CANDIDATE_COUNT if candidate_mode_enabled else 1,
+            "llm_candidate_generated_count": len(llm_candidates),
+            "llm_candidate_solve_count": locked_candidate_solve_count,
+            "llm_candidate_errors": candidate_errors,
             "multi_node_requested": bool(request.enable_multi_node_locks),
             "multi_node_enabled": multi_node_enabled,
             "multi_node_policy_reason": multi_node_policy_reason,

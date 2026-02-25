@@ -28,6 +28,10 @@ try:
     RIVER_MAX_TARGETS = int(os.environ.get("RIVER_MAX_TARGETS", "1"))
 except ValueError:
     RIVER_MAX_TARGETS = 1
+try:
+    TURN_MAX_TARGETS = int(os.environ.get("TURN_MAX_TARGETS", "2"))
+except ValueError:
+    TURN_MAX_TARGETS = 2
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
@@ -489,6 +493,24 @@ def _cap_river_targets_if_needed(
     return targets[:cap]
 
 
+def _cap_turn_targets_if_needed(
+    targets: list[Dict[str, Any]],
+    *,
+    expected_street: str,
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    if expected_street != "turn":
+        return targets
+    cap = TURN_MAX_TARGETS
+    if cap <= 0:
+        return targets
+    if len(targets) <= cap:
+        return targets
+    # Keep earliest targets (root and earliest branch targets after normalization).
+    issues.append(f"turn_target_cap_applied:{cap}")
+    return targets[:cap]
+
+
 def _normalize_confidence(value: Any) -> float:
     try:
         confidence = float(value)
@@ -730,6 +752,11 @@ def _normalize_node_lock(
         normalized_targets = [root_targets[0]]
         issues.append("single_node_mode_enforced")
     else:
+        normalized_targets = _cap_turn_targets_if_needed(
+            normalized_targets,
+            expected_street=expected_street,
+            issues=issues,
+        )
         normalized_targets = _cap_river_targets_if_needed(
             normalized_targets,
             expected_street=expected_street,
@@ -887,3 +914,26 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
     node_lock.setdefault("meta", {})
     node_lock["meta"].update({"provider": provider, "model": model, "preset": resolved.get("preset", "")})
     return node_lock
+
+
+def get_llm_intuition_candidates(
+    spot_json: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+    *,
+    candidate_count: int = 1,
+) -> list[Dict[str, Any]]:
+    count = max(1, min(int(candidate_count), 8))
+    candidates: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for _ in range(count):
+        node_lock = get_llm_intuition(spot_json, config)
+        key = json.dumps(node_lock, sort_keys=True, ensure_ascii=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(node_lock)
+
+    if not candidates:
+        raise ValueError("No LLM node-lock candidates generated.")
+    return candidates
