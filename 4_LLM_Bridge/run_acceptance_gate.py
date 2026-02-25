@@ -80,6 +80,19 @@ def _extract_spot_opponent_profile(spot: Dict[str, Any]) -> Optional[Dict[str, A
     return None
 
 
+def _extract_spot_rollout_classes(spot: Dict[str, Any]) -> Dict[str, bool]:
+    meta = spot.get("meta")
+    if not isinstance(meta, dict):
+        return {}
+    classes = meta.get("rollout_classes")
+    if not isinstance(classes, dict):
+        return {}
+    out: Dict[str, bool] = {}
+    for key, value in classes.items():
+        out[str(key)] = bool(value)
+    return out
+
+
 def _resolve_spots(manifest_path: Optional[Path], spot_dir: Optional[Path]) -> List[Path]:
     if manifest_path:
         rows = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -149,6 +162,17 @@ def main() -> int:
         "--opponent-profile-file",
         help="Optional JSON file with static opponent profile attached to all solve requests.",
     )
+    parser.add_argument(
+        "--enable-multi-node-locks",
+        action="store_true",
+        help="Force enable_multi_node_locks=true for all requests in this gate run.",
+    )
+    parser.add_argument(
+        "--multi-node-classes",
+        nargs="+",
+        default=[],
+        help="Enable multi-node only when spot.meta.rollout_classes contains any of these true tags.",
+    )
     args = parser.parse_args()
 
     manifest = Path(args.canonical_manifest).resolve() if args.canonical_manifest else None
@@ -208,9 +232,16 @@ def main() -> int:
     records: List[Dict[str, Any]] = []
     spot_profile_used = 0
     static_profile_used = 0
+    requested_multi_node_classes = [str(c).strip() for c in (args.multi_node_classes or []) if str(c).strip()]
+    multi_node_enabled_spots = 0
     for spot_path in eligible_spots:
         spot = _load_spot(spot_path)
         spot_profile = _extract_spot_opponent_profile(spot) if args.use_spot_opponent_profile else None
+        rollout_classes = _extract_spot_rollout_classes(spot)
+        class_trigger = any(bool(rollout_classes.get(c, False)) for c in requested_multi_node_classes)
+        enable_multi_node = bool(args.enable_multi_node_locks or class_trigger)
+        if enable_multi_node:
+            multi_node_enabled_spots += 1
         if spot_profile is not None:
             spot_profile_used += 1
         if static_opponent_profile is not None:
@@ -223,6 +254,8 @@ def main() -> int:
                 "ev_keep_margin": args.ev_keep_margin,
                 "llm": {"preset": args.preset, "mode": "benchmark"},
             }
+            if enable_multi_node:
+                payload["enable_multi_node_locks"] = True
             if static_opponent_profile is not None:
                 payload["opponent_profile"] = static_opponent_profile
             elif spot_profile is not None:
@@ -263,6 +296,7 @@ def main() -> int:
                     "lock_quality_score": metrics.get("lock_quality_score"),
                     "node_lock_target_count": metrics.get("node_lock_target_count"),
                     "opponent_profile_used": bool("opponent_profile" in payload),
+                    "multi_node_enabled": bool(payload.get("enable_multi_node_locks", False)),
                     "llm_time_sec": metrics.get("llm_time_sec"),
                     "solver_time_sec": metrics.get("solver_time_sec"),
                     "total_bridge_time_sec": metrics.get("total_bridge_time_sec"),
@@ -311,6 +345,9 @@ def main() -> int:
         "static_opponent_profile_file": str(Path(args.opponent_profile_file).resolve()) if args.opponent_profile_file else None,
         "spot_opponent_profiles_detected": spot_profile_used,
         "static_opponent_profile_applied_to_spots": static_profile_used,
+        "enable_multi_node_locks": bool(args.enable_multi_node_locks),
+        "multi_node_classes": requested_multi_node_classes,
+        "multi_node_enabled_spots": multi_node_enabled_spots,
         "calls_total": total_calls,
         "calls_http_ok": total_ok,
         "fallback_rate": fallback_rate,
