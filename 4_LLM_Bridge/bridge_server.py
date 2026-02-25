@@ -26,6 +26,13 @@ DEFAULT_LLM_CONFIG = {
     "preset": "local_qwen3_coder_30b",
 }
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
+PROD_CLASS1_MULTI_NODE_LIVE = os.environ.get("PROD_CLASS1_MULTI_NODE_LIVE", "1").strip() not in {"0", "false", "False"}
+PROD_RIVER_MULTI_NODE_SHADOW = os.environ.get("PROD_RIVER_MULTI_NODE_SHADOW", "1").strip() not in {"0", "false", "False"}
+BENCHMARK_MODE_BYPASS_ROUTING = os.environ.get("BENCHMARK_MODE_BYPASS_ROUTING", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
 try:
     DEFAULT_EV_KEEP_MARGIN = float(os.environ.get("EV_KEEP_MARGIN", "0.001"))
 except ValueError:
@@ -275,6 +282,35 @@ def _enforce_local_production_policy(llm_config: Dict[str, Any]) -> None:
         )
 
 
+def _extract_rollout_classes(spot: Dict[str, Any]) -> Dict[str, bool]:
+    meta = spot.get("meta")
+    if not isinstance(meta, dict):
+        return {}
+    classes = meta.get("rollout_classes")
+    if not isinstance(classes, dict):
+        return {}
+    out: Dict[str, bool] = {}
+    for key, value in classes.items():
+        out[str(key)] = bool(value)
+    return out
+
+
+def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]) -> tuple[bool, str, Dict[str, bool]]:
+    requested = bool(request.enable_multi_node_locks)
+    classes = _extract_rollout_classes(request.spot)
+    is_class1 = bool(classes.get("turn_probe_punish", False))
+    is_class23 = bool(classes.get("river_bigbet_overfold_punish", False) or classes.get("river_underbluff_defense", False))
+    mode = str(llm_config.get("mode", "")).strip().lower()
+
+    if BENCHMARK_MODE_BYPASS_ROUTING and mode == "benchmark":
+        return requested, "benchmark_mode_bypass", classes
+    if PROD_RIVER_MULTI_NODE_SHADOW and is_class23:
+        return False, "forced_off_class23_shadow", classes
+    if PROD_CLASS1_MULTI_NODE_LIVE and is_class1:
+        return True, "forced_on_class1_live", classes
+    return requested, "request_flag", classes
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
@@ -285,6 +321,9 @@ def health() -> Dict[str, Any]:
         "llm_default_model": DEFAULT_LLM_CONFIG["model"],
         "ev_keep_margin": DEFAULT_EV_KEEP_MARGIN,
         "enforce_primary_local_only": ENFORCE_PRIMARY_LOCAL_ONLY,
+        "prod_class1_multi_node_live": PROD_CLASS1_MULTI_NODE_LIVE,
+        "prod_river_multi_node_shadow": PROD_RIVER_MULTI_NODE_SHADOW,
+        "benchmark_mode_bypass_routing": BENCHMARK_MODE_BYPASS_ROUTING,
     }
 
 
@@ -312,10 +351,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     llm_started = time.perf_counter()
     llm_error = None
     node_lock = None
+    multi_node_enabled, multi_node_policy_reason, rollout_classes = _resolve_multi_node_policy(request, llm_config)
     llm_config["allowed_root_actions"] = allowed_root_actions
     llm_config["node_lock_catalog"] = node_lock_catalog
     llm_config["opponent_profile"] = dict(request.opponent_profile or {})
-    llm_config["enable_multi_node_locks"] = bool(request.enable_multi_node_locks)
+    llm_config["enable_multi_node_locks"] = multi_node_enabled
     try:
         node_lock = get_llm_intuition(request.spot, llm_config)
     except Exception as exc:  # pylint: disable=broad-except
@@ -388,6 +428,12 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         "selected_strategy": selected_strategy,
         "selection_reason": selection_reason,
         "allowed_root_actions": allowed_root_actions,
+        "multi_node_policy": {
+            "requested": bool(request.enable_multi_node_locks),
+            "enabled": multi_node_enabled,
+            "reason": multi_node_policy_reason,
+            "rollout_classes": rollout_classes,
+        },
         "result": result,
         "baseline_result": baseline_result,
         "locked_result": locked_result,
@@ -417,6 +463,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 if isinstance(node_lock, dict) and isinstance(node_lock.get("node_locks"), list)
                 else 0
             ),
+            "multi_node_requested": bool(request.enable_multi_node_locks),
+            "multi_node_enabled": multi_node_enabled,
+            "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": llm_error,
         },
     }
