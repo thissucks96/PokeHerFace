@@ -317,6 +317,18 @@ python .\4_LLM_Bridge\run_acceptance_gate.py `
   --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.profiled.json
 ```
 
+Conditional multi-node run (enable only when rollout class tags match):
+
+```powershell
+python .\4_LLM_Bridge\run_acceptance_gate.py `
+  --spot-dir .\4_LLM_Bridge\examples\canonical_turn20\spots `
+  --preset local_qwen3_coder_30b `
+  --ev-keep-margin 0.001 `
+  --use-spot-opponent-profile `
+  --multi-node-classes turn_probe_punish `
+  --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.multinode.json
+```
+
 Gate criteria defaults:
 
 - `fallback_rate <= 0.05`
