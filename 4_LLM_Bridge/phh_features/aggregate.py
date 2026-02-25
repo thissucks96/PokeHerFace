@@ -42,6 +42,12 @@ def _counter_to_profile(
         alpha=alpha,
         beta=beta,
     )
+    river_bluff_rate = smoothed_rate(
+        counter.river_bluff_actions,
+        counter.river_bluff_opportunities,
+        alpha=alpha,
+        beta=beta,
+    )
     return {
         "hands_seen": counter.hands_seen,
         "turn_probe_opportunities": counter.turn_probe_opportunities,
@@ -50,6 +56,9 @@ def _counter_to_profile(
         "river_bigbet_opportunities": counter.river_bigbet_opportunities,
         "river_bigbet_folds": counter.river_bigbet_folds,
         "fold_to_river_bigbet": fold_to_river_bigbet,
+        "river_bluff_opportunities": counter.river_bluff_opportunities,
+        "river_bluff_actions": counter.river_bluff_actions,
+        "river_bluff_rate": river_bluff_rate,
         "alpha": alpha,
         "beta": beta,
         "big_bet_threshold_pot_ratio": big_bet_threshold,
@@ -100,6 +109,8 @@ def aggregate_opponent_features(
             acc.turn_probe_folds += counter.turn_probe_folds
             acc.river_bigbet_opportunities += counter.river_bigbet_opportunities
             acc.river_bigbet_folds += counter.river_bigbet_folds
+            acc.river_bluff_opportunities += counter.river_bluff_opportunities
+            acc.river_bluff_actions += counter.river_bluff_actions
 
         for name, counter in per_name.items():
             total = by_player.setdefault(name, PlayerFeatureCounter())
@@ -108,6 +119,8 @@ def aggregate_opponent_features(
             total.turn_probe_folds += counter.turn_probe_folds
             total.river_bigbet_opportunities += counter.river_bigbet_opportunities
             total.river_bigbet_folds += counter.river_bigbet_folds
+            total.river_bluff_opportunities += counter.river_bluff_opportunities
+            total.river_bluff_actions += counter.river_bluff_actions
 
         hands_index[str(path.resolve())] = {
             "players": hand.players,
@@ -122,6 +135,8 @@ def aggregate_opponent_features(
         pool_counter.turn_probe_folds += c.turn_probe_folds
         pool_counter.river_bigbet_opportunities += c.river_bigbet_opportunities
         pool_counter.river_bigbet_folds += c.river_bigbet_folds
+        pool_counter.river_bluff_opportunities += c.river_bluff_opportunities
+        pool_counter.river_bluff_actions += c.river_bluff_actions
 
     profiles_by_player = {
         name: _counter_to_profile(

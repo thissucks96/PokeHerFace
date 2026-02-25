@@ -21,6 +21,8 @@ class PlayerFeatureCounter:
     turn_probe_folds: int = 0
     river_bigbet_opportunities: int = 0
     river_bigbet_folds: int = 0
+    river_bluff_opportunities: int = 0
+    river_bluff_actions: int = 0
 
 
 def _is_player_token(value: Optional[str]) -> bool:
@@ -88,15 +90,92 @@ def _extract_turn_probe_response(turn_actions: List[ActionEvent]) -> Optional[tu
     return None
 
 
+def _split_card_blob(blob: str) -> List[str]:
+    raw = (blob or "").strip()
+    if len(raw) % 2 != 0:
+        return []
+    out = []
+    for i in range(0, len(raw), 2):
+        card = raw[i : i + 2]
+        if len(card) != 2:
+            continue
+        out.append(card)
+    return out
+
+
+def _extract_final_board(hand: ParsedHand) -> List[str]:
+    board: List[str] = []
+    for event in hand.actions:
+        if event.verb != "deal_board":
+            continue
+        parts = event.raw.strip().split()
+        if len(parts) < 3:
+            continue
+        cards = _split_card_blob(parts[2])
+        if len(cards) == 3 and not board:
+            board = list(cards)
+        elif len(cards) == 1 and len(board) < 5:
+            board.append(cards[0])
+    return board[:5]
+
+
+def _extract_showdown_hole_cards(event: ActionEvent) -> List[str]:
+    if event.verb != "sm":
+        return []
+    parts = event.raw.strip().split()
+    if len(parts) < 3:
+        return []
+    blob = parts[2].strip()
+    if "?" in blob:
+        return []
+    cards = _split_card_blob(blob)
+    if len(cards) != 2:
+        return []
+    return cards
+
+
+def _has_pair_or_better(cards: List[str]) -> bool:
+    ranks: Dict[str, int] = {}
+    for card in cards:
+        if not isinstance(card, str) or len(card) != 2:
+            continue
+        rank = card[0].upper()
+        ranks[rank] = ranks.get(rank, 0) + 1
+    return any(count >= 2 for count in ranks.values())
+
+
+def _update_river_bluff_features(
+    hand: ParsedHand,
+    counters_by_token: Dict[str, PlayerFeatureCounter],
+    river_bigbettors: Set[str],
+) -> None:
+    if not river_bigbettors:
+        return
+    board = _extract_final_board(hand)
+    if len(board) < 5:
+        return
+
+    for event in hand.actions:
+        actor = (event.actor or "").strip().lower()
+        if actor not in river_bigbettors or actor not in counters_by_token:
+            continue
+        hole_cards = _extract_showdown_hole_cards(event)
+        if len(hole_cards) != 2:
+            continue
+        counters_by_token[actor].river_bluff_opportunities += 1
+        if not _has_pair_or_better(board + hole_cards):
+            counters_by_token[actor].river_bluff_actions += 1
+
+
 def _simulate_river_bigbet_features(
     hand: ParsedHand,
     counters_by_token: Dict[str, PlayerFeatureCounter],
     *,
     big_bet_threshold: float,
-) -> None:
+) -> Set[str]:
     tokens = _player_tokens_in_hand(hand)
     if not tokens:
-        return
+        return set()
 
     active = set(tokens)
     contributions: Dict[str, float] = {token: 0.0 for token in tokens}
@@ -104,6 +183,7 @@ def _simulate_river_bigbet_features(
     pot = float(sum(hand.blinds_or_straddles) + sum(hand.antes))
     current_street = "preflop"
     pending_bigbet: Dict[str, bool] = {}
+    river_bigbettors: Set[str] = set()
 
     for event in hand.actions:
         street = event.street
@@ -158,11 +238,13 @@ def _simulate_river_bigbet_features(
         if ratio < big_bet_threshold:
             continue
 
+        river_bigbettors.add(actor)
         for other in list(active):
             if other == actor:
                 continue
             if contributions.get(other, 0.0) < max_contrib:
                 pending_bigbet[other] = True
+    return river_bigbettors
 
 
 def extract_hand_feature_counters(
@@ -185,11 +267,12 @@ def extract_hand_feature_counters(
                 if response_verb == "f":
                     counters_by_token[defender].turn_probe_folds += 1
 
-    _simulate_river_bigbet_features(
+    river_bigbettors = _simulate_river_bigbet_features(
         hand,
         counters_by_token,
         big_bet_threshold=big_bet_threshold,
     )
+    _update_river_bluff_features(hand, counters_by_token, river_bigbettors)
     return counters_by_token
 
 
@@ -205,6 +288,8 @@ def merge_player_feature_counters(
             acc.turn_probe_folds += c.turn_probe_folds
             acc.river_bigbet_opportunities += c.river_bigbet_opportunities
             acc.river_bigbet_folds += c.river_bigbet_folds
+            acc.river_bluff_opportunities += c.river_bluff_opportunities
+            acc.river_bluff_actions += c.river_bluff_actions
     return merged
 
 
@@ -213,4 +298,3 @@ def smoothed_rate(successes: int, opportunities: int, *, alpha: float = 2.0, bet
     if denom <= 0.0:
         return 0.0
     return (float(successes) + float(alpha)) / denom
-
