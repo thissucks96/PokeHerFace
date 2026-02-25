@@ -26,9 +26,9 @@ DEFAULT_LLM_CONFIG = {
     "preset": "local_qwen3_coder_30b",
 }
 try:
-    DEFAULT_EV_KEEP_MARGIN = float(os.environ.get("EV_KEEP_MARGIN", "0.005"))
+    DEFAULT_EV_KEEP_MARGIN = float(os.environ.get("EV_KEEP_MARGIN", "0.001"))
 except ValueError:
-    DEFAULT_EV_KEEP_MARGIN = 0.005
+    DEFAULT_EV_KEEP_MARGIN = 0.001
 
 
 class SolveRequest(BaseModel):

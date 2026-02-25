@@ -19,7 +19,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - baseline no-lock solve,
   - legal-action-constrained lock generation,
   - locked solve,
-  - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.005`).
+  - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.001`).
 - Spot pack tooling is available via `4_LLM_Bridge/build_spot_pack.py` for bulk PHH -> tagged spot conversion with manifest/report output.
 - Canonical acceptance tooling is available:
   - `4_LLM_Bridge/build_canonical_pack.py` creates a fixed, stratified turn-20 pack.

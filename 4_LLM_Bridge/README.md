@@ -47,7 +47,7 @@ $env:LOCAL_LLM_API_KEY = "local"
 
 # Optional production defaults
 $env:BRIDGE_DEFAULT_LOCAL_MODEL = "qwen3-coder:30b"
-$env:EV_KEEP_MARGIN = "0.005"
+$env:EV_KEEP_MARGIN = "0.001"
 ```
 
 Default production routing when `llm` is omitted:
@@ -102,7 +102,7 @@ Raw request example with explicit margin:
 {
   "spot": { "...": "..." },
   "auto_select_best": true,
-  "ev_keep_margin": 0.005,
+  "ev_keep_margin": 0.001,
   "llm": { "provider": "local", "model": "qwen3-coder:30b" }
 }
 ```
@@ -250,7 +250,7 @@ python .\4_LLM_Bridge\run_acceptance_gate.py `
   --canonical-manifest .\4_LLM_Bridge\examples\canonical_turn20\canonical_manifest.json `
   --preset local_qwen3_coder_30b `
   --calls-per-spot 1 `
-  --ev-keep-margin 0.005 `
+  --ev-keep-margin 0.001 `
   --calibrate-noise-runs 3 `
   --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.json
 ```
