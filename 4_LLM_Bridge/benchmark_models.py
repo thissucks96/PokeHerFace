@@ -107,7 +107,7 @@ def main() -> int:
                 "timeout_sec": args.solver_timeout,
                 "quiet": True,
                 "compute_baseline_delta": args.compute_baseline_delta,
-                "llm": {"preset": preset},
+                "llm": {"preset": preset, "mode": "benchmark"},
             }
             started = time.perf_counter()
             try:

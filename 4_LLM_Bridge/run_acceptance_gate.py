@@ -189,7 +189,7 @@ def main() -> int:
                 "timeout_sec": args.solver_timeout,
                 "quiet": True,
                 "ev_keep_margin": args.ev_keep_margin,
-                "llm": {"preset": args.preset},
+                "llm": {"preset": args.preset, "mode": "benchmark"},
             }
             started = time.perf_counter()
             resp = requests.post(args.endpoint, json=payload, timeout=args.timeout)
@@ -222,6 +222,10 @@ def main() -> int:
                     "llm_error": llm_error,
                     "lock_applied": bool(metrics.get("lock_applied", False)),
                     "lock_applications": metrics.get("lock_applications", 0),
+                    "lock_confidence": metrics.get("lock_confidence"),
+                    "lock_confidence_tag": metrics.get("lock_confidence_tag"),
+                    "lock_quality_score": metrics.get("lock_quality_score"),
+                    "node_lock_target_count": metrics.get("node_lock_target_count"),
                     "llm_time_sec": metrics.get("llm_time_sec"),
                     "solver_time_sec": metrics.get("solver_time_sec"),
                     "total_bridge_time_sec": metrics.get("total_bridge_time_sec"),
@@ -243,6 +247,8 @@ def main() -> int:
     total_times = [
         float(r["total_bridge_time_sec"]) for r in ok_records if isinstance(r.get("total_bridge_time_sec"), (int, float))
     ]
+    quality_scores = [float(r["lock_quality_score"]) for r in ok_records if isinstance(r.get("lock_quality_score"), (int, float))]
+    confidences = [float(r["lock_confidence"]) for r in ok_records if isinstance(r.get("lock_confidence"), (int, float))]
 
     noise_p95 = _percentile(noise_ranges, 0.95)
     recommended_margin = (noise_p95 + args.noise_epsilon) if noise_p95 is not None else None
@@ -277,6 +283,8 @@ def main() -> int:
         "llm_time_avg_sec": statistics.mean(llm_times) if llm_times else None,
         "solver_time_avg_sec": statistics.mean(solver_times) if solver_times else None,
         "total_bridge_time_avg_sec": statistics.mean(total_times) if total_times else None,
+        "lock_quality_avg_score": statistics.mean(quality_scores) if quality_scores else None,
+        "lock_confidence_avg": statistics.mean(confidences) if confidences else None,
         "criteria": {
             "fallback_max": args.fallback_max,
             "lock_applied_min": args.lock_applied_min,

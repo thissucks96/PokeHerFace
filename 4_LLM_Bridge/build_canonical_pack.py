@@ -128,7 +128,18 @@ def main() -> int:
     parser.add_argument("--spot-dir", required=True, help="Directory containing candidate spot JSON files.")
     parser.add_argument("--output-dir", required=True, help="Canonical pack output directory.")
     parser.add_argument("--count", type=int, default=20, help="Number of canonical spots to select.")
-    parser.add_argument("--street", default="turn", choices=["flop", "turn", "river"])
+    parser.add_argument(
+        "--streets",
+        nargs="+",
+        default=["turn"],
+        help="Target street set, e.g. --streets turn river for a harder mixed pack.",
+    )
+    parser.add_argument(
+        "--min-per-street",
+        type=int,
+        default=0,
+        help="Minimum selected spots per requested street when available.",
+    )
     parser.add_argument("--seed", type=int, default=4090, help="Random seed for deterministic selection.")
     parser.add_argument(
         "--benchmark-mode",
@@ -148,16 +159,22 @@ def main() -> int:
 
     all_paths = sorted(spot_dir.rglob("*.json"))
     records: List[Dict[str, Any]] = []
+    street_filter = {s.strip().lower() for s in args.streets if s.strip()}
+    if not street_filter:
+        street_filter = {"turn"}
+
     for path in all_paths:
         try:
             spot = _load_spot(path)
         except (json.JSONDecodeError, OSError):
             continue
-        if _detect_street(spot) != args.street:
+        spot_street = _detect_street(spot)
+        if spot_street not in street_filter:
             continue
         records.append(
             {
                 "path": path,
+                "street": spot_street,
                 "texture": _texture_of(spot),
                 "depth": _depth_of(spot),
                 "position": _position_of(spot),
@@ -167,7 +184,7 @@ def main() -> int:
         )
 
     if len(records) < args.count:
-        raise SystemExit(f"Not enough {args.street} spots. Needed {args.count}, found {len(records)}.")
+        raise SystemExit(f"Not enough candidate spots. Needed {args.count}, found {len(records)}.")
 
     texture_counts = Counter(rec["texture"] for rec in records)
     targets = _allocate_targets(args.count, texture_counts)
@@ -176,9 +193,22 @@ def main() -> int:
     chosen: List[Dict[str, Any]] = []
     chosen_paths = set()
 
+    if args.min_per_street > 0 and len(street_filter) > 1:
+        for street in sorted(street_filter):
+            street_bucket = [rec for rec in records if rec["street"] == street and rec["path"] not in chosen_paths]
+            picks = _choose_diverse(street_bucket, args.min_per_street, rng)
+            for rec in picks:
+                chosen.append(rec)
+                chosen_paths.add(rec["path"])
+
     for texture, target in targets.items():
-        bucket = [rec for rec in records if rec["texture"] == texture]
-        picks = _choose_diverse(bucket, target, rng)
+        if len(chosen) >= args.count:
+            break
+        remaining = max(0, target - sum(1 for rec in chosen if rec["texture"] == texture))
+        if remaining <= 0:
+            continue
+        bucket = [rec for rec in records if rec["texture"] == texture and rec["path"] not in chosen_paths]
+        picks = _choose_diverse(bucket, remaining, rng)
         for rec in picks:
             chosen.append(rec)
             chosen_paths.add(rec["path"])
@@ -215,7 +245,7 @@ def main() -> int:
                 "index": i,
                 "spot_path": str(out_path.relative_to(out_dir)).replace("\\", "/"),
                 "source_path": str(src_path).replace("\\", "/"),
-                "street": args.street,
+                "street": rec["street"],
                 "texture": rec["texture"],
                 "depth": rec["depth"],
                 "position": rec["position"],
@@ -224,11 +254,12 @@ def main() -> int:
         )
 
     report = {
-        "street": args.street,
+        "streets": sorted(street_filter),
         "count": len(manifest_rows),
         "seed": args.seed,
         "benchmark_mode": bool(args.benchmark_mode),
         "input_total": len(records),
+        "street_counts": dict(Counter(row["street"] for row in manifest_rows)),
         "texture_counts": dict(Counter(row["texture"] for row in manifest_rows)),
         "depth_counts": dict(Counter(row["depth"] for row in manifest_rows)),
         "position_counts": dict(Counter(row["position"] for row in manifest_rows)),

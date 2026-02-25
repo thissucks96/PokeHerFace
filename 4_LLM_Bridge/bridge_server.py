@@ -25,6 +25,7 @@ DEFAULT_LLM_CONFIG = {
     "model": DEFAULT_LOCAL_MODEL,
     "preset": "local_qwen3_coder_30b",
 }
+ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
 try:
     DEFAULT_EV_KEEP_MARGIN = float(os.environ.get("EV_KEEP_MARGIN", "0.001"))
 except ValueError:
@@ -58,6 +59,14 @@ class SolveRequest(BaseModel):
             "{'preset':'local_deepseek_coder_33b'} | {'preset':'local_llama3_8b'} | "
             "{'provider':'openai','model':'gpt-5-mini'}."
         ),
+    )
+    opponent_profile: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional opponent profile context for prompt shaping (vpip/pfr/agg/etc).",
+    )
+    enable_multi_node_locks: bool = Field(
+        default=False,
+        description="Enable multi-node lock generation/validation. Default keeps root-only lock behavior.",
     )
 
 
@@ -195,6 +204,77 @@ def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
     return unique
 
 
+def _extract_node_lock_catalog(result_payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    catalog = result_payload.get("node_lock_catalog", [])
+    if not isinstance(catalog, list):
+        return []
+    out: list[Dict[str, Any]] = []
+    for item in catalog:
+        if not isinstance(item, dict):
+            continue
+        node_id = str(item.get("node_id", "")).strip()
+        street = str(item.get("street", "")).strip().lower()
+        actions = item.get("actions", [])
+        if not node_id or not isinstance(actions, list):
+            continue
+        out.append({"node_id": node_id, "street": street, "actions": actions})
+    return out
+
+
+def _avg_lock_confidence(node_lock: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not isinstance(node_lock, dict):
+        return None
+    targets = node_lock.get("node_locks", [])
+    if not isinstance(targets, list) or not targets:
+        return None
+    values = []
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        confidence = target.get("confidence")
+        if isinstance(confidence, (int, float)):
+            values.append(float(confidence))
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
+def _confidence_tag(confidence: Optional[float]) -> str:
+    if confidence is None:
+        return "unknown"
+    if confidence >= 0.75:
+        return "high"
+    if confidence >= 0.4:
+        return "medium"
+    return "low"
+
+
+def _is_local_request(llm_config: Dict[str, Any]) -> bool:
+    provider = str(llm_config.get("provider", "")).strip().lower()
+    preset = str(llm_config.get("preset", "")).strip().lower()
+    return provider == "local" or preset.startswith("local_")
+
+
+def _enforce_local_production_policy(llm_config: Dict[str, Any]) -> None:
+    if not ENFORCE_PRIMARY_LOCAL_ONLY or not _is_local_request(llm_config):
+        return
+    mode = str(llm_config.get("mode", "")).strip().lower()
+    requested_model = str(llm_config.get("model", "")).strip()
+    requested_preset = str(llm_config.get("preset", "")).strip()
+    if mode == "benchmark":
+        return
+    if requested_model and requested_model != DEFAULT_LOCAL_MODEL:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Local production policy enforces model={DEFAULT_LOCAL_MODEL}; use mode=benchmark for challengers.",
+        )
+    if requested_preset and requested_preset != "local_qwen3_coder_30b":
+        raise HTTPException(
+            status_code=400,
+            detail="Local production policy only allows preset local_qwen3_coder_30b unless mode=benchmark.",
+        )
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
@@ -204,6 +284,7 @@ def health() -> Dict[str, Any]:
         "llm_default_provider": DEFAULT_LLM_CONFIG["provider"],
         "llm_default_model": DEFAULT_LLM_CONFIG["model"],
         "ev_keep_margin": DEFAULT_EV_KEEP_MARGIN,
+        "enforce_primary_local_only": ENFORCE_PRIMARY_LOCAL_ONLY,
     }
 
 
@@ -212,6 +293,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     bridge_started = time.perf_counter()
     _validate_spot(request.spot)
     shark_cli = _resolve_shark_cli()
+    llm_config = dict(request.llm or DEFAULT_LLM_CONFIG)
+    _enforce_local_production_policy(llm_config)
 
     # Pass 1: baseline (no lock) is always computed first.
     baseline_run = _run_shark_cli(
@@ -224,12 +307,15 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     baseline_result = baseline_run["result"]
     baseline_solver_time = baseline_run["solver_wall_time_sec"]
     allowed_root_actions = _extract_allowed_root_actions(baseline_result)
+    node_lock_catalog = _extract_node_lock_catalog(baseline_result)
 
     llm_started = time.perf_counter()
     llm_error = None
     node_lock = None
-    llm_config = dict(request.llm or DEFAULT_LLM_CONFIG)
     llm_config["allowed_root_actions"] = allowed_root_actions
+    llm_config["node_lock_catalog"] = node_lock_catalog
+    llm_config["opponent_profile"] = dict(request.opponent_profile or {})
+    llm_config["enable_multi_node_locks"] = bool(request.enable_multi_node_locks)
     try:
         node_lock = get_llm_intuition(request.spot, llm_config)
     except Exception as exc:  # pylint: disable=broad-except
@@ -286,6 +372,13 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     else:
         selection_reason = "locked_result_missing_metric_using_baseline"
 
+    lock_confidence = _avg_lock_confidence(node_lock)
+    lock_quality_score = (
+        (0.5 if node_lock_kept else 0.0)
+        + (0.3 if bool(result.get("node_lock", {}).get("applied", False)) else 0.0)
+        + (0.2 if exploitability_delta is not None and exploitability_delta < 0.0 else 0.0)
+    )
+
     total_bridge_time = time.perf_counter() - bridge_started
 
     return {
@@ -315,6 +408,14 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 (locked_exp is not None and baseline_exp is not None and locked_exp < (baseline_exp - request.ev_keep_margin))
                 if request.auto_select_best
                 else None
+            ),
+            "lock_confidence": lock_confidence,
+            "lock_confidence_tag": _confidence_tag(lock_confidence),
+            "lock_quality_score": lock_quality_score,
+            "node_lock_target_count": (
+                len(node_lock.get("node_locks", []))
+                if isinstance(node_lock, dict) and isinstance(node_lock.get("node_locks"), list)
+                else 0
             ),
             "llm_error": llm_error,
         },

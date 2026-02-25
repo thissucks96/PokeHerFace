@@ -49,13 +49,16 @@ def main() -> int:
         default="mock",
         help=(
             "LLM preset selector: mock | openai_fast | openai_mini | openai_52 | "
-            "local_gpt_oss_20b | local_qwen3_coder_30b | local_deepseek_coder_33b"
+            "local_gpt_oss_20b | local_qwen3_coder_30b | local_deepseek_coder_33b | local_llama3_8b"
         ),
     )
     parser.add_argument("--llm-provider", help="Override provider: mock | openai | local")
     parser.add_argument("--llm-model", help="Override model name for selected provider.")
     parser.add_argument("--llm-base-url", help="Override base URL for provider endpoint.")
     parser.add_argument("--llm-temperature", type=float, help="Override LLM temperature.")
+    parser.add_argument("--opponent-profile-json", help="Inline opponent profile JSON string.")
+    parser.add_argument("--opponent-profile-file", help="Path to opponent profile JSON file.")
+    parser.add_argument("--enable-multi-node-locks", action="store_true", help="Enable multi-node lock generation.")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -85,6 +88,12 @@ def main() -> int:
         request_payload["llm"]["base_url"] = args.llm_base_url
     if args.llm_temperature is not None:
         request_payload["llm"]["temperature"] = args.llm_temperature
+    if args.opponent_profile_json:
+        request_payload["opponent_profile"] = json.loads(args.opponent_profile_json)
+    if args.opponent_profile_file:
+        request_payload["opponent_profile"] = load_json(Path(args.opponent_profile_file))
+    if args.enable_multi_node_locks:
+        request_payload["enable_multi_node_locks"] = True
 
     response = requests.post(args.endpoint, json=request_payload, timeout=args.timeout)
     response.raise_for_status()

@@ -2,31 +2,48 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "NodeLock",
   "type": "object",
-  "required": ["node_id", "street", "locks"],
+  "required": ["node_locks"],
   "properties": {
-    "node_id": {
-      "type": "string"
-    },
-    "street": {
-      "type": "string",
-      "enum": ["flop", "turn", "river"]
-    },
-    "locks": {
+    "node_locks": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["action", "frequency"],
+        "required": ["node_id", "street", "locks"],
         "properties": {
-          "action": {
+          "node_id": {
             "type": "string"
           },
-          "frequency": {
+          "street": {
+            "type": "string",
+            "enum": ["flop", "turn", "river"]
+          },
+          "confidence": {
             "type": "number",
             "minimum": 0.0,
             "maximum": 1.0
           },
-          "notes": {
-            "type": "string"
+          "locks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["action", "frequency"],
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "frequency": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
           }
         },
         "additionalProperties": true
