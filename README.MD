@@ -20,6 +20,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - legal-action-constrained lock generation,
   - locked solve,
   - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.005`).
+- Spot pack tooling is available via `4_LLM_Bridge/build_spot_pack.py` for bulk PHH -> tagged spot conversion with manifest/report output.
 - LLM provider selection is supported in the bridge:
   - mock
   - OpenAI API (`gpt-4o-mini`, `gpt-4o`)

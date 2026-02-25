@@ -14,6 +14,7 @@ This folder now contains the Python orchestration layer that:
 - `llm_client.py`: provider router for `mock`, `openai`, and `local` LLM calls.
 - `bridge_client.py`: test client that posts spot JSON to `bridge_server.py`.
 - `phh_to_spot.py`: converts `.phh` hand history files into `spot.json`.
+- `build_spot_pack.py`: bulk PHH -> spot pack builder with tags + validation + report.
 - `benchmark_models.py`: runs capped model benchmarks against `/solve`.
 - `node_lock_schema.json`: schema reference.
 - `examples/`: sample payloads.
@@ -171,6 +172,49 @@ python .\4_LLM_Bridge\bridge_client.py `
   --llm-preset local_gpt_oss_20b `
   --compute-baseline-delta
 ```
+
+## Build Spot Pack
+
+Bulk-build a tagged spot pack from a PHH directory:
+
+```powershell
+python .\4_LLM_Bridge\build_spot_pack.py `
+  --phh-dir .\3_Hand_Histories\poker-hand-histories `
+  --output-dir .\4_LLM_Bridge\examples\spot_pack\spots `
+  --street turn `
+  --report .\4_LLM_Bridge\examples\spot_pack\spot_pack_report.json `
+  --output-manifest .\4_LLM_Bridge\examples\spot_pack\spot_pack_manifest.jsonl
+```
+
+With explicit tags/metadata via manifest (`.json`, `.jsonl`, or `.csv`):
+
+```powershell
+python .\4_LLM_Bridge\build_spot_pack.py `
+  --phh-dir .\3_Hand_Histories\poker-hand-histories `
+  --manifest .\4_LLM_Bridge\examples\spot_pack\manifest.jsonl `
+  --output-dir .\4_LLM_Bridge\examples\spot_pack\spots `
+  --report .\4_LLM_Bridge\examples\spot_pack\spot_pack_report.json `
+  --output-manifest .\4_LLM_Bridge\examples\spot_pack\spot_pack_manifest.jsonl
+```
+
+Example manifest entry:
+
+```json
+{
+  "id": "dwan_ivey_2009_turn",
+  "phh": "dwan-ivey-2009.phh",
+  "street": "turn",
+  "texture": "rainbow",
+  "depth": "deep_3bp",
+  "position": "ip"
+}
+```
+
+Tag values:
+
+- `texture`: `monotone | paired | connected | rainbow | two_tone | unknown`
+- `depth`: `shallow_srp | deep_3bp | unknown`
+- `position`: `ip | oop | unknown`
 
 ## Batch Benchmarking (Hard-Capped)
 
