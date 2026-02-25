@@ -22,11 +22,18 @@ struct NodeLockItem {
   std::string notes;
 };
 
-struct NodeLockData {
-  bool provided{false};
+struct NodeLockTarget {
   std::string node_id;
   std::string street;
   std::vector<NodeLockItem> locks;
+  float confidence{-1.0f};
+  bool applied{false};
+  int applications{0};
+};
+
+struct NodeLockData {
+  bool provided{false};
+  std::vector<NodeLockTarget> targets;
   bool applied{false};
   int applications{0};
 };

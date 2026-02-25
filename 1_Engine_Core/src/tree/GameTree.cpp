@@ -66,7 +66,7 @@ auto GameTree::build_action(std::unique_ptr<ActionNode> node,
 auto GameTree::build_action_nodes(const Node *parent, const GameState &state)
     -> std::unique_ptr<Node> {
   using ActionType = Action::ActionType;
-  auto action_node = std::make_unique<ActionNode>(parent, state.current->_id);
+  auto action_node = std::make_unique<ActionNode>(parent, state.current->_id, state.node_path);
   const std::vector<ActionType> types{ActionType::FOLD, ActionType::CHECK,
                                       ActionType::CALL, ActionType::BET,
                                       ActionType::RAISE};

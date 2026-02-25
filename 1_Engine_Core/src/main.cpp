@@ -56,6 +56,12 @@ struct ActionSummary {
   float avg_frequency{0.0f};
 };
 
+struct NodeLockCatalogEntry {
+  std::string node_id;
+  std::string street;
+  std::vector<std::string> actions;
+};
+
 struct SolveResult {
   float final_exploitability{0.0f};
   double tree_build_seconds{0.0};
@@ -63,6 +69,7 @@ struct SolveResult {
   double total_seconds{0.0};
   TreeStatistics tree_stats{};
   std::vector<ActionSummary> root_actions;
+  std::vector<NodeLockCatalogEntry> node_lock_catalog;
 };
 
 auto default_thread_count() -> int {
@@ -89,6 +96,36 @@ auto action_to_string(const Action &action) -> std::string {
   return "unknown";
 }
 
+auto action_to_lock_key(const Action &action) -> std::string {
+  const std::string base = action_to_string(action);
+  if (action.type == Action::BET || action.type == Action::RAISE) {
+    return base + ":" + std::to_string(action.amount);
+  }
+  return base;
+}
+
+auto street_to_string(const Street street) -> std::string {
+  switch (street) {
+  case Street::FLOP:
+    return "flop";
+  case Street::TURN:
+    return "turn";
+  case Street::RIVER:
+    return "river";
+  }
+  return "flop";
+}
+
+auto street_from_board_size(const size_t size) -> Street {
+  if (size >= 5) {
+    return Street::RIVER;
+  }
+  if (size == 4) {
+    return Street::TURN;
+  }
+  return Street::FLOP;
+}
+
 void print_usage() {
   std::cout << "shark_cli usage:\n"
             << "  shark_cli\n"
@@ -98,7 +135,7 @@ void print_usage() {
             << "Options:\n"
             << "  --input      Path to solve input JSON.\n"
             << "  --output     Path to result output JSON.\n"
-            << "  --node-lock  Optional node-lock JSON payload (currently parsed/validated, not yet applied).\n"
+            << "  --node-lock  Optional node-lock JSON payload (applies matching lock targets by node_id/street).\n"
             << "  --quiet      Suppress progress logs in headless mode.\n"
             << "  --help       Show this help.\n";
 }
@@ -302,28 +339,27 @@ auto parse_solve_input(const json &spot) -> SolveInput {
   return input;
 }
 
-auto parse_node_lock(const std::optional<std::string> &node_lock_path) -> NodeLockData {
-  NodeLockData lock_data;
-  if (!node_lock_path.has_value()) {
-    return lock_data;
-  }
-  lock_data.provided = true;
-
-  const json payload = read_json_file(node_lock_path.value());
+auto parse_node_lock_target(const json &payload) -> NodeLockTarget {
   if (!payload.is_object()) {
-    throw std::runtime_error("node_lock.json must be an object.");
+    throw std::runtime_error("node_lock target must be an object.");
   }
 
+  NodeLockTarget target;
   if (payload.contains("node_id") && payload.at("node_id").is_string()) {
-    lock_data.node_id = payload.at("node_id").get<std::string>();
+    target.node_id = payload.at("node_id").get<std::string>();
+  } else {
+    target.node_id = "root";
   }
   if (payload.contains("street") && payload.at("street").is_string()) {
-    lock_data.street = payload.at("street").get<std::string>();
+    target.street = payload.at("street").get<std::string>();
+  }
+  if (payload.contains("confidence") && payload.at("confidence").is_number()) {
+    target.confidence = payload.at("confidence").get<float>();
   }
 
   if (payload.contains("locks")) {
     if (!payload.at("locks").is_array()) {
-      throw std::runtime_error("node_lock.json 'locks' must be an array.");
+      throw std::runtime_error("node_lock target 'locks' must be an array.");
     }
     for (const auto &item : payload.at("locks")) {
       if (!item.is_object()) {
@@ -336,12 +372,43 @@ auto parse_node_lock(const std::optional<std::string> &node_lock_path) -> NodeLo
       lock.action = item.at("action").get<std::string>();
       lock.frequency = item.at("frequency").get<float>();
       if (lock.frequency < 0.0f || lock.frequency > 1.0f) {
-        throw std::runtime_error("node_lock.json lock frequency must be in [0,1].");
+        throw std::runtime_error("node_lock lock frequency must be in [0,1].");
       }
       if (item.contains("notes") && item.at("notes").is_string()) {
         lock.notes = item.at("notes").get<std::string>();
       }
-      lock_data.locks.push_back(lock);
+      target.locks.push_back(lock);
+    }
+  }
+  return target;
+}
+
+auto parse_node_lock(const std::optional<std::string> &node_lock_path) -> NodeLockData {
+  NodeLockData lock_data;
+  if (!node_lock_path.has_value()) {
+    return lock_data;
+  }
+  lock_data.provided = true;
+
+  const json payload = read_json_file(node_lock_path.value());
+  if (!payload.is_object()) {
+    throw std::runtime_error("node_lock.json must be an object.");
+  }
+
+  if (payload.contains("node_locks")) {
+    if (!payload.at("node_locks").is_array()) {
+      throw std::runtime_error("node_lock.json 'node_locks' must be an array.");
+    }
+    for (const auto &entry : payload.at("node_locks")) {
+      NodeLockTarget target = parse_node_lock_target(entry);
+      if (!target.locks.empty()) {
+        lock_data.targets.push_back(std::move(target));
+      }
+    }
+  } else {
+    NodeLockTarget target = parse_node_lock_target(payload);
+    if (!target.locks.empty()) {
+      lock_data.targets.push_back(std::move(target));
     }
   }
 
@@ -384,6 +451,58 @@ auto summarize_root_actions(Node *root) -> std::vector<ActionSummary> {
   }
 
   return summary;
+}
+
+void collect_node_lock_catalog(Node *node, Street street, size_t limit,
+                               std::vector<NodeLockCatalogEntry> &out) {
+  if (!node || out.size() >= limit) {
+    return;
+  }
+
+  if (node->get_node_type() == NodeType::ACTION_NODE) {
+    auto *action_node = dynamic_cast<ActionNode *>(node);
+    if (!action_node) {
+      return;
+    }
+
+    NodeLockCatalogEntry entry;
+    entry.node_id = action_node->get_node_id();
+    entry.street = street_to_string(street);
+    entry.actions.reserve(static_cast<size_t>(action_node->get_num_actions()));
+    for (int i = 0; i < action_node->get_num_actions(); ++i) {
+      entry.actions.push_back(action_to_lock_key(action_node->get_action(i)));
+    }
+    out.push_back(std::move(entry));
+    if (out.size() >= limit) {
+      return;
+    }
+
+    for (int i = 0; i < action_node->get_num_actions(); ++i) {
+      collect_node_lock_catalog(action_node->get_child(i), street, limit, out);
+      if (out.size() >= limit) {
+        return;
+      }
+    }
+    return;
+  }
+
+  if (node->get_node_type() == NodeType::CHANCE_NODE) {
+    auto *chance_node = dynamic_cast<ChanceNode *>(node);
+    if (!chance_node) {
+      return;
+    }
+    const Street next_street =
+        chance_node->get_type() == ChanceNode::ChanceType::DEAL_TURN ? Street::TURN : Street::RIVER;
+    for (int i = 0; i < 52; ++i) {
+      if (!chance_node->get_child(i)) {
+        continue;
+      }
+      collect_node_lock_catalog(chance_node->get_child(i), next_street, limit, out);
+      if (out.size() >= limit) {
+        return;
+      }
+    }
+  }
 }
 
 auto run_solve(const SolveInput &input, NodeLockData *node_lock, bool verbose) -> SolveResult {
@@ -462,6 +581,7 @@ auto run_solve(const SolveInput &input, NodeLockData *node_lock, bool verbose) -
   result.final_exploitability =
       br.get_exploitability(root.get(), input.iterations, input.board, input.starting_pot, input.in_position_player);
   result.root_actions = summarize_root_actions(root.get());
+  collect_node_lock_catalog(root.get(), street_from_board_size(input.board.size()), 128, result.node_lock_catalog);
 
   if (verbose) {
     std::cout << "\n=== Results ===\n";
@@ -509,9 +629,35 @@ auto solve_result_to_json(const SolveResult &result, const SolveInput &input, co
         {{"action", action.action}, {"amount", action.amount}, {"avg_frequency", action.avg_frequency}});
   }
 
+  json node_lock_catalog = json::array();
+  for (const auto &entry : result.node_lock_catalog) {
+    node_lock_catalog.push_back(
+        {{"node_id", entry.node_id}, {"street", entry.street}, {"actions", entry.actions}});
+  }
+
   json warnings = json::array();
   if (lock_data.provided && !lock_data.applied) {
     warnings.push_back("node_lock payload was provided but no matching lock target was applied.");
+  }
+
+  json node_lock_targets = json::array();
+  for (const auto &target : lock_data.targets) {
+    node_lock_targets.push_back(
+        {{"node_id", target.node_id},
+         {"street", target.street},
+         {"lock_count", target.locks.size()},
+         {"confidence", target.confidence},
+         {"applied", target.applied},
+         {"applications", target.applications}});
+  }
+
+  std::string first_node_id;
+  std::string first_street;
+  size_t first_lock_count = 0;
+  if (!lock_data.targets.empty()) {
+    first_node_id = lock_data.targets.front().node_id;
+    first_street = lock_data.targets.front().street;
+    first_lock_count = lock_data.targets.front().locks.size();
   }
 
   return json{
@@ -521,10 +667,12 @@ auto solve_result_to_json(const SolveResult &result, const SolveInput &input, co
       {"node_lock",
        {{"provided", lock_data.provided},
         {"applied", lock_data.applied},
-        {"node_id", lock_data.node_id},
-        {"street", lock_data.street},
-        {"lock_count", lock_data.locks.size()},
-        {"applications", lock_data.applications}}},
+        {"node_id", first_node_id},
+        {"street", first_street},
+        {"lock_count", first_lock_count},
+        {"target_count", lock_data.targets.size()},
+        {"applications", lock_data.applications},
+        {"targets", node_lock_targets}}},
       {"tree_stats",
        {{"total_action_nodes", result.tree_stats.total_action_nodes},
         {"flop_action_nodes", result.tree_stats.flop_action_nodes},
@@ -541,6 +689,7 @@ auto solve_result_to_json(const SolveResult &result, const SolveInput &input, co
         {"total", result.total_seconds}}},
       {"final_exploitability_pct", result.final_exploitability},
       {"root_actions", root_actions},
+      {"node_lock_catalog", node_lock_catalog},
       {"warnings", warnings}};
 }
 

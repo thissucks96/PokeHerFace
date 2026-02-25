@@ -38,8 +38,45 @@ auto parse_int_suffix(const std::string &value) -> std::optional<int> {
   }
 }
 
+auto street_from_board(const std::vector<Card> &board) -> std::string {
+  if (board.size() >= 5) {
+    return "river";
+  }
+  if (board.size() == 4) {
+    return "turn";
+  }
+  return "flop";
+}
+
+auto normalize_node_key(const std::string &value) -> std::string {
+  std::string out = to_lower_copy(value);
+  out.erase(std::remove_if(out.begin(), out.end(),
+                           [](unsigned char c) { return std::isspace(c) != 0; }),
+            out.end());
+  return out;
+}
+
 auto is_root_action_node(const ActionNode *node) -> bool {
   return node && node->get_parent() == node;
+}
+
+auto target_matches_node(const std::string &target_node_id, const ActionNode *node) -> bool {
+  if (!node) {
+    return false;
+  }
+  const std::string normalized_target = normalize_node_key(target_node_id);
+  if (normalized_target.empty() || normalized_target == "root") {
+    return is_root_action_node(node);
+  }
+  return normalize_node_key(node->get_node_id()) == normalized_target;
+}
+
+auto target_matches_street(const std::string &target_street, const std::vector<Card> &board) -> bool {
+  const std::string normalized = normalize_node_key(target_street);
+  if (normalized.empty()) {
+    return true;
+  }
+  return normalized == street_from_board(board);
 }
 
 auto lock_matches_action(const NodeLockItem &lock, const Action &action) -> bool {
@@ -81,22 +118,17 @@ auto lock_matches_action(const NodeLockItem &lock, const Action &action) -> bool
   return false;
 }
 
-void apply_locked_root_strategy(const ActionNode *node, std::vector<float> &strategy,
-                                int num_hands, int num_actions, NodeLockData *node_lock,
-                                bool *lock_applied_for_node) {
-  if (!node_lock || !node_lock->provided || node_lock->node_id != "root" || !is_root_action_node(node)) {
-    return;
-  }
-
+auto apply_lock_target_strategy(const ActionNode *node, std::vector<float> &strategy,
+                                int num_hands, int num_actions, const NodeLockTarget &target) -> bool {
   if (num_hands <= 0 || num_actions <= 0) {
-    return;
+    return false;
   }
 
   std::vector<float> locked_values(static_cast<size_t>(num_actions), -1.0f);
   bool has_any_lock = false;
   for (int a = 0; a < num_actions; ++a) {
     const Action action = node->get_action(a);
-    for (const auto &lock : node_lock->locks) {
+    for (const auto &lock : target.locks) {
       if (!lock_matches_action(lock, action)) {
         continue;
       }
@@ -112,7 +144,7 @@ void apply_locked_root_strategy(const ActionNode *node, std::vector<float> &stra
   }
 
   if (!has_any_lock) {
-    return;
+    return false;
   }
 
   for (int h = 0; h < num_hands; ++h) {
@@ -176,11 +208,36 @@ void apply_locked_root_strategy(const ActionNode *node, std::vector<float> &stra
     }
   }
 
-  if (lock_applied_for_node) {
+  return true;
+}
+
+void apply_locked_strategy(const ActionNode *node, std::vector<float> &strategy,
+                           int num_hands, int num_actions, NodeLockData *node_lock,
+                           const std::vector<Card> &board, bool *lock_applied_for_node) {
+  if (!node_lock || !node_lock->provided || node_lock->targets.empty()) {
+    return;
+  }
+
+  bool any_applied = false;
+  for (auto &target : node_lock->targets) {
+    if (!target_matches_node(target.node_id, node)) {
+      continue;
+    }
+    if (!target_matches_street(target.street, board)) {
+      continue;
+    }
+    if (apply_lock_target_strategy(node, strategy, num_hands, num_actions, target)) {
+      target.applied = true;
+      target.applications += 1;
+      node_lock->applied = true;
+      node_lock->applications += 1;
+      any_applied = true;
+    }
+  }
+
+  if (any_applied && lock_applied_for_node) {
     *lock_applied_for_node = true;
   }
-  node_lock->applied = true;
-  node_lock->applications += 1;
 }
 } // namespace
 
@@ -275,7 +332,7 @@ void CFRHelper::action_node_utility(
   std::vector<float> strategy(num_hands * num_actions);
   node->get_trainer()->get_current_strat(strategy);
   bool lock_applied_for_node = false;
-  apply_locked_root_strategy(node, strategy, num_hands, num_actions, m_node_lock, &lock_applied_for_node);
+  apply_locked_strategy(node, strategy, num_hands, num_actions, m_node_lock, m_board, &lock_applied_for_node);
 
   std::vector<float> subgame_utils_flat(num_actions * m_num_hero_hands);
   auto get_utils = [&](int action, int hand) -> float& {

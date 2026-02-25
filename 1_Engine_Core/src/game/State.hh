@@ -6,6 +6,7 @@
 #include "card.h"
 #include <cassert>
 #include <memory>
+#include <string>
 
 using phevaluator::Card;
 
@@ -57,6 +58,7 @@ struct GameState {
   int turn_aggressor = -1;
 
   int street_raise_count = 0;
+  std::string node_path = "root";
 
   GameState() = default;
   GameState(const GameState &other)
@@ -67,7 +69,8 @@ struct GameState {
         minimum_raise_size(other.minimum_raise_size),
         flop_aggressor(other.flop_aggressor),
         turn_aggressor(other.turn_aggressor),
-        street_raise_count(other.street_raise_count) {
+        street_raise_count(other.street_raise_count),
+        node_path(other.node_path) {
     current = other.current->_id == 1 ? p1 : p2;
     last_to_act = other.last_to_act->_id == 1 ? p1 : p2;
   };
@@ -76,11 +79,13 @@ struct GameState {
     assert(board.size() == 3 &&
            "GameState set_turn: attempting to set an already set turn");
     board.push_back(card);
+    node_path += "/turn:" + card.describeCard();
   }
   void set_river(const Card card) {
     assert(board.size() == 4 &&
            "GameState set_river: attempting to set an already set river");
     board.push_back(card);
+    node_path += "/river:" + card.describeCard();
   }
   void set_pot(const int amt) { pot = amt; }
   int get_max_bet() const {
@@ -95,6 +100,26 @@ struct GameState {
   void init_last_to_act() { last_to_act = p1->has_position ? p1 : p2; }
 
   bool apply_action(const Action action) {
+    std::string action_key;
+    switch (action.type) {
+    case Action::FOLD:
+      action_key = "fold";
+      break;
+    case Action::CHECK:
+      action_key = "check";
+      break;
+    case Action::CALL:
+      action_key = "call";
+      break;
+    case Action::BET:
+      action_key = "bet:" + std::to_string(action.amount);
+      break;
+    case Action::RAISE:
+      action_key = "raise:" + std::to_string(action.amount);
+      break;
+    }
+    node_path += "/p" + std::to_string(current->_id) + ":" + action_key;
+
     switch (action.type) {
     case Action::FOLD:
       current->has_folded = true;

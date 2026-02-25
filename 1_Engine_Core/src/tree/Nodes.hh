@@ -8,6 +8,8 @@
 #include <array>
 #include <cassert>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 enum class NodeType { ACTION_NODE, CHANCE_NODE, TERMINAL_NODE };
@@ -32,11 +34,12 @@ class ActionNode : public Node {
   int m_num_hands;
   int m_num_actions;
   int m_player;
+  std::string m_node_id;
   std::unique_ptr<DCFR> m_dcfr;
 
 public:
-  ActionNode(const Node *parent, const int player)
-      : Node(parent, NodeType::ACTION_NODE), m_player(player) {}
+  ActionNode(const Node *parent, const int player, std::string node_id = "root")
+      : Node(parent, NodeType::ACTION_NODE), m_player(player), m_node_id(std::move(node_id)) {}
   void init(const int num_hands) {
     m_num_hands = num_hands;
     m_num_actions = m_actions.size();
@@ -49,6 +52,8 @@ public:
   auto get_actions() const -> const std::vector<Action> & { return m_actions; }
   auto get_num_hands() const -> int { return m_num_hands; }
   auto get_player() const -> int { return m_player; }
+  auto get_node_id() const -> const std::string & { return m_node_id; }
+  void set_node_id(std::string node_id) { m_node_id = std::move(node_id); }
 
   void push_child(std::unique_ptr<Node> child) {
     m_children.push_back(std::move(child));
