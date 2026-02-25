@@ -33,6 +33,10 @@ PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
         "provider": "local",
         "model": os.environ.get("LOCAL_MODEL_DEEPSEEK_CODER_33B", "deepseek-coder:33b"),
     },
+    "local_llama3_8b": {
+        "provider": "local",
+        "model": os.environ.get("LOCAL_MODEL_LLAMA3_8B", "llama3.1:8b"),
+    },
 }
 
 

@@ -118,6 +118,7 @@ Fast presets:
 - `local_gpt_oss_20b` (uses `gpt-oss:20b`)
 - `local_qwen3_coder_30b` (uses `qwen3-coder:30b`)
 - `local_deepseek_coder_33b` (uses `deepseek-coder:33b`)
+- `local_llama3_8b` (uses `llama3.1:8b`)
 
 Examples:
 
