@@ -20,6 +20,10 @@ TARGET_LIST_KEYS = ("node_locks", "targets", "locks_by_node", "lock_targets")
 TARGET_NODE_ID_KEYS = ("node_id", "node", "nodeId", "id", "path")
 TARGET_STREET_KEYS = ("street", "stage")
 TARGET_LOCKS_KEYS = ("locks", "actions", "strategy", "action_frequencies")
+try:
+    ROOT_CHECK_FLOOR = float(os.environ.get("ROOT_CHECK_FLOOR", "0.20"))
+except ValueError:
+    ROOT_CHECK_FLOOR = 0.20
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
@@ -423,6 +427,46 @@ def _aggregate_and_normalize_locks(locks: list[Dict[str, Any]]) -> list[Dict[str
     return normalized
 
 
+def _inject_root_check_floor_if_needed(
+    locks: list[Dict[str, Any]],
+    *,
+    node_id: str,
+    expected_street: str,
+    allowed_root_actions: Optional[list[str]],
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    if node_id != "root":
+        return locks
+    if expected_street not in {"turn", "river"}:
+        return locks
+    if not allowed_root_actions:
+        return locks
+    allowed = {str(a).strip().lower() for a in allowed_root_actions if str(a).strip()}
+    if "check" not in allowed:
+        return locks
+    check_floor = ROOT_CHECK_FLOOR
+    if check_floor <= 0.0:
+        return locks
+    if check_floor >= 1.0:
+        check_floor = 0.99
+
+    actions = {str(item.get("action", "")).strip().lower() for item in locks}
+    if "check" in actions or "call" in actions or "fold" in actions:
+        return locks
+    if not actions:
+        return locks
+    if not all(action.startswith("bet") or action.startswith("raise") for action in actions):
+        return locks
+
+    adjusted: list[Dict[str, Any]] = []
+    scale = 1.0 - check_floor
+    for item in locks:
+        adjusted.append({"action": item["action"], "frequency": float(item["frequency"]) * scale})
+    adjusted.append({"action": "check", "frequency": check_floor})
+    issues.append("root_check_floor_injected")
+    return _aggregate_and_normalize_locks(adjusted)
+
+
 def _normalize_confidence(value: Any) -> float:
     try:
         confidence = float(value)
@@ -594,6 +638,15 @@ def _normalize_target(
     normalized_locks = _aggregate_and_normalize_locks(normalized_locks)
     if not normalized_locks:
         raise ValueError("Node-lock target did not contain any valid lock entries.")
+    normalized_locks = _inject_root_check_floor_if_needed(
+        normalized_locks,
+        node_id=node_id,
+        expected_street=expected_street,
+        allowed_root_actions=allowed_actions,
+        issues=issues,
+    )
+    if not normalized_locks:
+        raise ValueError("Node-lock target did not contain any valid lock entries after root check floor repair.")
 
     return {
         "node_id": node_id,
