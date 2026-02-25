@@ -27,7 +27,8 @@ def _extract_actions(text: str) -> List[str]:
     if not m:
         return []
     block = m.group(1)
-    return re.findall(r'"([^"]+)"', block)
+    # Support PHH action arrays quoted with either single or double quotes.
+    return re.findall(r"""['"]([^'"]+)['"]""", block)
 
 
 def _parse_int_list(raw: str) -> List[int]:
@@ -51,6 +52,13 @@ def _parse_cards(card_blob: str) -> List[str]:
     if len(blob) % 2 != 0:
         return []
     return [blob[i : i + 2] for i in range(0, len(blob), 2)]
+
+
+def _normalize_token(raw: str) -> str:
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return value.strip()
 
 
 def _extract_board(actions: List[str]) -> List[str]:
@@ -77,7 +85,7 @@ def build_spot_from_phh(
     iterations: int,
     thread_count: int,
 ) -> dict:
-    variant = _extract_value_block(text, "variant").strip('"')
+    variant = _normalize_token(_extract_value_block(text, "variant"))
     if variant != "NT":
         raise ValueError(f"Unsupported PHH variant '{variant}'. Expected NT.")
 
@@ -165,4 +173,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
