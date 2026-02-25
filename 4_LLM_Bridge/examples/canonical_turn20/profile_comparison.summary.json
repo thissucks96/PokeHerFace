@@ -1,0 +1,44 @@
+{
+  "endpoint": "http://127.0.0.1:8000/solve",
+  "preset": "local_qwen3_coder_30b",
+  "ev_keep_margin": 0.001,
+  "spots_total": 20,
+  "cases": {
+    "control_no_profile": {
+      "calls_total": 20,
+      "calls_http_ok": 20,
+      "fallback_rate": 0.0,
+      "lock_applied_rate": 1.0,
+      "keep_rate": 1.0,
+      "delta_improved_rate": 1.0,
+      "exploitability_delta_avg_pct": -0.27871167957782744,
+      "llm_time_avg_sec": 0.8055923000028997,
+      "solver_time_avg_sec": 3.2837335500000338,
+      "total_bridge_time_avg_sec": 7.377025080000021,
+      "lock_confidence_avg": 0.85,
+      "lock_quality_avg_score": 1.0,
+      "target_count_avg": 1.0
+    },
+    "profile_vpip35_pfr25_agg18": {
+      "calls_total": 20,
+      "calls_http_ok": 20,
+      "fallback_rate": 0.0,
+      "lock_applied_rate": 1.0,
+      "keep_rate": 1.0,
+      "delta_improved_rate": 1.0,
+      "exploitability_delta_avg_pct": -0.27871167957782744,
+      "llm_time_avg_sec": 0.6560068150007282,
+      "solver_time_avg_sec": 3.2855251049993965,
+      "total_bridge_time_avg_sec": 7.2251035999972375,
+      "lock_confidence_avg": 0.85,
+      "lock_quality_avg_score": 1.0,
+      "target_count_avg": 1.0
+    }
+  },
+  "comparison": {
+    "exploitability_delta_avg_shift_pct": 0.0,
+    "keep_rate_shift": 0.0,
+    "fallback_rate_shift": 0.0,
+    "llm_time_avg_shift_sec": -0.1495854850021715
+  }
+}
