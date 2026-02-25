@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 from collections import Counter
@@ -126,9 +127,13 @@ def _coerce_int(value: Any, default: int) -> int:
         return default
 
 
-def _build_entry_defaults(phh_file: Path, street: str) -> Dict[str, Any]:
+def _build_entry_defaults(phh_file: Path, phh_dir: Path, street: str) -> Dict[str, Any]:
+    try:
+        rel_stem = phh_file.relative_to(phh_dir).with_suffix("").as_posix()
+    except ValueError:
+        rel_stem = phh_file.stem
     return {
-        "id": _slug(phh_file.stem),
+        "id": _slug(rel_stem),
         "phh": str(phh_file),
         "street": street,
         "texture": "unknown",
@@ -166,7 +171,7 @@ def main() -> int:
     if args.manifest:
         entries = _load_manifest(Path(args.manifest))
     else:
-        entries = [_build_entry_defaults(path, args.street) for path in _iter_phh_files(phh_dir)]
+        entries = [_build_entry_defaults(path, phh_dir, args.street) for path in _iter_phh_files(phh_dir)]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -276,7 +281,8 @@ def main() -> int:
             continue
         seen_signatures.add(signature)
 
-        filename = f"spot.{spot_id}.{street}.{texture}.{depth}.{position}.json"
+        source_hash = hashlib.sha1(str(phh_path).encode("utf-8")).hexdigest()[:10]
+        filename = f"spot.{spot_id}.{source_hash}.{street}.{texture}.{depth}.{position}.json"
         out_path = output_dir / filename
 
         spot.setdefault("meta", {})
