@@ -1,0 +1,67 @@
+{
+  "hero_range": "55+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
+  "villain_range": "33+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
+  "board": [
+    "3s",
+    "Jc",
+    "5d",
+    "5s"
+  ],
+  "in_position_player": 2,
+  "starting_stack": 10000,
+  "starting_pot": 150,
+  "minimum_bet": 100,
+  "all_in_threshold": 0.67,
+  "iterations": 5,
+  "min_exploitability": -1.0,
+  "thread_count": 14,
+  "remove_donk_bets": false,
+  "raise_cap": 3,
+  "compress_strategy": true,
+  "bet_sizing": {
+    "flop": {
+      "bet_sizes": [
+        0.5,
+        1.0
+      ],
+      "raise_sizes": [
+        1.0
+      ]
+    },
+    "turn": {
+      "bet_sizes": [
+        0.33,
+        0.66,
+        1.0
+      ],
+      "raise_sizes": [
+        0.5,
+        1.0
+      ]
+    },
+    "river": {
+      "bet_sizes": [
+        0.33,
+        0.66,
+        1.0
+      ],
+      "raise_sizes": [
+        0.5,
+        1.0
+      ]
+    }
+  },
+  "meta": {
+    "source": "phh",
+    "street_target": "turn",
+    "source_phh": "A:\\PokeHerFace\\Version1\\3_Hand_Histories\\poker-hand-histories\\pluribus\\100\\22.phh",
+    "spot_id": "poker_hand_histories_pluribus_100_22",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "canonical_pack": true,
+    "canonical_seed": 4090,
+    "canonical_index": 10,
+    "benchmark_mode": true
+  }
+}

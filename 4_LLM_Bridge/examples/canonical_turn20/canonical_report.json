@@ -1,0 +1,30 @@
+{
+  "street": "turn",
+  "count": 20,
+  "seed": 4090,
+  "benchmark_mode": true,
+  "input_total": 3858,
+  "texture_counts": {
+    "two_tone": 8,
+    "paired": 6,
+    "rainbow": 5,
+    "monotone": 1
+  },
+  "depth_counts": {
+    "unknown": 20
+  },
+  "position_counts": {
+    "unknown": 20
+  },
+  "stack_bucket_counts": {
+    "deep": 16,
+    "medium": 3,
+    "shallow": 1
+  },
+  "target_texture_alloc": {
+    "paired": 6,
+    "rainbow": 5,
+    "two_tone": 8,
+    "monotone": 1
+  }
+}

@@ -13,8 +13,15 @@ from typing import Dict, List
 import requests
 from requests import RequestException
 
+from llm_client import PRESET_CONFIGS
 
-MAX_CALLS_PER_MODEL = 10
+
+CLOUD_MAX_CALLS_PER_MODEL = 10
+
+
+def _is_cloud_preset(preset: str) -> bool:
+    cfg = PRESET_CONFIGS.get(preset, {})
+    return str(cfg.get("provider", "")).lower() == "openai"
 
 
 def load_json(path: Path) -> dict:
@@ -62,21 +69,35 @@ def main() -> int:
         help="LLM presets to benchmark.",
     )
     parser.add_argument("--calls-per-model", type=int, default=3, help="Calls per model preset (hard max 10).")
+    parser.add_argument(
+        "--max-calls-local",
+        type=int,
+        default=1000,
+        help="Cap for local presets. Cloud presets remain capped at 10.",
+    )
     parser.add_argument("--timeout", type=float, default=1200.0)
     parser.add_argument("--solver-timeout", type=int, default=1200)
     parser.add_argument("--compute-baseline-delta", action="store_true")
     parser.add_argument("--output", required=True, help="Path to output benchmark report JSON.")
     args = parser.parse_args()
 
-    calls = max(1, min(args.calls_per_model, MAX_CALLS_PER_MODEL))
-    if args.calls_per_model > MAX_CALLS_PER_MODEL:
-        print(f"Requested calls-per-model {args.calls_per_model} exceeds max {MAX_CALLS_PER_MODEL}; using {calls}.")
-
     spot = load_json(Path(args.spot))
 
-    report: Dict[str, dict] = {"endpoint": args.endpoint, "calls_per_model": calls, "models": {}}
+    report: Dict[str, dict] = {"endpoint": args.endpoint, "calls_per_model_requested": args.calls_per_model, "models": {}}
 
     for preset in args.presets:
+        if _is_cloud_preset(preset):
+            calls = max(1, min(args.calls_per_model, CLOUD_MAX_CALLS_PER_MODEL))
+            if args.calls_per_model > CLOUD_MAX_CALLS_PER_MODEL:
+                print(
+                    f"Requested calls-per-model {args.calls_per_model} exceeds cloud max "
+                    f"{CLOUD_MAX_CALLS_PER_MODEL} for {preset}; using {calls}."
+                )
+        else:
+            calls = max(1, min(args.calls_per_model, max(1, args.max_calls_local)))
+            if args.calls_per_model > args.max_calls_local:
+                print(f"Requested calls-per-model {args.calls_per_model} exceeds local max {args.max_calls_local}; using {calls}.")
+
         model_records: List[dict] = []
         print(f"\n==> Benchmarking preset: {preset} ({calls} calls)")
 
@@ -137,6 +158,8 @@ def main() -> int:
             )
 
         report["models"][preset] = {
+            "calls_per_model_effective": calls,
+            "provider": PRESET_CONFIGS.get(preset, {}).get("provider", "unknown"),
             "summary": summarize([r for r in model_records if r.get("status_code") == 200]),
             "records": model_records,
         }

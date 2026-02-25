@@ -21,6 +21,9 @@ This workspace is organized to keep the engine, neural models, hand history data
   - locked solve,
   - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.005`).
 - Spot pack tooling is available via `4_LLM_Bridge/build_spot_pack.py` for bulk PHH -> tagged spot conversion with manifest/report output.
+- Canonical acceptance tooling is available:
+  - `4_LLM_Bridge/build_canonical_pack.py` creates a fixed, stratified turn-20 pack.
+  - `4_LLM_Bridge/run_acceptance_gate.py` runs preflight filtering + pass/fail gate + EV noise calibration.
 - LLM provider selection is supported in the bridge:
   - mock
   - OpenAI API (`gpt-4o-mini`, `gpt-4o`)
@@ -113,7 +116,7 @@ This project combines:
 
 ### Near-Term Direction
 
-1. Benchmark local LLMs (`gpt-oss:20b`, Llama, DeepSeek) vs OpenAI presets on lock quality, latency, and solve outcomes.
-2. Keep `gpt-5-mini` as default API path and escalate difficult spots to `gpt-5.2`.
+1. Run canonical acceptance gate regularly and track `fallback_rate`, `lock_applied_rate`, and `keep_rate`.
+2. Benchmark local challengers (`gpt-oss:20b`, Qwen, DeepSeek) vs OpenAI presets on the same canonical pack.
 3. Expand node-lock support beyond root to node-path targeting.
-4. Automate PHH -> spot JSON conversion and batch solve orchestration.
+4. Continue PHH -> spot pack automation with stronger depth/position tagging coverage.

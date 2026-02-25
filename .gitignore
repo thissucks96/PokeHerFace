@@ -59,6 +59,10 @@ libs/*.zip
 4_LLM_Bridge/examples/solve_response*.json
 4_LLM_Bridge/examples/benchmark*.json
 4_LLM_Bridge/examples/spot.from_phh*.json
+4_LLM_Bridge/examples/benchmark_acceptance_*/
+4_LLM_Bridge/examples/run_logs/
+4_LLM_Bridge/runs/
+4_LLM_Bridge/examples/**/acceptance_records.json
 
 # vcpkg manifest install artifacts (local build outputs)
 1_Engine_Core/vcpkg_installed/

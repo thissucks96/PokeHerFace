@@ -1,0 +1,202 @@
+[
+  {
+    "index": 1,
+    "spot_path": "spots/spot_01.spot.poker_hand_histories_dwan_ivey_2009.77fa0279b8.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_dwan_ivey_2009.77fa0279b8.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 2,
+    "spot_path": "spots/spot_02.spot.poker_hand_histories_pluribus_100_0.7a09e7ffec.turn.paired.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_0.7a09e7ffec.turn.paired.unknown.unknown.json",
+    "street": "turn",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 3,
+    "spot_path": "spots/spot_03.spot.poker_hand_histories_pluribus_100_1.e6137c6c1f.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_1.e6137c6c1f.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 4,
+    "spot_path": "spots/spot_04.spot.poker_hand_histories_pluribus_100_11.186fb6b92c.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_11.186fb6b92c.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 5,
+    "spot_path": "spots/spot_05.spot.poker_hand_histories_pluribus_100_12.6fa74738fc.turn.paired.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_12.6fa74738fc.turn.paired.unknown.unknown.json",
+    "street": "turn",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 6,
+    "spot_path": "spots/spot_06.spot.poker_hand_histories_pluribus_100_13.8b806773a8.turn.rainbow.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_13.8b806773a8.turn.rainbow.unknown.unknown.json",
+    "street": "turn",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 7,
+    "spot_path": "spots/spot_07.spot.poker_hand_histories_pluribus_100_14.d3a8e34056.turn.paired.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_14.d3a8e34056.turn.paired.unknown.unknown.json",
+    "street": "turn",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 8,
+    "spot_path": "spots/spot_08.spot.poker_hand_histories_pluribus_100_17.0e583d34ad.turn.paired.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_17.0e583d34ad.turn.paired.unknown.unknown.json",
+    "street": "turn",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 9,
+    "spot_path": "spots/spot_09.spot.poker_hand_histories_pluribus_100_18.3e8da4c87c.turn.rainbow.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_18.3e8da4c87c.turn.rainbow.unknown.unknown.json",
+    "street": "turn",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 10,
+    "spot_path": "spots/spot_10.spot.poker_hand_histories_pluribus_100_22.390657edf7.turn.paired.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_22.390657edf7.turn.paired.unknown.unknown.json",
+    "street": "turn",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 11,
+    "spot_path": "spots/spot_11.spot.poker_hand_histories_pluribus_100_25.a1416710b1.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_25.a1416710b1.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 12,
+    "spot_path": "spots/spot_12.spot.poker_hand_histories_pluribus_100_29.34df07a78e.turn.rainbow.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_29.34df07a78e.turn.rainbow.unknown.unknown.json",
+    "street": "turn",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 13,
+    "spot_path": "spots/spot_13.spot.poker_hand_histories_pluribus_100_3.ad2ce62d05.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_3.ad2ce62d05.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 14,
+    "spot_path": "spots/spot_14.spot.poker_hand_histories_pluribus_100_4.79e158c6ba.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_4.79e158c6ba.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 15,
+    "spot_path": "spots/spot_15.spot.poker_hand_histories_pluribus_100_44.0bbd8b8553.turn.monotone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_44.0bbd8b8553.turn.monotone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "monotone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 16,
+    "spot_path": "spots/spot_16.spot.poker_hand_histories_pluribus_100_45.39bc6488ae.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_pluribus_100_45.39bc6488ae.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 17,
+    "spot_path": "spots/spot_17.spot.poker_hand_histories_wsop_2023_43_5_00_02_07.1d893ff02c.turn.rainbow.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_wsop_2023_43_5_00_02_07.1d893ff02c.turn.rainbow.unknown.unknown.json",
+    "street": "turn",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "medium"
+  },
+  {
+    "index": 18,
+    "spot_path": "spots/spot_18.spot.poker_hand_histories_wsop_2023_43_5_00_15_36.411ca50309.turn.rainbow.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_wsop_2023_43_5_00_15_36.411ca50309.turn.rainbow.unknown.unknown.json",
+    "street": "turn",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "medium"
+  },
+  {
+    "index": 19,
+    "spot_path": "spots/spot_19.spot.poker_hand_histories_wsop_2023_43_5_00_18_39.f58ad9418e.turn.paired.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_wsop_2023_43_5_00_18_39.f58ad9418e.turn.paired.unknown.unknown.json",
+    "street": "turn",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "medium"
+  },
+  {
+    "index": 20,
+    "spot_path": "spots/spot_20.spot.poker_hand_histories_wsop_2023_43_5_03_02_41.aa563bf23a.turn.two_tone.unknown.unknown.json",
+    "source_path": "3_Hand_Histories/spot_pack_runs/20260224_202331/spots/spot.poker_hand_histories_wsop_2023_43_5_03_02_41.aa563bf23a.turn.two_tone.unknown.unknown.json",
+    "street": "turn",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "shallow"
+  }
+]

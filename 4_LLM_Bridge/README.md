@@ -15,7 +15,9 @@ This folder now contains the Python orchestration layer that:
 - `bridge_client.py`: test client that posts spot JSON to `bridge_server.py`.
 - `phh_to_spot.py`: converts `.phh` hand history files into `spot.json`.
 - `build_spot_pack.py`: bulk PHH -> spot pack builder with tags + validation + report.
+- `build_canonical_pack.py`: deterministic stratified canonical pack builder (e.g., fixed turn-20 set).
 - `benchmark_models.py`: runs capped model benchmarks against `/solve`.
+- `run_acceptance_gate.py`: CI-style acceptance gate with preflight filtering and pass/fail thresholds.
 - `node_lock_schema.json`: schema reference.
 - `examples/`: sample payloads.
 
@@ -182,6 +184,7 @@ python .\4_LLM_Bridge\build_spot_pack.py `
   --phh-dir .\3_Hand_Histories\poker-hand-histories `
   --output-dir .\4_LLM_Bridge\examples\spot_pack\spots `
   --street turn `
+  --benchmark-mode `
   --report .\4_LLM_Bridge\examples\spot_pack\spot_pack_report.json `
   --output-manifest .\4_LLM_Bridge\examples\spot_pack\spot_pack_manifest.jsonl
 ```
@@ -216,15 +219,63 @@ Tag values:
 - `depth`: `shallow_srp | deep_3bp | unknown`
 - `position`: `ip | oop | unknown`
 
-## Batch Benchmarking (Hard-Capped)
+`--benchmark-mode` forces `remove_donk_bets=false` to keep benchmark action spaces non-trivial.
 
-`benchmark_models.py` enforces a max of 10 calls per model in one run.
+## Build Canonical Turn-20 Pack
+
+Create a fixed, stratified pack for repeatable acceptance runs:
+
+```powershell
+python .\4_LLM_Bridge\build_canonical_pack.py `
+  --spot-dir .\3_Hand_Histories\spot_pack_runs\20260224_202331\spots `
+  --output-dir .\4_LLM_Bridge\examples\canonical_turn20 `
+  --count 20 `
+  --street turn `
+  --seed 4090 `
+  --benchmark-mode
+```
+
+Outputs:
+
+- `canonical_manifest.json`
+- `canonical_report.json`
+- `spots/spot_XX.*.json`
+
+## Acceptance Gate (CI-Style)
+
+Run one command for preflight filtering, lock benchmarking, EV margin calibration, and pass/fail:
+
+```powershell
+python .\4_LLM_Bridge\run_acceptance_gate.py `
+  --canonical-manifest .\4_LLM_Bridge\examples\canonical_turn20\canonical_manifest.json `
+  --preset local_qwen3_coder_30b `
+  --calls-per-spot 1 `
+  --ev-keep-margin 0.005 `
+  --calibrate-noise-runs 3 `
+  --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.json
+```
+
+Gate criteria defaults:
+
+- `fallback_rate <= 0.05`
+- `lock_applied_rate >= 0.95`
+- `keep_rate > 0`
+
+The script exits non-zero on failure and writes a summary JSON with criteria, metrics, and preflight details.
+
+## Batch Benchmarking (Provider-Aware Caps)
+
+`benchmark_models.py` uses provider-aware call caps:
+
+- Cloud/OpenAI presets: hard cap `10`
+- Local presets: higher configurable cap via `--max-calls-local`
 
 ```powershell
 python .\4_LLM_Bridge\benchmark_models.py `
   --spot .\4_LLM_Bridge\examples\spot.sample.json `
   --presets local_gpt_oss_20b local_qwen3_coder_30b `
-  --calls-per-model 10 `
+  --calls-per-model 50 `
+  --max-calls-local 200 `
   --output .\4_LLM_Bridge\examples\benchmark.local.json
 ```
 
