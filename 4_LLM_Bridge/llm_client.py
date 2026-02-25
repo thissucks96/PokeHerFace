@@ -16,6 +16,10 @@ STREET_VALUES = {"flop", "turn", "river"}
 ACTION_PATTERN = re.compile(r"^(fold|check|call|bet|raise|bet:\d+|raise:\d+)$", re.IGNORECASE)
 ROOTISH_NODE_HINTS = {"root", "start", "initial", "node0", "node_0", "n0"}
 MAX_NODE_LOCK_TARGETS = 8
+TARGET_LIST_KEYS = ("node_locks", "targets", "locks_by_node", "lock_targets")
+TARGET_NODE_ID_KEYS = ("node_id", "node", "nodeId", "id", "path")
+TARGET_STREET_KEYS = ("street", "stage")
+TARGET_LOCKS_KEYS = ("locks", "actions", "strategy", "action_frequencies")
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
@@ -135,7 +139,11 @@ def _build_messages(
             "\"confidence\":0.0..1.0,\"locks\":[{\"action\":\"check|fold|call|bet|raise|bet:<amount>|raise:<amount>\","
             "\"frequency\":0.0..1.0}]}]}"
         )
-        multi_hint = "Keep frequencies normalized per target. Prefer 1-3 targets."
+        multi_hint = (
+            "Use node_id values from the candidate node catalog only. "
+            "Keep frequencies normalized per target. Prefer 1-3 targets. "
+            "If uncertain, return one valid root target only."
+        )
     else:
         schema_hint = (
             "{\"node_id\":\"root\",\"street\":\""
@@ -265,6 +273,54 @@ def _call_openai_compatible_chat(
     raise ValueError(f"LLM response content did not contain parseable JSON. parse_error={parse_error}; snippet={snippet!r}")
 
 
+def _call_local_with_retry(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[Dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    timeout_sec: float,
+    require_multi_node: bool,
+) -> Dict[str, Any]:
+    try:
+        return _call_openai_compatible_chat(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_sec=timeout_sec,
+        )
+    except Exception as first_exc:  # pylint: disable=broad-except
+        retry_messages = list(messages)
+        if require_multi_node:
+            retry_instruction = (
+                "Return ONLY one JSON object now. Use key node_locks with 1-3 targets. "
+                "Each target requires node_id, street, locks[]. No prose."
+            )
+        else:
+            retry_instruction = (
+                "Return ONLY one JSON object now. "
+                "Required keys: node_id, street, locks."
+            )
+        retry_messages.append({"role": "user", "content": retry_instruction})
+        try:
+            return _call_openai_compatible_chat(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                messages=retry_messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout_sec=timeout_sec,
+            )
+        except Exception as retry_exc:  # pylint: disable=broad-except
+            raise ValueError(f"{first_exc}; retry_failed={retry_exc}") from retry_exc
+
+
 def _normalize_node_id(raw_node_id: Any) -> str:
     node_id = str(raw_node_id or "").strip()
     if not node_id:
@@ -379,6 +435,100 @@ def _normalize_confidence(value: Any) -> float:
     return confidence
 
 
+def _coerce_frequency(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        freq = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("%"):
+            text = text[:-1].strip()
+            try:
+                freq = float(text) / 100.0
+            except ValueError:
+                return None
+        else:
+            try:
+                freq = float(text)
+            except ValueError:
+                return None
+    else:
+        return None
+    if freq < 0.0:
+        return 0.0
+    if freq > 1.0:
+        if freq <= 100.0:
+            return freq / 100.0
+        return 1.0
+    return freq
+
+
+def _first_present(payload: Dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
+    for key in keys:
+        if key in payload:
+            return payload.get(key)
+    return default
+
+
+def _coerce_locks(value: Any, target_payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    out: list[Dict[str, Any]] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                action = item.get("action")
+                if action is None:
+                    action = _first_present(item, ("move", "act", "name"))
+                freq = item.get("frequency")
+                if freq is None:
+                    freq = _first_present(item, ("probability", "weight", "freq", "pct", "percent"))
+                if action is None or freq is None:
+                    continue
+                parsed = _coerce_frequency(freq)
+                if parsed is None:
+                    continue
+                lock = {"action": action, "frequency": parsed}
+                if "notes" in item:
+                    lock["notes"] = str(item["notes"])
+                out.append(lock)
+            elif isinstance(item, str):
+                action = item.strip()
+                if action:
+                    out.append({"action": action, "frequency": 1.0})
+    elif isinstance(value, dict):
+        for action, freq in value.items():
+            parsed = _coerce_frequency(freq)
+            if parsed is None:
+                continue
+            out.append({"action": str(action), "frequency": parsed})
+
+    # Fallback: single action/frequency can be provided at target top-level.
+    if not out:
+        action = _first_present(target_payload, ("action", "move", "act"))
+        freq = _first_present(target_payload, ("frequency", "probability", "weight", "freq", "pct", "percent"))
+        parsed = _coerce_frequency(freq)
+        if action is not None and parsed is not None:
+            out.append({"action": str(action), "frequency": parsed})
+    return out
+
+
+def _extract_raw_targets(node_lock: Dict[str, Any]) -> list[Dict[str, Any]]:
+    # Primary list-like containers.
+    for key in TARGET_LIST_KEYS:
+        value = node_lock.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            # Allow {"node_id": {"bet:10":0.6, ...}, ...}
+            out: list[Dict[str, Any]] = []
+            for node_id, locks in value.items():
+                out.append({"node_id": str(node_id), "locks": locks})
+            if out:
+                return out
+    # Legacy/single object.
+    return [node_lock]
+
+
 def _normalize_target(
     target_payload: Dict[str, Any],
     *,
@@ -387,21 +537,21 @@ def _normalize_target(
     allowed_root_actions: Optional[list[str]],
     issues: list[str],
 ) -> Dict[str, Any]:
-    missing = [k for k in REQUIRED_TARGET_KEYS if k not in target_payload]
-    if missing:
-        raise ValueError(f"Node-lock target missing keys: {missing}")
-    if not isinstance(target_payload.get("locks"), list):
-        raise ValueError("Node-lock target key 'locks' must be a list.")
+    node_id_raw = _first_present(target_payload, TARGET_NODE_ID_KEYS, "root")
+    street_raw = _first_present(target_payload, TARGET_STREET_KEYS, "")
+    locks_raw = _first_present(target_payload, TARGET_LOCKS_KEYS)
+    if locks_raw is None:
+        locks_raw = target_payload.get("locks")
 
-    node_id = _normalize_node_id(target_payload.get("node_id", "root"))
+    node_id = _normalize_node_id(node_id_raw)
     if not node_id:
         node_id = "root"
-    street = str(target_payload.get("street", "")).strip().lower()
+    street = str(street_raw or "").strip().lower()
     allowed_streets = _allowed_lock_streets(expected_street)
     if street not in STREET_VALUES:
         if provider == "local":
             street = expected_street
-            issues.append("street_repaired_to_expected")
+            issues.append("street_repaired_to_expected_or_missing")
         else:
             raise ValueError("Node-lock street must be one of: flop, turn, river.")
     elif street not in allowed_streets:
@@ -411,9 +561,10 @@ def _normalize_target(
         else:
             raise ValueError(f"Node-lock street '{street}' not allowed from spot street '{expected_street}'.")
 
+    coerced_locks = _coerce_locks(locks_raw, target_payload)
     allowed_actions = [str(a).strip().lower() for a in (allowed_root_actions or []) if str(a).strip()]
     normalized_locks = []
-    for item in target_payload["locks"]:
+    for item in coerced_locks:
         if not isinstance(item, dict):
             continue
         if "action" not in item or "frequency" not in item:
@@ -422,14 +573,9 @@ def _normalize_target(
         action = _normalize_action_label(item["action"])
         if not ACTION_PATTERN.match(action):
             continue
-        try:
-            freq = float(item["frequency"])
-        except (TypeError, ValueError):
+        freq = _coerce_frequency(item["frequency"])
+        if freq is None:
             continue
-        if freq < 0.0:
-            freq = 0.0
-        elif freq > 1.0:
-            freq = 1.0
 
         # Only root can be constrained from baseline action legality right now.
         action_candidates = [action]
@@ -471,11 +617,18 @@ def _normalize_node_lock(
     expected_street = _detect_street(spot_json)
     issues: list[str] = []
 
-    if isinstance(node_lock.get("node_locks"), list):
-        raw_targets = [item for item in node_lock["node_locks"] if isinstance(item, dict)]
-    else:
-        # Backward compatibility: accept one target at root payload.
-        raw_targets = [node_lock]
+    raw_targets = _extract_raw_targets(node_lock)
+    # If a list exists but all entries are malformed, keep top-level as a salvage candidate.
+    if node_lock is not payload and isinstance(payload, dict):
+        raw_targets.extend(_extract_raw_targets(payload))
+    deduped_raw: list[Dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for item in raw_targets:
+        if id(item) in seen_ids:
+            continue
+        seen_ids.add(id(item))
+        deduped_raw.append(item)
+    raw_targets = deduped_raw
 
     normalized_targets = []
     for raw in raw_targets[:MAX_NODE_LOCK_TARGETS]:
@@ -554,6 +707,8 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
     temperature = float(resolved.get("temperature", 0.0))
     max_tokens = int(resolved.get("max_tokens", 400))
     timeout_sec = float(resolved.get("timeout_sec", 60.0))
+    local_base_url = str(resolved.get("base_url") or os.environ.get("LOCAL_LLM_BASE_URL") or "http://127.0.0.1:11434/v1")
+    local_api_key = str(resolved.get("api_key") or os.environ.get("LOCAL_LLM_API_KEY") or "local")
 
     try:
         if provider == "openai":
@@ -571,41 +726,16 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
                 timeout_sec=timeout_sec,
             )
         elif provider == "local":
-            base_url = str(resolved.get("base_url") or os.environ.get("LOCAL_LLM_BASE_URL") or "http://127.0.0.1:11434/v1")
-            api_key = str(resolved.get("api_key") or os.environ.get("LOCAL_LLM_API_KEY") or "local")
-            try:
-                payload = _call_openai_compatible_chat(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    timeout_sec=timeout_sec,
-                )
-            except Exception as first_exc:  # pylint: disable=broad-except
-                retry_messages = list(messages)
-                retry_messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Return ONLY one JSON object now. No prose, no markdown, no analysis. "
-                            "Required keys: node_id, street, locks."
-                        ),
-                    }
-                )
-                try:
-                    payload = _call_openai_compatible_chat(
-                        base_url=base_url,
-                        api_key=api_key,
-                        model=model,
-                        messages=retry_messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        timeout_sec=timeout_sec,
-                    )
-                except Exception as retry_exc:  # pylint: disable=broad-except
-                    raise ValueError(f"{first_exc}; retry_failed={retry_exc}") from retry_exc
+            payload = _call_local_with_retry(
+                base_url=local_base_url,
+                api_key=local_api_key,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout_sec=timeout_sec,
+                require_multi_node=enable_multi_node,
+            )
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
     except Exception as exc:  # pylint: disable=broad-except
@@ -628,6 +758,44 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
         )
     except Exception as exc:  # pylint: disable=broad-except
         if provider == "local":
+            if enable_multi_node:
+                # Multi-node fallback path: salvage with strict single-node request before mock fallback.
+                try:
+                    single_messages = _build_messages(
+                        spot_json,
+                        allowed_root_actions=allowed_root_actions,
+                        opponent_profile=opponent_profile,
+                        node_lock_catalog=node_lock_catalog,
+                        enable_multi_node=False,
+                    )
+                    retry_payload = _call_local_with_retry(
+                        base_url=local_base_url,
+                        api_key=local_api_key,
+                        model=model,
+                        messages=single_messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        timeout_sec=timeout_sec,
+                        require_multi_node=False,
+                    )
+                    node_lock = _normalize_node_lock(
+                        retry_payload,
+                        spot_json=spot_json,
+                        provider=provider,
+                        allowed_root_actions=allowed_root_actions,
+                        enable_multi_node=False,
+                    )
+                    node_lock.setdefault("meta", {})
+                    validation = node_lock["meta"].setdefault("validation", {})
+                    issues = validation.get("issues", [])
+                    if not isinstance(issues, list):
+                        issues = []
+                    issues.append("multi_node_retry_single_node")
+                    validation["issues"] = issues
+                    node_lock["meta"].update({"provider": provider, "model": model, "preset": resolved.get("preset", "")})
+                    return node_lock
+                except Exception as retry_exc:  # pylint: disable=broad-except
+                    exc = ValueError(f"{exc}; single_node_retry_failed={retry_exc}")
             node_lock = _mock_node_lock(spot_json, allowed_root_actions=allowed_root_actions)
             node_lock.setdefault("meta", {})
             node_lock["meta"]["fallback_reason"] = str(exc)
