@@ -91,6 +91,14 @@ Run A/B/C routing backtest (`baseline_gto`, `class1_live_shadow23`, `full_multi_
 .\scripts\test_backtest_abc.ps1 -Preset local_qwen3_coder_30b -MaxSpots 40
 ```
 
+Analyze River shadow diagnostics (where full multi-node underperforms class1-shadow):
+
+```powershell
+python .\4_LLM_Bridge\analyze_shadow_dumps.py `
+  --backtest-report .\4_LLM_Bridge\examples\backtest.abc.ps1.json `
+  --output .\4_LLM_Bridge\examples\backtest.shadow_diagnostics.json
+```
+
 Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 
 ```powershell

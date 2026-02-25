@@ -66,6 +66,7 @@ libs/*.zip
 4_LLM_Bridge/examples/**/acceptance_records.json
 4_LLM_Bridge/examples/**/acceptance_records*.json
 4_LLM_Bridge/examples/**/acceptance_summary.ci.json
+4_LLM_Bridge/examples/**/acceptance_summary*.ps1.json
 4_LLM_Bridge/examples/**/multinode_*_spots/
 4_LLM_Bridge/examples/**/multinode_*_spots.*
 4_LLM_Bridge/examples/**/multinode_*.tagged_manifest.json
