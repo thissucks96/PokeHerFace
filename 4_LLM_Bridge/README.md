@@ -23,6 +23,7 @@ Production local policy defaults to `qwen3-coder:30b` only; challenger local mod
 - `benchmark_models.py`: runs capped model benchmarks against `/solve`.
 - `run_acceptance_gate.py`: CI-style acceptance gate with preflight filtering and pass/fail thresholds.
 - `tag_spot_classes.py`: rollout class tagger for controlled multi-node experiments.
+- `run_true_backtest.py`: A/B/C routing comparison runner with bb/100 proxy, EV delta, fallback/keep, and p50/p95 latency.
 - `node_lock_schema.json`: schema reference.
 - `examples/`: sample payloads.
 
@@ -328,6 +329,34 @@ python .\4_LLM_Bridge\run_acceptance_gate.py `
   --multi-node-classes turn_probe_punish `
   --output .\4_LLM_Bridge\examples\canonical_turn20\acceptance_summary.multinode.json
 ```
+
+## Phase 10 Backtest Runner (A/B/C)
+
+Run routing comparison modes on the same spot set:
+
+- `baseline_gto`: direct `shark_cli` baseline solve (no LLM lock).
+- `class1_live_shadow23`: production routing policy (Class 1 live, Class 2/3 shadow).
+- `full_multi_node_benchmark`: benchmark override with full multi-node enabled.
+
+```powershell
+python .\4_LLM_Bridge\run_true_backtest.py `
+  --spot-dir .\4_LLM_Bridge\examples\canonical_turn20\multinode_class1_spots `
+  --spot-dir .\4_LLM_Bridge\examples\canonical_river20\spots `
+  --preset local_qwen3_coder_30b `
+  --modes baseline_gto class1_live_shadow23 full_multi_node_benchmark `
+  --ev-keep-margin 0.001 `
+  --seed 4090 `
+  --output .\4_LLM_Bridge\examples\backtest.abc.json
+```
+
+Primary outputs in `summaries`:
+
+- `bb100_avg`
+- `ev_delta_avg_pct`
+- `fallback_rate`
+- `keep_rate`
+- `latency_p50_sec`
+- `latency_p95_sec`
 
 Gate criteria defaults:
 
