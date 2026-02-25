@@ -46,14 +46,24 @@ def _detect_street(spot_json: Dict[str, Any]) -> str:
     return "flop"
 
 
-def _mock_node_lock(spot_json: Dict[str, Any]) -> Dict[str, Any]:
+def _pick_mock_action(allowed_root_actions: Optional[list[str]]) -> str:
+    if not allowed_root_actions:
+        return "check"
+    for candidate in ("check", "call", "fold"):
+        if candidate in allowed_root_actions:
+            return candidate
+    return allowed_root_actions[0]
+
+
+def _mock_node_lock(spot_json: Dict[str, Any], allowed_root_actions: Optional[list[str]] = None) -> Dict[str, Any]:
     street = _detect_street(spot_json)
+    action = _pick_mock_action(allowed_root_actions)
     return {
         "node_id": "root",
         "street": street,
         "locks": [
             {
-                "action": "check",
+                "action": action,
                 "frequency": 1.0,
                 "notes": "Mock LLM intuition for integration testing.",
             }
@@ -75,8 +85,9 @@ def _resolve_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return base
 
 
-def _build_messages(spot_json: Dict[str, Any]) -> list[Dict[str, str]]:
+def _build_messages(spot_json: Dict[str, Any], allowed_root_actions: Optional[list[str]]) -> list[Dict[str, str]]:
     expected_street = _detect_street(spot_json)
+    allowed_actions_list = ", ".join(allowed_root_actions or [])
     system_prompt = (
         "You are a poker node-lock assistant. Return ONLY a JSON object and no prose. "
         "Required schema: "
@@ -86,11 +97,13 @@ def _build_messages(spot_json: Dict[str, Any]) -> list[Dict[str, str]]:
         " Use node_id exactly \"root\" and street exactly \""
         + expected_street
         + "\"."
+        + (" Use ONLY these legal root actions: " + allowed_actions_list + "." if allowed_actions_list else "")
     )
     user_prompt = (
         "Given this solve spot payload, propose exploitative root node-lock frequencies.\n"
         "Return JSON only with no markdown fences and no commentary.\n"
-        f"{json.dumps(spot_json, ensure_ascii=True)}"
+        + ("Allowed root actions: " + allowed_actions_list + "\n" if allowed_actions_list else "")
+        + f"{json.dumps(spot_json, ensure_ascii=True)}"
     )
     return [
         {"role": "system", "content": system_prompt},
@@ -236,7 +249,73 @@ def _normalize_action_label(raw_action: Any) -> str:
     return action
 
 
-def _normalize_node_lock(payload: Dict[str, Any], *, spot_json: Dict[str, Any], provider: str) -> Dict[str, Any]:
+def _action_candidates_for_allowed(action: str, allowed_root_actions: list[str]) -> list[str]:
+    if not allowed_root_actions:
+        return [action]
+
+    allowed = [str(a).strip().lower() for a in allowed_root_actions if str(a).strip()]
+    allowed_set = set(allowed)
+    if action in allowed_set:
+        return [action]
+
+    base = action.split(":", 1)[0]
+    prefix_matches = [a for a in allowed if a.startswith(base + ":")]
+    direct_base = [a for a in allowed if a == base]
+
+    if base in {"bet", "raise"}:
+        if ":" in action and prefix_matches:
+            # Map sized action to nearest legal size.
+            try:
+                requested = int(action.split(":", 1)[1])
+                parsed = []
+                for candidate in prefix_matches:
+                    try:
+                        parsed.append((abs(int(candidate.split(":", 1)[1]) - requested), candidate))
+                    except (ValueError, IndexError):
+                        continue
+                if parsed:
+                    parsed.sort(key=lambda x: x[0])
+                    return [parsed[0][1]]
+            except (ValueError, IndexError):
+                pass
+        if direct_base:
+            return direct_base
+        if prefix_matches:
+            # Generic bet/raise can be split across legal sizes.
+            return prefix_matches
+        return []
+
+    if direct_base:
+        return direct_base
+    return []
+
+
+def _aggregate_and_normalize_locks(locks: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    by_action: Dict[str, float] = {}
+    for item in locks:
+        action = str(item.get("action", "")).strip().lower()
+        if not action:
+            continue
+        freq = float(item.get("frequency", 0.0))
+        by_action[action] = by_action.get(action, 0.0) + max(0.0, freq)
+
+    total = sum(by_action.values())
+    if total <= 0.0:
+        return []
+
+    normalized = []
+    for action, freq in sorted(by_action.items()):
+        normalized.append({"action": action, "frequency": freq / total})
+    return normalized
+
+
+def _normalize_node_lock(
+    payload: Dict[str, Any],
+    *,
+    spot_json: Dict[str, Any],
+    provider: str,
+    allowed_root_actions: Optional[list[str]],
+) -> Dict[str, Any]:
     node_lock = payload.get("node_lock") if isinstance(payload.get("node_lock"), dict) else payload
     if not isinstance(node_lock, dict):
         raise ValueError("Node-lock payload must be a JSON object.")
@@ -264,6 +343,7 @@ def _normalize_node_lock(payload: Dict[str, Any], *, spot_json: Dict[str, Any], 
         else:
             raise ValueError(f"Node-lock street '{street}' does not match board-derived street '{expected_street}'.")
 
+    allowed_actions = [str(a).strip().lower() for a in (allowed_root_actions or []) if str(a).strip()]
     normalized_locks = []
     for item in node_lock["locks"]:
         if not isinstance(item, dict):
@@ -274,10 +354,6 @@ def _normalize_node_lock(payload: Dict[str, Any], *, spot_json: Dict[str, Any], 
         action = _normalize_action_label(item["action"])
         if not ACTION_PATTERN.match(action):
             continue
-        if provider == "local" and (action.startswith("bet:") or action.startswith("raise:")):
-            # Local models often emit arbitrary numeric sizes that do not align with root action amounts.
-            # Coarsening to action class improves applicability in current root-lock-only pipeline.
-            action = action.split(":", 1)[0]
 
         try:
             freq = float(item["frequency"])
@@ -289,13 +365,20 @@ def _normalize_node_lock(payload: Dict[str, Any], *, spot_json: Dict[str, Any], 
         elif freq > 1.0:
             freq = 1.0
 
-        normalized = {"action": action, "frequency": freq}
-        if "notes" in item:
-            normalized["notes"] = str(item["notes"])
-        normalized_locks.append(normalized)
+        candidates = _action_candidates_for_allowed(action, allowed_actions) if allowed_actions else [action]
+        if not candidates:
+            continue
+        split_freq = freq / float(len(candidates))
+        for candidate in candidates:
+            normalized = {"action": candidate, "frequency": split_freq}
+            if "notes" in item:
+                normalized["notes"] = str(item["notes"])
+            normalized_locks.append(normalized)
+
+    normalized_locks = _aggregate_and_normalize_locks(normalized_locks)
 
     if not normalized_locks:
-        raise ValueError("Node-lock did not contain any valid lock entries.")
+        raise ValueError("Node-lock did not contain any valid legal lock entries.")
 
     freq_sum = sum(lock["frequency"] for lock in normalized_locks)
     if freq_sum <= 0.0:
@@ -310,9 +393,14 @@ def _normalize_node_lock(payload: Dict[str, Any], *, spot_json: Dict[str, Any], 
 def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     resolved = _resolve_config(config)
     provider = str(resolved.get("provider", "mock")).lower()
+    allowed_root_actions = resolved.get("allowed_root_actions")
+    if isinstance(allowed_root_actions, list):
+        allowed_root_actions = [str(a).strip().lower() for a in allowed_root_actions if str(a).strip()]
+    else:
+        allowed_root_actions = None
 
     if provider == "mock":
-        node_lock = _mock_node_lock(spot_json)
+        node_lock = _mock_node_lock(spot_json, allowed_root_actions=allowed_root_actions)
         node_lock.setdefault("meta", {})
         node_lock["meta"].update({"provider": "mock", "model": resolved.get("model", "mock-root-check")})
         return node_lock
@@ -321,7 +409,7 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
     if not model:
         raise ValueError("LLM model is required for non-mock providers.")
 
-    messages = _build_messages(spot_json)
+    messages = _build_messages(spot_json, allowed_root_actions=allowed_root_actions)
     temperature = float(resolved.get("temperature", 0.0))
     max_tokens = int(resolved.get("max_tokens", 400))
     timeout_sec = float(resolved.get("timeout_sec", 60.0))
@@ -381,7 +469,7 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
             raise ValueError(f"Unsupported LLM provider: {provider}")
     except Exception as exc:  # pylint: disable=broad-except
         if provider == "local":
-            node_lock = _mock_node_lock(spot_json)
+            node_lock = _mock_node_lock(spot_json, allowed_root_actions=allowed_root_actions)
             node_lock.setdefault("meta", {})
             node_lock["meta"]["fallback_reason"] = str(exc)
             node_lock["meta"]["fallback_applied"] = True
@@ -390,10 +478,15 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
         raise
 
     try:
-        node_lock = _normalize_node_lock(payload, spot_json=spot_json, provider=provider)
+        node_lock = _normalize_node_lock(
+            payload,
+            spot_json=spot_json,
+            provider=provider,
+            allowed_root_actions=allowed_root_actions,
+        )
     except Exception as exc:  # pylint: disable=broad-except
         if provider == "local":
-            node_lock = _mock_node_lock(spot_json)
+            node_lock = _mock_node_lock(spot_json, allowed_root_actions=allowed_root_actions)
             node_lock.setdefault("meta", {})
             node_lock["meta"]["fallback_reason"] = str(exc)
             node_lock["meta"]["fallback_applied"] = True

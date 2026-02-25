@@ -15,17 +15,21 @@ This workspace is organized to keep the engine, neural models, hand history data
 - `shark.exe` (GUI) builds and launches on Windows.
 - `shark_cli.exe` (headless) accepts JSON input/output for automated solves.
 - Root node-locks are enforced in CFR (`node_id: "root"`).
-- Python bridge server (`POST /solve`) is live and can call `shark_cli` end-to-end.
+- Python bridge server (`POST /solve`) runs a two-pass safety loop:
+  - baseline no-lock solve,
+  - legal-action-constrained lock generation,
+  - locked solve,
+  - automatic selection of better result (baseline if lock is worse/equal).
 - LLM provider selection is supported in the bridge:
   - mock
-  - OpenAI API (`gpt-5-mini`, `gpt-5.2`)
+  - OpenAI API (`gpt-4o-mini`, `gpt-4o`)
   - local OpenAI-compatible endpoints (for models like `gpt-oss:20b`, Llama, DeepSeek via local runtime)
 
 ## Current Limits
 
 - Non-root node ids are parsed but not enforced yet.
 - Hand-history ingestion from `3_Hand_Histories` into spot generation is not fully automated yet.
-- LLM quality benchmarking and routing policy tuning are still in progress.
+- LLM quality benchmarking and routing policy tuning are still in progress (current local front-runner: `qwen3-coder:30b`).
 
 ## Quick Start (Windows)
 

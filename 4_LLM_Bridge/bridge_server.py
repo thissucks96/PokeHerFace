@@ -27,7 +27,11 @@ class SolveRequest(BaseModel):
     quiet: bool = Field(default=True)
     compute_baseline_delta: bool = Field(
         default=False,
-        description="Run a no-lock baseline solve and report exploitability delta.",
+        description="Deprecated compatibility flag; baseline-vs-locked scoring now runs automatically.",
+    )
+    auto_select_best: bool = Field(
+        default=True,
+        description="If true, run baseline+locked and return whichever has lower exploitability.",
     )
     llm: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -139,6 +143,42 @@ def _run_shark_cli(
         }
 
 
+def _to_float_or_none(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
+    allowed: list[str] = []
+    root_actions = result_payload.get("root_actions", [])
+    if not isinstance(root_actions, list):
+        return allowed
+    for item in root_actions:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action", "")).strip().lower()
+        if not action:
+            continue
+        if action in {"bet", "raise"}:
+            amount = item.get("amount")
+            if isinstance(amount, (int, float)):
+                allowed.append(f"{action}:{int(amount)}")
+            else:
+                allowed.append(action)
+        else:
+            allowed.append(action)
+    # Preserve order but dedupe.
+    unique: list[str] = []
+    seen = set()
+    for action in allowed:
+        if action in seen:
+            continue
+        seen.add(action)
+        unique.append(action)
+    return unique
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
@@ -155,58 +195,103 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     _validate_spot(request.spot)
     shark_cli = _resolve_shark_cli()
 
-    llm_started = time.perf_counter()
-    try:
-        node_lock = get_llm_intuition(request.spot, request.llm)
-    except Exception as exc:  # pylint: disable=broad-except
-        raise HTTPException(status_code=502, detail=f"LLM intuition generation failed: {exc}") from exc
-    llm_elapsed = time.perf_counter() - llm_started
-
-    solve_run = _run_shark_cli(
+    # Pass 1: baseline (no lock) is always computed first.
+    baseline_run = _run_shark_cli(
         shark_cli,
         spot_payload=request.spot,
-        node_lock_payload=node_lock,
+        node_lock_payload=None,
         timeout_sec=request.timeout_sec,
         quiet=request.quiet,
     )
-    result = solve_run["result"]
-    solver_time = solve_run["solver_wall_time_sec"]
+    baseline_result = baseline_run["result"]
+    baseline_solver_time = baseline_run["solver_wall_time_sec"]
+    allowed_root_actions = _extract_allowed_root_actions(baseline_result)
 
-    baseline = None
-    baseline_solver_time = 0.0
-    exploitability_delta = None
-    if request.compute_baseline_delta:
-        baseline_run = _run_shark_cli(
+    llm_started = time.perf_counter()
+    llm_error = None
+    node_lock = None
+    llm_config = dict(request.llm or {})
+    llm_config["allowed_root_actions"] = allowed_root_actions
+    try:
+        node_lock = get_llm_intuition(request.spot, llm_config)
+    except Exception as exc:  # pylint: disable=broad-except
+        llm_error = str(exc)
+    llm_elapsed = time.perf_counter() - llm_started
+
+    locked_result = None
+    locked_solver_time = 0.0
+    if node_lock is not None:
+        locked_run = _run_shark_cli(
             shark_cli,
             spot_payload=request.spot,
-            node_lock_payload=None,
+            node_lock_payload=node_lock,
             timeout_sec=request.timeout_sec,
             quiet=request.quiet,
         )
-        baseline = baseline_run["result"]
-        baseline_solver_time = baseline_run["solver_wall_time_sec"]
-        locked = result.get("final_exploitability_pct")
-        un_locked = baseline.get("final_exploitability_pct")
-        if isinstance(locked, (int, float)) and isinstance(un_locked, (int, float)):
-            exploitability_delta = float(locked) - float(un_locked)
+        locked_result = locked_run["result"]
+        locked_solver_time = locked_run["solver_wall_time_sec"]
+
+    baseline_exp = _to_float_or_none(baseline_result.get("final_exploitability_pct"))
+    locked_exp = _to_float_or_none(locked_result.get("final_exploitability_pct")) if locked_result else None
+    exploitability_delta = (locked_exp - baseline_exp) if (locked_exp is not None and baseline_exp is not None) else None
+
+    selected_strategy = "baseline_gto"
+    selection_reason = "baseline_only"
+    result = baseline_result
+    node_lock_kept = False
+    if request.auto_select_best and locked_result is not None and baseline_exp is not None and locked_exp is not None:
+        if locked_exp < baseline_exp:
+            selected_strategy = "llm_locked"
+            selection_reason = "locked_result_improved_exploitability"
+            result = locked_result
+            node_lock_kept = True
+        else:
+            selected_strategy = "baseline_gto"
+            selection_reason = "locked_result_not_better_than_baseline"
+            result = baseline_result
+            node_lock_kept = False
+    elif locked_result is not None and not request.auto_select_best:
+        selected_strategy = "llm_locked"
+        selection_reason = "auto_select_best_disabled"
+        result = locked_result
+        node_lock_kept = True
+    elif locked_result is not None and baseline_exp is None and locked_exp is not None:
+        selected_strategy = "llm_locked"
+        selection_reason = "baseline_missing_metric"
+        result = locked_result
+        node_lock_kept = True
+    elif llm_error:
+        selection_reason = "llm_generation_failed_using_baseline"
+    elif node_lock is None:
+        selection_reason = "no_llm_lock_available_using_baseline"
+    else:
+        selection_reason = "locked_result_missing_metric_using_baseline"
 
     total_bridge_time = time.perf_counter() - bridge_started
 
     return {
         "status": "ok",
         "node_lock": node_lock,
+        "node_lock_kept": node_lock_kept,
+        "selected_strategy": selected_strategy,
+        "selection_reason": selection_reason,
+        "allowed_root_actions": allowed_root_actions,
         "result": result,
-        "baseline_result": baseline,
+        "baseline_result": baseline_result,
+        "locked_result": locked_result,
         "metrics": {
             "llm_time_sec": llm_elapsed,
-            "solver_time_sec": solver_time,
+            "solver_time_sec": locked_solver_time if selected_strategy == "llm_locked" else baseline_solver_time,
             "baseline_solver_time_sec": baseline_solver_time,
+            "locked_solver_time_sec": locked_solver_time,
             "total_bridge_time_sec": total_bridge_time,
             "lock_applied": bool(result.get("node_lock", {}).get("applied", False)),
             "lock_applications": result.get("node_lock", {}).get("applications", 0),
             "final_exploitability_pct": result.get("final_exploitability_pct"),
-            "baseline_exploitability_pct": baseline.get("final_exploitability_pct") if baseline else None,
+            "baseline_exploitability_pct": baseline_result.get("final_exploitability_pct"),
+            "locked_exploitability_pct": locked_result.get("final_exploitability_pct") if locked_result else None,
             "exploitability_delta_pct": exploitability_delta,
+            "llm_error": llm_error,
         },
     }
 
