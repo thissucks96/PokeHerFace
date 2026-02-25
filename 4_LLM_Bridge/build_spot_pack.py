@@ -155,7 +155,7 @@ def main() -> int:
     parser.add_argument("--output-manifest", required=True, help="Path to write result manifest .jsonl.")
     args = parser.parse_args()
 
-    phh_dir = Path(args.phh_dir)
+    phh_dir = Path(args.phh_dir).resolve()
     output_dir = Path(args.output_dir)
     report_path = Path(args.report)
     out_manifest_path = Path(args.output_manifest)
