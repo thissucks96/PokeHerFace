@@ -41,6 +41,10 @@ try:
     TURN_CANDIDATE_COUNT = int(os.environ.get("TURN_CANDIDATE_COUNT", "3"))
 except ValueError:
     TURN_CANDIDATE_COUNT = 3
+try:
+    RIVER_CANDIDATE_COUNT = int(os.environ.get("RIVER_CANDIDATE_COUNT", "1"))
+except ValueError:
+    RIVER_CANDIDATE_COUNT = 1
 
 
 class SolveRequest(BaseModel):
@@ -339,6 +343,7 @@ def health() -> Dict[str, Any]:
         "prod_river_multi_node_shadow": PROD_RIVER_MULTI_NODE_SHADOW,
         "benchmark_mode_bypass_routing": BENCHMARK_MODE_BYPASS_ROUTING,
         "turn_candidate_count": TURN_CANDIDATE_COUNT,
+        "river_candidate_count": RIVER_CANDIDATE_COUNT,
     }
 
 
@@ -368,11 +373,12 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     node_lock = None
     multi_node_enabled, multi_node_policy_reason, rollout_classes = _resolve_multi_node_policy(request, llm_config)
     spot_street = _detect_spot_street(request.spot)
+    candidate_target_count = TURN_CANDIDATE_COUNT if spot_street == "turn" else RIVER_CANDIDATE_COUNT
     candidate_mode_enabled = (
         multi_node_enabled
-        and spot_street == "turn"
+        and spot_street in {"turn", "river"}
         and _is_local_request(llm_config)
-        and TURN_CANDIDATE_COUNT > 1
+        and candidate_target_count > 1
     )
     llm_config["allowed_root_actions"] = allowed_root_actions
     llm_config["node_lock_catalog"] = node_lock_catalog
@@ -384,7 +390,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             llm_candidates = get_llm_intuition_candidates(
                 request.spot,
                 llm_config,
-                candidate_count=TURN_CANDIDATE_COUNT,
+                candidate_count=candidate_target_count,
             )
         else:
             node_lock = get_llm_intuition(request.spot, llm_config)
@@ -547,7 +553,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 else 0
             ),
             "llm_candidate_mode_enabled": candidate_mode_enabled,
-            "llm_candidate_target_count": TURN_CANDIDATE_COUNT if candidate_mode_enabled else 1,
+            "llm_candidate_target_count": candidate_target_count if candidate_mode_enabled else 1,
             "llm_candidate_generated_count": len(llm_candidates),
             "llm_candidate_solve_count": locked_candidate_solve_count,
             "llm_candidate_errors": candidate_errors,
