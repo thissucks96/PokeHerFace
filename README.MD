@@ -21,6 +21,11 @@ This workspace is organized to keep the engine, neural models, hand history data
   - locked solve,
   - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.001`).
 - Spot pack tooling is available via `4_LLM_Bridge/build_spot_pack.py` for bulk PHH -> tagged spot conversion with manifest/report output.
+- PHH opponent-feature extraction is available via `4_LLM_Bridge/extract_opponent_features.py`:
+  - `fold_to_turn_probe` (smoothed),
+  - `fold_to_river_bigbet` (smoothed),
+  - optional per-player profiles + pool profile.
+- Generated spot packs now include `spot.meta.opponent_profile` (pool profile by default) for LLM prompt conditioning.
 - Canonical acceptance tooling is available:
   - `4_LLM_Bridge/build_canonical_pack.py` creates fixed, stratified canonical packs across configurable streets (`--streets`, `--min-per-street`).
   - `4_LLM_Bridge/run_acceptance_gate.py` runs preflight filtering + pass/fail gate + EV noise calibration.
@@ -131,3 +136,4 @@ This project combines:
 2. Benchmark local challengers (`gpt-oss:20b`, Qwen, DeepSeek) vs OpenAI presets on the same canonical pack.
 3. Expand/validate multi-node lock prompts against canonical packs before enabling by default.
 4. Continue PHH -> spot pack automation with stronger depth/position tagging coverage.
+5. Expand opponent-feature set beyond baseline fold metrics (turn check-raise, river bluff rate, line-specific fold rates).

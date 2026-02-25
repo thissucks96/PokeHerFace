@@ -17,6 +17,8 @@ Production local policy defaults to `qwen3-coder:30b` only; challenger local mod
 - `bridge_client.py`: test client that posts spot JSON to `bridge_server.py`.
 - `phh_to_spot.py`: converts `.phh` hand history files into `spot.json`.
 - `build_spot_pack.py`: bulk PHH -> spot pack builder with tags + validation + report.
+- `extract_opponent_features.py`: PHH -> smoothed opponent profile extraction (`fold_to_turn_probe`, `fold_to_river_bigbet`).
+- `phh_features/`: parser + feature + aggregation modules used by extraction and spot-pack enrichment.
 - `build_canonical_pack.py`: deterministic stratified canonical pack builder (e.g., fixed turn-20 set).
 - `benchmark_models.py`: runs capped model benchmarks against `/solve`.
 - `run_acceptance_gate.py`: CI-style acceptance gate with preflight filtering and pass/fail thresholds.
@@ -196,6 +198,7 @@ python .\4_LLM_Bridge\build_spot_pack.py `
   --phh-dir .\3_Hand_Histories\poker-hand-histories `
   --output-dir .\4_LLM_Bridge\examples\spot_pack\spots `
   --street turn `
+  --opponent-profile-mode pool `
   --benchmark-mode `
   --report .\4_LLM_Bridge\examples\spot_pack\spot_pack_report.json `
   --output-manifest .\4_LLM_Bridge\examples\spot_pack\spot_pack_manifest.jsonl
@@ -232,6 +235,27 @@ Tag values:
 - `position`: `ip | oop | unknown`
 
 `--benchmark-mode` forces `remove_donk_bets=false` to keep benchmark action spaces non-trivial.
+
+Opponent-profile enrichment options:
+
+- `--opponent-profile-mode off|pool` (default `pool`)
+- `--opponent-alpha` / `--opponent-beta` (default `2.0`, `2.0`)
+- `--opponent-big-bet-threshold` (default `0.75`)
+- Generated spots include `meta.opponent_profile` with smoothed fold metrics.
+
+## Extract Opponent Features
+
+```powershell
+python .\4_LLM_Bridge\extract_opponent_features.py `
+  --phh-dir .\3_Hand_Histories\poker-hand-histories `
+  --output .\4_LLM_Bridge\examples\opponent_features.summary.json `
+  --profiles-jsonl .\4_LLM_Bridge\examples\opponent_features.players.jsonl
+```
+
+This computes smoothed baseline metrics:
+
+- `fold_to_turn_probe`
+- `fold_to_river_bigbet`
 
 ## Build Canonical Turn-20 Pack
 
