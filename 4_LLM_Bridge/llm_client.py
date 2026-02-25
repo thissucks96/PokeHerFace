@@ -24,6 +24,10 @@ try:
     ROOT_CHECK_FLOOR = float(os.environ.get("ROOT_CHECK_FLOOR", "0.20"))
 except ValueError:
     ROOT_CHECK_FLOOR = 0.20
+try:
+    RIVER_MAX_TARGETS = int(os.environ.get("RIVER_MAX_TARGETS", "1"))
+except ValueError:
+    RIVER_MAX_TARGETS = 1
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
@@ -467,6 +471,24 @@ def _inject_root_check_floor_if_needed(
     return _aggregate_and_normalize_locks(adjusted)
 
 
+def _cap_river_targets_if_needed(
+    targets: list[Dict[str, Any]],
+    *,
+    expected_street: str,
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    if expected_street != "river":
+        return targets
+    cap = RIVER_MAX_TARGETS
+    if cap <= 0:
+        return targets
+    if len(targets) <= cap:
+        return targets
+    # Keep earliest targets (root is usually first after normalization).
+    issues.append(f"river_target_cap_applied:{cap}")
+    return targets[:cap]
+
+
 def _normalize_confidence(value: Any) -> float:
     try:
         confidence = float(value)
@@ -707,6 +729,12 @@ def _normalize_node_lock(
             raise ValueError("Single-node mode requires a root lock target.")
         normalized_targets = [root_targets[0]]
         issues.append("single_node_mode_enforced")
+    else:
+        normalized_targets = _cap_river_targets_if_needed(
+            normalized_targets,
+            expected_street=expected_street,
+            issues=issues,
+        )
 
     first_target = normalized_targets[0]
     return {
