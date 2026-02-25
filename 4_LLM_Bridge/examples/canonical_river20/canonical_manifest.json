@@ -1,0 +1,202 @@
+[
+  {
+    "index": 1,
+    "spot_path": "spots/spot_01.spot.dwan_ivey_2009.77fa0279b8.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.dwan_ivey_2009.77fa0279b8.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 2,
+    "spot_path": "spots/spot_02.spot.pluribus_100_0.7a09e7ffec.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_0.7a09e7ffec.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 3,
+    "spot_path": "spots/spot_03.spot.pluribus_100_11.186fb6b92c.river.two_tone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_11.186fb6b92c.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 4,
+    "spot_path": "spots/spot_04.spot.pluribus_100_12.6fa74738fc.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_12.6fa74738fc.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 5,
+    "spot_path": "spots/spot_05.spot.pluribus_100_14.d3a8e34056.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_14.d3a8e34056.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 6,
+    "spot_path": "spots/spot_06.spot.pluribus_100_17.0e583d34ad.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_17.0e583d34ad.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 7,
+    "spot_path": "spots/spot_07.spot.pluribus_100_18.3e8da4c87c.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_18.3e8da4c87c.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 8,
+    "spot_path": "spots/spot_08.spot.pluribus_100_22.390657edf7.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_22.390657edf7.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 9,
+    "spot_path": "spots/spot_09.spot.pluribus_100_25.a1416710b1.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_25.a1416710b1.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 10,
+    "spot_path": "spots/spot_10.spot.pluribus_100_31.f37d86bdfd.river.paired.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_31.f37d86bdfd.river.paired.unknown.unknown.json",
+    "street": "river",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 11,
+    "spot_path": "spots/spot_11.spot.pluribus_100_39.58f62042fa.river.rainbow.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_39.58f62042fa.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 12,
+    "spot_path": "spots/spot_12.spot.pluribus_100_4.79e158c6ba.river.two_tone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_4.79e158c6ba.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 13,
+    "spot_path": "spots/spot_13.spot.pluribus_100_47.92ed95dd96.river.rainbow.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_47.92ed95dd96.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 14,
+    "spot_path": "spots/spot_14.spot.pluribus_100_52.86bb5309aa.river.monotone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_52.86bb5309aa.river.monotone.unknown.unknown.json",
+    "street": "river",
+    "texture": "monotone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 15,
+    "spot_path": "spots/spot_15.spot.pluribus_100_64.18c2622a6c.river.two_tone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_64.18c2622a6c.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 16,
+    "spot_path": "spots/spot_16.spot.pluribus_100_9.ffacb7cd65.river.two_tone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100_9.ffacb7cd65.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 17,
+    "spot_path": "spots/spot_17.spot.pluribus_100b_102.559a239c5a.river.two_tone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.pluribus_100b_102.559a239c5a.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "deep"
+  },
+  {
+    "index": 18,
+    "spot_path": "spots/spot_18.spot.wsop_2023_43_5_00_02_07.1d893ff02c.river.rainbow.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.wsop_2023_43_5_00_02_07.1d893ff02c.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "medium"
+  },
+  {
+    "index": 19,
+    "spot_path": "spots/spot_19.spot.wsop_2023_43_5_00_15_36.411ca50309.river.rainbow.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.wsop_2023_43_5_00_15_36.411ca50309.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "medium"
+  },
+  {
+    "index": 20,
+    "spot_path": "spots/spot_20.spot.wsop_2023_43_5_03_02_41.aa563bf23a.river.two_tone.unknown.unknown.json",
+    "source_path": "4_LLM_Bridge/examples/river_spot_pack/spots/spot.wsop_2023_43_5_03_02_41.aa563bf23a.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "texture": "two_tone",
+    "depth": "unknown",
+    "position": "unknown",
+    "stack_bucket": "shallow"
+  }
+]

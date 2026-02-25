@@ -1,0 +1,176 @@
+{
+  "hero_range": "55+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
+  "villain_range": "33+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
+  "board": [
+    "Jc",
+    "Ts",
+    "2d",
+    "As",
+    "Qs"
+  ],
+  "in_position_player": 2,
+  "starting_stack": 2500000,
+  "starting_pot": 240000,
+  "minimum_bet": 80000,
+  "all_in_threshold": 0.67,
+  "iterations": 5,
+  "min_exploitability": -1.0,
+  "thread_count": 14,
+  "remove_donk_bets": false,
+  "raise_cap": 3,
+  "compress_strategy": true,
+  "bet_sizing": {
+    "flop": {
+      "bet_sizes": [
+        0.5,
+        1.0
+      ],
+      "raise_sizes": [
+        1.0
+      ]
+    },
+    "turn": {
+      "bet_sizes": [
+        0.33,
+        0.66,
+        1.0
+      ],
+      "raise_sizes": [
+        0.5,
+        1.0
+      ]
+    },
+    "river": {
+      "bet_sizes": [
+        0.33,
+        0.66,
+        1.0
+      ],
+      "raise_sizes": [
+        0.5,
+        1.0
+      ]
+    }
+  },
+  "meta": {
+    "source": "phh",
+    "street_target": "river",
+    "opponent_profile": {
+      "profile_source": "phh_features_v1",
+      "profile_mode": "pool",
+      "hands_seen": 59000,
+      "turn_probe_opportunities": 538,
+      "turn_probe_folds": 313,
+      "fold_to_turn_probe": 0.5811808118081181,
+      "river_bigbet_opportunities": 786,
+      "river_bigbet_folds": 530,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bluff_opportunities": 223,
+      "river_bluff_actions": 47,
+      "river_bluff_rate": 0.21585903083700442,
+      "alpha": 2.0,
+      "beta": 2.0,
+      "big_bet_threshold_pot_ratio": 0.75,
+      "hand_players": [
+        {
+          "player": "Matthew Ashton",
+          "hands_seen": 11,
+          "turn_probe_opportunities": 0,
+          "turn_probe_folds": 0,
+          "fold_to_turn_probe": 0.5,
+          "river_bigbet_opportunities": 0,
+          "river_bigbet_folds": 0,
+          "fold_to_river_bigbet": 0.5,
+          "river_bluff_opportunities": 0,
+          "river_bluff_actions": 0,
+          "river_bluff_rate": 0.5,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "Kristopher Tong",
+          "hands_seen": 11,
+          "turn_probe_opportunities": 0,
+          "turn_probe_folds": 0,
+          "fold_to_turn_probe": 0.5,
+          "river_bigbet_opportunities": 0,
+          "river_bigbet_folds": 0,
+          "fold_to_river_bigbet": 0.5,
+          "river_bluff_opportunities": 0,
+          "river_bluff_actions": 0,
+          "river_bluff_rate": 0.5,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "James Obst",
+          "hands_seen": 11,
+          "turn_probe_opportunities": 0,
+          "turn_probe_folds": 0,
+          "fold_to_turn_probe": 0.5,
+          "river_bigbet_opportunities": 0,
+          "river_bigbet_folds": 0,
+          "fold_to_river_bigbet": 0.5,
+          "river_bluff_opportunities": 0,
+          "river_bluff_actions": 0,
+          "river_bluff_rate": 0.5,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "Talal Shakerchi",
+          "hands_seen": 11,
+          "turn_probe_opportunities": 0,
+          "turn_probe_folds": 0,
+          "fold_to_turn_probe": 0.5,
+          "river_bigbet_opportunities": 0,
+          "river_bigbet_folds": 0,
+          "fold_to_river_bigbet": 0.5,
+          "river_bluff_opportunities": 0,
+          "river_bluff_actions": 0,
+          "river_bluff_rate": 0.5,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "Brian Rast",
+          "hands_seen": 11,
+          "turn_probe_opportunities": 0,
+          "turn_probe_folds": 0,
+          "fold_to_turn_probe": 0.5,
+          "river_bigbet_opportunities": 0,
+          "river_bigbet_folds": 0,
+          "fold_to_river_bigbet": 0.5,
+          "river_bluff_opportunities": 0,
+          "river_bluff_actions": 0,
+          "river_bluff_rate": 0.5,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        }
+      ]
+    },
+    "source_phh": "A:\\PokeHerFace\\Version1\\3_Hand_Histories\\poker-hand-histories\\wsop\\2023\\43\\5\\00-02-07.phh",
+    "spot_id": "wsop_2023_43_5_00_02_07",
+    "texture": "rainbow",
+    "depth": "unknown",
+    "position": "unknown",
+    "benchmark_mode": true,
+    "canonical_pack": true,
+    "canonical_seed": 4090,
+    "canonical_index": 18,
+    "rollout_classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "rollout_class_reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  }
+}

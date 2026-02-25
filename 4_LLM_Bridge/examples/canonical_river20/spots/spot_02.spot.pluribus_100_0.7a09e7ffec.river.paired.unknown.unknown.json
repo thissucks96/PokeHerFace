@@ -1,0 +1,192 @@
+{
+  "hero_range": "55+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
+  "villain_range": "33+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
+  "board": [
+    "7d",
+    "5h",
+    "9d",
+    "7c",
+    "Qh"
+  ],
+  "in_position_player": 2,
+  "starting_stack": 10000,
+  "starting_pot": 150,
+  "minimum_bet": 100,
+  "all_in_threshold": 0.67,
+  "iterations": 5,
+  "min_exploitability": -1.0,
+  "thread_count": 14,
+  "remove_donk_bets": false,
+  "raise_cap": 3,
+  "compress_strategy": true,
+  "bet_sizing": {
+    "flop": {
+      "bet_sizes": [
+        0.5,
+        1.0
+      ],
+      "raise_sizes": [
+        1.0
+      ]
+    },
+    "turn": {
+      "bet_sizes": [
+        0.33,
+        0.66,
+        1.0
+      ],
+      "raise_sizes": [
+        0.5,
+        1.0
+      ]
+    },
+    "river": {
+      "bet_sizes": [
+        0.33,
+        0.66,
+        1.0
+      ],
+      "raise_sizes": [
+        0.5,
+        1.0
+      ]
+    }
+  },
+  "meta": {
+    "source": "phh",
+    "street_target": "river",
+    "opponent_profile": {
+      "profile_source": "phh_features_v1",
+      "profile_mode": "pool",
+      "hands_seen": 59000,
+      "turn_probe_opportunities": 538,
+      "turn_probe_folds": 313,
+      "fold_to_turn_probe": 0.5811808118081181,
+      "river_bigbet_opportunities": 786,
+      "river_bigbet_folds": 530,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bluff_opportunities": 223,
+      "river_bluff_actions": 47,
+      "river_bluff_rate": 0.21585903083700442,
+      "alpha": 2.0,
+      "beta": 2.0,
+      "big_bet_threshold_pot_ratio": 0.75,
+      "hand_players": [
+        {
+          "player": "MrBlue",
+          "hands_seen": 8928,
+          "turn_probe_opportunities": 120,
+          "turn_probe_folds": 79,
+          "fold_to_turn_probe": 0.6532258064516129,
+          "river_bigbet_opportunities": 137,
+          "river_bigbet_folds": 97,
+          "fold_to_river_bigbet": 0.7021276595744681,
+          "river_bluff_opportunities": 50,
+          "river_bluff_actions": 15,
+          "river_bluff_rate": 0.3148148148148148,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "MrBlonde",
+          "hands_seen": 2508,
+          "turn_probe_opportunities": 21,
+          "turn_probe_folds": 14,
+          "fold_to_turn_probe": 0.64,
+          "river_bigbet_opportunities": 34,
+          "river_bigbet_folds": 21,
+          "fold_to_river_bigbet": 0.6052631578947368,
+          "river_bluff_opportunities": 2,
+          "river_bluff_actions": 1,
+          "river_bluff_rate": 0.5,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "MrWhite",
+          "hands_seen": 4403,
+          "turn_probe_opportunities": 34,
+          "turn_probe_folds": 18,
+          "fold_to_turn_probe": 0.5263157894736842,
+          "river_bigbet_opportunities": 60,
+          "river_bigbet_folds": 45,
+          "fold_to_river_bigbet": 0.734375,
+          "river_bluff_opportunities": 9,
+          "river_bluff_actions": 3,
+          "river_bluff_rate": 0.38461538461538464,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "MrPink",
+          "hands_seen": 5949,
+          "turn_probe_opportunities": 45,
+          "turn_probe_folds": 28,
+          "fold_to_turn_probe": 0.6122448979591837,
+          "river_bigbet_opportunities": 61,
+          "river_bigbet_folds": 39,
+          "fold_to_river_bigbet": 0.6307692307692307,
+          "river_bluff_opportunities": 20,
+          "river_bluff_actions": 3,
+          "river_bluff_rate": 0.20833333333333334,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "MrBrown",
+          "hands_seen": 1349,
+          "turn_probe_opportunities": 11,
+          "turn_probe_folds": 4,
+          "fold_to_turn_probe": 0.4,
+          "river_bigbet_opportunities": 21,
+          "river_bigbet_folds": 8,
+          "fold_to_river_bigbet": 0.4,
+          "river_bluff_opportunities": 5,
+          "river_bluff_actions": 0,
+          "river_bluff_rate": 0.2222222222222222,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        },
+        {
+          "player": "Pluribus",
+          "hands_seen": 9835,
+          "turn_probe_opportunities": 85,
+          "turn_probe_folds": 46,
+          "fold_to_turn_probe": 0.5393258426966292,
+          "river_bigbet_opportunities": 131,
+          "river_bigbet_folds": 81,
+          "fold_to_river_bigbet": 0.6148148148148148,
+          "river_bluff_opportunities": 38,
+          "river_bluff_actions": 8,
+          "river_bluff_rate": 0.23809523809523808,
+          "alpha": 2.0,
+          "beta": 2.0,
+          "big_bet_threshold_pot_ratio": 0.75
+        }
+      ]
+    },
+    "source_phh": "A:\\PokeHerFace\\Version1\\3_Hand_Histories\\poker-hand-histories\\pluribus\\100\\0.phh",
+    "spot_id": "pluribus_100_0",
+    "texture": "paired",
+    "depth": "unknown",
+    "position": "unknown",
+    "benchmark_mode": true,
+    "canonical_pack": true,
+    "canonical_seed": 4090,
+    "canonical_index": 2,
+    "rollout_classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "rollout_class_reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  }
+}

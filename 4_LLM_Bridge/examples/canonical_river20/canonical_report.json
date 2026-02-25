@@ -1,0 +1,35 @@
+{
+  "streets": [
+    "river"
+  ],
+  "count": 20,
+  "seed": 4090,
+  "benchmark_mode": true,
+  "input_total": 2752,
+  "street_counts": {
+    "river": 20
+  },
+  "texture_counts": {
+    "paired": 9,
+    "two_tone": 6,
+    "rainbow": 4,
+    "monotone": 1
+  },
+  "depth_counts": {
+    "unknown": 20
+  },
+  "position_counts": {
+    "unknown": 20
+  },
+  "stack_bucket_counts": {
+    "deep": 17,
+    "medium": 2,
+    "shallow": 1
+  },
+  "target_texture_alloc": {
+    "paired": 9,
+    "rainbow": 4,
+    "two_tone": 6,
+    "monotone": 1
+  }
+}

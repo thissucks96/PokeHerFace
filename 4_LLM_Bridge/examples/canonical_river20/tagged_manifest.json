@@ -1,0 +1,402 @@
+[
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_01.spot.dwan_ivey_2009.77fa0279b8.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_02.spot.pluribus_100_0.7a09e7ffec.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_03.spot.pluribus_100_11.186fb6b92c.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_04.spot.pluribus_100_12.6fa74738fc.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_05.spot.pluribus_100_14.d3a8e34056.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_06.spot.pluribus_100_17.0e583d34ad.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_07.spot.pluribus_100_18.3e8da4c87c.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_08.spot.pluribus_100_22.390657edf7.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_09.spot.pluribus_100_25.a1416710b1.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_10.spot.pluribus_100_31.f37d86bdfd.river.paired.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_11.spot.pluribus_100_39.58f62042fa.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_12.spot.pluribus_100_4.79e158c6ba.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_13.spot.pluribus_100_47.92ed95dd96.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_14.spot.pluribus_100_52.86bb5309aa.river.monotone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_15.spot.pluribus_100_64.18c2622a6c.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_16.spot.pluribus_100_9.ffacb7cd65.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_17.spot.pluribus_100b_102.559a239c5a.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_18.spot.wsop_2023_43_5_00_02_07.1d893ff02c.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_19.spot.wsop_2023_43_5_00_15_36.411ca50309.river.rainbow.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  },
+  {
+    "spot_path": "A:\\PokeHerFace\\Version1\\4_LLM_Bridge\\examples\\canonical_river20\\spots\\spot_20.spot.wsop_2023_43_5_03_02_41.aa563bf23a.river.two_tone.unknown.unknown.json",
+    "street": "river",
+    "classes": {
+      "turn_probe_punish": false,
+      "river_bigbet_overfold_punish": true,
+      "river_underbluff_defense": true
+    },
+    "metrics": {
+      "fold_to_turn_probe": 0.5811808118081181,
+      "turn_probe_opportunities": 538,
+      "fold_to_river_bigbet": 0.6734177215189874,
+      "river_bigbet_opportunities": 786,
+      "river_bluff_rate": 0.21585903083700442
+    },
+    "reasons": [
+      "river_bigbet_overfold_punish: fold_to_river_bigbet=0.673 >= 0.550, opp=786",
+      "river_underbluff_defense: river_bluff_rate=0.216 <= 0.350, opp=786"
+    ]
+  }
+]
