@@ -156,6 +156,11 @@ def main() -> int:
     parser.add_argument("--villain-range", default=DEFAULT_VILLAIN_RANGE)
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--thread-count", type=int, default=14)
+    parser.add_argument(
+        "--benchmark-mode",
+        action="store_true",
+        help="Force benchmark-friendly spot settings (currently sets remove_donk_bets=false).",
+    )
     parser.add_argument("--report", required=True, help="Path to write build summary JSON.")
     parser.add_argument("--output-manifest", required=True, help="Path to write result manifest .jsonl.")
     args = parser.parse_args()
@@ -244,6 +249,10 @@ def main() -> int:
             counters["error"] += 1
             continue
 
+        if args.benchmark_mode:
+            # Keep root action-space non-trivial for LLM quality benchmarks.
+            spot["remove_donk_bets"] = False
+
         if inferred_texture is None:
             texture = _infer_texture(spot.get("board", []))
 
@@ -295,6 +304,7 @@ def main() -> int:
                 "texture": texture,
                 "depth": depth,
                 "position": position,
+                "benchmark_mode": bool(args.benchmark_mode),
             }
         )
 
