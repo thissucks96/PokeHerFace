@@ -207,12 +207,10 @@ Clickable OCR watcher test utility:
 .\tesseract_test.ps1
 ```
 
-- Select a watch folder.
-- Choose trigger mode:
-  - `Every 5 seconds (polling)`, or
-  - `On file movement (watcher)` (recommended default).
-- Dropped/updated image files in the watch folder are OCR-processed to:
-  - `<watch_folder>\_ocr_out\*.txt`
+- Click `Pick OCR Rectangle` and drag-select an on-screen area.
+- Use:
+  - `Run OCR Once` for manual check, or
+  - `Start Auto` for interval OCR (default every 5 seconds).
 
 ## Quick Start (WSL / Linux)
 

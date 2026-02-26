@@ -11,6 +11,7 @@ function Ensure-StaSession {
   if (-not $PSCommandPath) {
     throw "tesseract_test.ps1 must run in STA mode. Re-run with: pwsh -STA -File .\tesseract_test.ps1"
   }
+
   $hostExe = "powershell.exe"
   if (Get-Command pwsh -ErrorAction SilentlyContinue) {
     $hostExe = "pwsh"
@@ -60,15 +61,239 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $tesseractExe = Resolve-TesseractExecutable
-$watchFolder = ""
-$outputFolder = ""
-$isRunning = $false
-$lastProcessedUtc = @{}
-$queuedPaths = New-Object System.Collections.Generic.HashSet[string]
-$fsw = $null
-$eventCreated = $null
-$eventChanged = $null
-$eventRenamed = $null
+$selectedRegion = [System.Drawing.Rectangle]::Empty
+$isBusy = $false
+$autoEnabled = $false
+
+function Select-ScreenRegion {
+  $resultRect = [System.Drawing.Rectangle]::Empty
+  $start = [System.Drawing.Point]::Empty
+  $current = [System.Drawing.Point]::Empty
+  $dragging = $false
+
+  $selector = New-Object System.Windows.Forms.Form
+  $selector.FormBorderStyle = "None"
+  $selector.WindowState = "Maximized"
+  $selector.TopMost = $true
+  $selector.ShowInTaskbar = $false
+  $selector.BackColor = [System.Drawing.Color]::Black
+  $selector.Opacity = 0.22
+  $selector.Cursor = [System.Windows.Forms.Cursors]::Cross
+  $selector.KeyPreview = $true
+
+  $selector.Add_KeyDown({
+    if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+      $selector.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+      $selector.Close()
+    }
+  })
+
+  $selector.Add_MouseDown({
+    if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+      $start = $_.Location
+      $current = $_.Location
+      $dragging = $true
+      $selector.Invalidate()
+    }
+  })
+
+  $selector.Add_MouseMove({
+    if ($dragging) {
+      $current = $_.Location
+      $selector.Invalidate()
+    }
+  })
+
+  $selector.Add_MouseUp({
+    if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $dragging) {
+      $dragging = $false
+      $current = $_.Location
+      $x = [Math]::Min($start.X, $current.X)
+      $y = [Math]::Min($start.Y, $current.Y)
+      $w = [Math]::Abs($start.X - $current.X)
+      $h = [Math]::Abs($start.Y - $current.Y)
+      if ($w -ge 6 -and $h -ge 6) {
+        $resultRect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+        $selector.DialogResult = [System.Windows.Forms.DialogResult]::OK
+      }
+      else {
+        $selector.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+      }
+      $selector.Close()
+    }
+  })
+
+  $selector.Add_Paint({
+    if ($start -ne [System.Drawing.Point]::Empty -or $current -ne [System.Drawing.Point]::Empty) {
+      $x = [Math]::Min($start.X, $current.X)
+      $y = [Math]::Min($start.Y, $current.Y)
+      $w = [Math]::Abs($start.X - $current.X)
+      $h = [Math]::Abs($start.Y - $current.Y)
+      if ($w -gt 0 -and $h -gt 0) {
+        $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(70, 0, 200, 120))
+        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(250, 40, 230, 120), 2)
+        $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+        $_.Graphics.FillRectangle($brush, $rect)
+        $_.Graphics.DrawRectangle($pen, $rect)
+        $brush.Dispose()
+        $pen.Dispose()
+      }
+    }
+  })
+
+  [void]$selector.ShowDialog()
+  return $resultRect
+}
+
+function Capture-RegionImage {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
+    [Parameter(Mandatory = $true)][string]$Path
+  )
+  $bmp = New-Object System.Drawing.Bitmap($Region.Width, $Region.Height)
+  $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+  $graphics.CopyFromScreen($Region.X, $Region.Y, 0, 0, $bmp.Size)
+  $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $graphics.Dispose()
+  $bmp.Dispose()
+}
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Tesseract Region Test"
+$form.StartPosition = "CenterScreen"
+$form.Size = New-Object System.Drawing.Size(980, 700)
+$form.MinimumSize = New-Object System.Drawing.Size(980, 700)
+$form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
+
+$title = New-Object System.Windows.Forms.Label
+$title.Text = "Tesseract OCR Region Test"
+$title.ForeColor = [System.Drawing.Color]::White
+$title.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 16, [System.Drawing.FontStyle]::Bold)
+$title.Location = New-Object System.Drawing.Point(18, 12)
+$title.AutoSize = $true
+$form.Controls.Add($title)
+
+$status = New-Object System.Windows.Forms.Label
+$status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$status.Location = New-Object System.Drawing.Point(20, 44)
+$status.AutoSize = $true
+if ($tesseractExe) {
+  $status.Text = "Tesseract: $tesseractExe"
+  $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
+}
+else {
+  $status.Text = "Tesseract: NOT FOUND (set TESSERACT_PATH or add to PATH)"
+  $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 120)
+}
+$form.Controls.Add($status)
+
+$regionLabel = New-Object System.Windows.Forms.Label
+$regionLabel.Text = "Region: Not selected"
+$regionLabel.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$regionLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$regionLabel.Location = New-Object System.Drawing.Point(20, 74)
+$regionLabel.AutoSize = $true
+$form.Controls.Add($regionLabel)
+
+$btnPick = New-Object System.Windows.Forms.Button
+$btnPick.Text = "Pick OCR Rectangle"
+$btnPick.Location = New-Object System.Drawing.Point(20, 104)
+$btnPick.Size = New-Object System.Drawing.Size(190, 34)
+$btnPick.FlatStyle = "Flat"
+$btnPick.ForeColor = [System.Drawing.Color]::White
+$btnPick.BackColor = [System.Drawing.Color]::FromArgb(46, 56, 68)
+$form.Controls.Add($btnPick)
+
+$btnOnce = New-Object System.Windows.Forms.Button
+$btnOnce.Text = "Run OCR Once"
+$btnOnce.Location = New-Object System.Drawing.Point(220, 104)
+$btnOnce.Size = New-Object System.Drawing.Size(140, 34)
+$btnOnce.FlatStyle = "Flat"
+$btnOnce.ForeColor = [System.Drawing.Color]::White
+$btnOnce.BackColor = [System.Drawing.Color]::FromArgb(20, 95, 62)
+$form.Controls.Add($btnOnce)
+
+$lblAuto = New-Object System.Windows.Forms.Label
+$lblAuto.Text = "Auto OCR interval (sec)"
+$lblAuto.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblAuto.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblAuto.Location = New-Object System.Drawing.Point(380, 111)
+$lblAuto.AutoSize = $true
+$form.Controls.Add($lblAuto)
+
+$numInterval = New-Object System.Windows.Forms.NumericUpDown
+$numInterval.Location = New-Object System.Drawing.Point(520, 108)
+$numInterval.Size = New-Object System.Drawing.Size(70, 30)
+$numInterval.Minimum = 1
+$numInterval.Maximum = 60
+$numInterval.Value = 5
+$numInterval.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+$form.Controls.Add($numInterval)
+
+$btnAutoStart = New-Object System.Windows.Forms.Button
+$btnAutoStart.Text = "Start Auto"
+$btnAutoStart.Location = New-Object System.Drawing.Point(610, 104)
+$btnAutoStart.Size = New-Object System.Drawing.Size(120, 34)
+$btnAutoStart.FlatStyle = "Flat"
+$btnAutoStart.ForeColor = [System.Drawing.Color]::White
+$btnAutoStart.BackColor = [System.Drawing.Color]::FromArgb(30, 105, 68)
+$form.Controls.Add($btnAutoStart)
+
+$btnAutoStop = New-Object System.Windows.Forms.Button
+$btnAutoStop.Text = "Stop Auto"
+$btnAutoStop.Location = New-Object System.Drawing.Point(740, 104)
+$btnAutoStop.Size = New-Object System.Drawing.Size(120, 34)
+$btnAutoStop.FlatStyle = "Flat"
+$btnAutoStop.ForeColor = [System.Drawing.Color]::White
+$btnAutoStop.BackColor = [System.Drawing.Color]::FromArgb(110, 30, 30)
+$btnAutoStop.Enabled = $false
+$form.Controls.Add($btnAutoStop)
+
+$hint = New-Object System.Windows.Forms.Label
+$hint.Text = "Use Pick OCR Rectangle, then either Run OCR Once or Start Auto. Auto mode samples that same region every N seconds."
+$hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
+$hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$hint.Location = New-Object System.Drawing.Point(20, 148)
+$hint.AutoSize = $true
+$form.Controls.Add($hint)
+
+$latestLabel = New-Object System.Windows.Forms.Label
+$latestLabel.Text = "Latest OCR Text"
+$latestLabel.ForeColor = [System.Drawing.Color]::White
+$latestLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$latestLabel.Location = New-Object System.Drawing.Point(20, 180)
+$latestLabel.AutoSize = $true
+$form.Controls.Add($latestLabel)
+
+$txtLatest = New-Object System.Windows.Forms.TextBox
+$txtLatest.Location = New-Object System.Drawing.Point(20, 204)
+$txtLatest.Size = New-Object System.Drawing.Size(936, 190)
+$txtLatest.Multiline = $true
+$txtLatest.ScrollBars = "Vertical"
+$txtLatest.ReadOnly = $true
+$txtLatest.Font = New-Object System.Drawing.Font("Consolas", 10)
+$txtLatest.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
+$txtLatest.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
+$form.Controls.Add($txtLatest)
+
+$logLabel = New-Object System.Windows.Forms.Label
+$logLabel.Text = "Log"
+$logLabel.ForeColor = [System.Drawing.Color]::White
+$logLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$logLabel.Location = New-Object System.Drawing.Point(20, 404)
+$logLabel.AutoSize = $true
+$form.Controls.Add($logLabel)
+
+$logBox = New-Object System.Windows.Forms.TextBox
+$logBox.Location = New-Object System.Drawing.Point(20, 428)
+$logBox.Size = New-Object System.Drawing.Size(936, 220)
+$logBox.Multiline = $true
+$logBox.ScrollBars = "Vertical"
+$logBox.ReadOnly = $true
+$logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
+$logBox.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
+$logBox.ForeColor = [System.Drawing.Color]::FromArgb(225, 235, 245)
+$form.Controls.Add($logBox)
 
 function Write-Log {
   param([string]$Message)
@@ -76,274 +301,92 @@ function Write-Log {
   $logBox.AppendText("[$stamp] $Message`r`n")
 }
 
-function Is-ImageFile {
-  param([string]$Path)
-  $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
-  return $ext -in @(".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
+function Format-RegionText {
+  param([System.Drawing.Rectangle]$Rect)
+  if ($Rect -eq [System.Drawing.Rectangle]::Empty) {
+    return "Region: Not selected"
+  }
+  return ("Region: X={0}, Y={1}, W={2}, H={3}" -f $Rect.X, $Rect.Y, $Rect.Width, $Rect.Height)
 }
 
-function Invoke-OcrOnFile {
-  param([string]$FilePath)
-  if (-not (Test-Path $FilePath)) {
+function Run-Ocr {
+  if (-not $tesseractExe) {
+    Write-Log "OCR skipped: tesseract not found."
     return
   }
-  if (-not (Is-ImageFile -Path $FilePath)) {
+  if ($selectedRegion -eq [System.Drawing.Rectangle]::Empty) {
+    Write-Log "OCR skipped: select a region first."
     return
   }
-  $item = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
-  if (-not $item) {
+  if ($isBusy) {
     return
   }
-
-  $pathKey = $item.FullName.ToLowerInvariant()
-  $writeUtc = $item.LastWriteTimeUtc
-  if ($lastProcessedUtc.ContainsKey($pathKey) -and $lastProcessedUtc[$pathKey] -ge $writeUtc) {
-    return
-  }
-
-  $safeBase = [IO.Path]::GetFileNameWithoutExtension($item.Name)
-  $safeBase = $safeBase -replace "[^a-zA-Z0-9_\-\.]", "_"
-  $outBase = Join-Path $outputFolder ("{0}.{1}" -f $safeBase, [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-
+  $script:isBusy = $true
   try {
-    $null = & $tesseractExe $item.FullName $outBase --psm 6 2>&1
+    $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+    $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+    $imgPath = Join-Path $tmpDir ("capture_{0}.png" -f $stamp)
+    $outBase = Join-Path $tmpDir ("capture_{0}" -f $stamp)
+    Capture-RegionImage -Region $selectedRegion -Path $imgPath
+    $null = & $tesseractExe $imgPath $outBase --psm 6 2>&1
     $txtPath = "$outBase.txt"
     if (Test-Path $txtPath) {
-      $preview = (Get-Content $txtPath -Raw -ErrorAction SilentlyContinue)
+      $text = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
+      $txtLatest.Text = $text
+      $preview = ($text -replace "\r?\n", " ").Trim()
       if ($preview.Length -gt 120) {
         $preview = $preview.Substring(0, 120) + "..."
       }
-      $preview = $preview -replace "\r?\n", " "
-      Write-Log ("OCR OK: {0} -> {1}" -f $item.Name, $preview.Trim())
+      Write-Log ("OCR OK: {0}" -f $preview)
     }
     else {
-      Write-Log ("OCR done but no text output for: {0}" -f $item.Name)
+      Write-Log "OCR finished but no output text file was generated."
     }
-    $lastProcessedUtc[$pathKey] = $writeUtc
   }
   catch {
-    Write-Log ("OCR ERROR: {0} :: {1}" -f $item.Name, $_.Exception.Message)
+    Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
+  }
+  finally {
+    $script:isBusy = $false
   }
 }
-
-function Stop-Watcher {
-  if ($eventCreated) { Unregister-Event -SourceIdentifier $eventCreated.Name -ErrorAction SilentlyContinue; $eventCreated = $null }
-  if ($eventChanged) { Unregister-Event -SourceIdentifier $eventChanged.Name -ErrorAction SilentlyContinue; $eventChanged = $null }
-  if ($eventRenamed) { Unregister-Event -SourceIdentifier $eventRenamed.Name -ErrorAction SilentlyContinue; $eventRenamed = $null }
-  if ($fsw) {
-    $fsw.EnableRaisingEvents = $false
-    $fsw.Dispose()
-    $fsw = $null
-  }
-}
-
-function Start-Watcher {
-  Stop-Watcher
-  $script:fsw = New-Object IO.FileSystemWatcher
-  $script:fsw.Path = $watchFolder
-  $script:fsw.Filter = "*.*"
-  $script:fsw.IncludeSubdirectories = $false
-  $script:fsw.NotifyFilter = [IO.NotifyFilters]'FileName, LastWrite, CreationTime, Size'
-  $script:fsw.EnableRaisingEvents = $true
-
-  $script:eventCreated = Register-ObjectEvent -InputObject $script:fsw -EventName Created -Action {
-    if ($Event.SourceEventArgs -and $Event.SourceEventArgs.FullPath) {
-      [void]$script:queuedPaths.Add($Event.SourceEventArgs.FullPath)
-    }
-  }
-  $script:eventChanged = Register-ObjectEvent -InputObject $script:fsw -EventName Changed -Action {
-    if ($Event.SourceEventArgs -and $Event.SourceEventArgs.FullPath) {
-      [void]$script:queuedPaths.Add($Event.SourceEventArgs.FullPath)
-    }
-  }
-  $script:eventRenamed = Register-ObjectEvent -InputObject $script:fsw -EventName Renamed -Action {
-    if ($Event.SourceEventArgs -and $Event.SourceEventArgs.FullPath) {
-      [void]$script:queuedPaths.Add($Event.SourceEventArgs.FullPath)
-    }
-  }
-}
-
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "Tesseract Test Runner"
-$form.StartPosition = "CenterScreen"
-$form.Size = New-Object System.Drawing.Size(980, 660)
-$form.MinimumSize = New-Object System.Drawing.Size(980, 660)
-$form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
-
-$title = New-Object System.Windows.Forms.Label
-$title.Text = "Tesseract OCR Folder Watch Test"
-$title.ForeColor = [System.Drawing.Color]::White
-$title.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 16, [System.Drawing.FontStyle]::Bold)
-$title.Location = New-Object System.Drawing.Point(18, 12)
-$title.AutoSize = $true
-$form.Controls.Add($title)
-
-$tessStatus = New-Object System.Windows.Forms.Label
-$tessStatus.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$tessStatus.Location = New-Object System.Drawing.Point(20, 44)
-$tessStatus.AutoSize = $true
-if ($tesseractExe) {
-  $tessStatus.Text = "Tesseract: $tesseractExe"
-  $tessStatus.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
-}
-else {
-  $tessStatus.Text = "Tesseract: NOT FOUND (set TESSERACT_PATH or add to PATH)"
-  $tessStatus.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 120)
-}
-$form.Controls.Add($tessStatus)
-
-$lblFolder = New-Object System.Windows.Forms.Label
-$lblFolder.Text = "Watch Folder"
-$lblFolder.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
-$lblFolder.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblFolder.Location = New-Object System.Drawing.Point(20, 78)
-$lblFolder.AutoSize = $true
-$form.Controls.Add($lblFolder)
-
-$txtFolder = New-Object System.Windows.Forms.TextBox
-$txtFolder.Location = New-Object System.Drawing.Point(20, 98)
-$txtFolder.Size = New-Object System.Drawing.Size(720, 28)
-$txtFolder.Font = New-Object System.Drawing.Font("Consolas", 10)
-$txtFolder.BackColor = [System.Drawing.Color]::FromArgb(30, 36, 44)
-$txtFolder.ForeColor = [System.Drawing.Color]::White
-$form.Controls.Add($txtFolder)
-
-$btnBrowse = New-Object System.Windows.Forms.Button
-$btnBrowse.Text = "Select Folder"
-$btnBrowse.Location = New-Object System.Drawing.Point(750, 96)
-$btnBrowse.Size = New-Object System.Drawing.Size(100, 32)
-$btnBrowse.FlatStyle = "Flat"
-$btnBrowse.ForeColor = [System.Drawing.Color]::White
-$btnBrowse.BackColor = [System.Drawing.Color]::FromArgb(46, 56, 68)
-$form.Controls.Add($btnBrowse)
-
-$btnOpen = New-Object System.Windows.Forms.Button
-$btnOpen.Text = "Open Folder"
-$btnOpen.Location = New-Object System.Drawing.Point(856, 96)
-$btnOpen.Size = New-Object System.Drawing.Size(100, 32)
-$btnOpen.FlatStyle = "Flat"
-$btnOpen.ForeColor = [System.Drawing.Color]::White
-$btnOpen.BackColor = [System.Drawing.Color]::FromArgb(46, 56, 68)
-$form.Controls.Add($btnOpen)
-
-$lblMode = New-Object System.Windows.Forms.Label
-$lblMode.Text = "Trigger Mode"
-$lblMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
-$lblMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblMode.Location = New-Object System.Drawing.Point(20, 140)
-$lblMode.AutoSize = $true
-$form.Controls.Add($lblMode)
-
-$cmbMode = New-Object System.Windows.Forms.ComboBox
-$cmbMode.DropDownStyle = "DropDownList"
-$cmbMode.Location = New-Object System.Drawing.Point(20, 160)
-$cmbMode.Size = New-Object System.Drawing.Size(280, 30)
-$cmbMode.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-[void]$cmbMode.Items.Add("Every 5 seconds (polling)")
-[void]$cmbMode.Items.Add("On file movement (watcher)")
-$cmbMode.SelectedIndex = 1
-$form.Controls.Add($cmbMode)
-
-$lblInterval = New-Object System.Windows.Forms.Label
-$lblInterval.Text = "Polling Interval (seconds)"
-$lblInterval.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
-$lblInterval.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblInterval.Location = New-Object System.Drawing.Point(320, 140)
-$lblInterval.AutoSize = $true
-$form.Controls.Add($lblInterval)
-
-$numInterval = New-Object System.Windows.Forms.NumericUpDown
-$numInterval.Location = New-Object System.Drawing.Point(320, 160)
-$numInterval.Size = New-Object System.Drawing.Size(120, 30)
-$numInterval.Minimum = 1
-$numInterval.Maximum = 60
-$numInterval.Value = 5
-$numInterval.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$form.Controls.Add($numInterval)
-
-$btnStart = New-Object System.Windows.Forms.Button
-$btnStart.Text = "Start"
-$btnStart.Location = New-Object System.Drawing.Point(460, 158)
-$btnStart.Size = New-Object System.Drawing.Size(120, 34)
-$btnStart.FlatStyle = "Flat"
-$btnStart.ForeColor = [System.Drawing.Color]::White
-$btnStart.BackColor = [System.Drawing.Color]::FromArgb(20, 110, 72)
-$form.Controls.Add($btnStart)
-
-$btnStop = New-Object System.Windows.Forms.Button
-$btnStop.Text = "Stop"
-$btnStop.Location = New-Object System.Drawing.Point(590, 158)
-$btnStop.Size = New-Object System.Drawing.Size(120, 34)
-$btnStop.FlatStyle = "Flat"
-$btnStop.ForeColor = [System.Drawing.Color]::White
-$btnStop.BackColor = [System.Drawing.Color]::FromArgb(110, 30, 30)
-$btnStop.Enabled = $false
-$form.Controls.Add($btnStop)
-
-$hint = New-Object System.Windows.Forms.Label
-$hint.Text = "Recommendation: use 'On file movement' for real-time snapshots; use polling only if watcher misses events."
-$hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
-$hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$hint.Location = New-Object System.Drawing.Point(20, 200)
-$hint.AutoSize = $true
-$form.Controls.Add($hint)
-
-$logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(20, 230)
-$logBox.Size = New-Object System.Drawing.Size(936, 370)
-$logBox.Multiline = $true
-$logBox.ScrollBars = "Vertical"
-$logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
-$logBox.ReadOnly = $true
-$logBox.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
-$logBox.ForeColor = [System.Drawing.Color]::FromArgb(225, 235, 245)
-$form.Controls.Add($logBox)
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 1000
-
-$folderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$folderDialog.ShowNewFolderButton = $true
-
-$btnBrowse.Add_Click({
-  if ($folderDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-    $txtFolder.Text = $folderDialog.SelectedPath
-    Write-Log ("Folder selected: {0}" -f $txtFolder.Text)
-  }
-})
-
-$btnOpen.Add_Click({
-  if ($txtFolder.Text -and (Test-Path $txtFolder.Text)) {
-    Start-Process -FilePath "explorer.exe" -ArgumentList "`"$($txtFolder.Text)`""
-  }
-})
-
+$timer.Interval = [int]($numInterval.Value * 1000)
 $timer.Add_Tick({
-  if (-not $isRunning) {
-    return
-  }
-  if (-not $watchFolder -or -not (Test-Path $watchFolder)) {
-    return
-  }
-
-  if ($cmbMode.SelectedIndex -eq 0) {
-    # Polling mode.
-    $files = Get-ChildItem -Path $watchFolder -File -ErrorAction SilentlyContinue
-    foreach ($f in $files) {
-      Invoke-OcrOnFile -FilePath $f.FullName
-    }
-    return
-  }
-
-  # Watcher mode: process queued changed paths.
-  $currentQueue = @($queuedPaths)
-  foreach ($p in $currentQueue) {
-    [void]$queuedPaths.Remove($p)
-    Invoke-OcrOnFile -FilePath $p
+  if ($autoEnabled) {
+    Run-Ocr
   }
 })
 
-$btnStart.Add_Click({
+$btnPick.Add_Click({
+  Write-Log "Selecting OCR rectangle..."
+  $rect = Select-ScreenRegion
+  if ($rect -ne [System.Drawing.Rectangle]::Empty) {
+    $script:selectedRegion = $rect
+    $regionLabel.Text = Format-RegionText -Rect $selectedRegion
+    Write-Log $regionLabel.Text
+  }
+  else {
+    Write-Log "Rectangle selection canceled."
+  }
+})
+
+$btnOnce.Add_Click({
+  Run-Ocr
+})
+
+$btnAutoStart.Add_Click({
+  if ($selectedRegion -eq [System.Drawing.Rectangle]::Empty) {
+    [void][System.Windows.Forms.MessageBox]::Show(
+      "Pick an OCR rectangle first.",
+      "No Region",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    return
+  }
   if (-not $tesseractExe) {
     [void][System.Windows.Forms.MessageBox]::Show(
       "Tesseract not found. Set TESSERACT_PATH or add tesseract to PATH first.",
@@ -353,56 +396,29 @@ $btnStart.Add_Click({
     )
     return
   }
-  if (-not $txtFolder.Text -or -not (Test-Path $txtFolder.Text)) {
-    [void][System.Windows.Forms.MessageBox]::Show(
-      "Select a valid watch folder first.",
-      "Missing Folder",
-      [System.Windows.Forms.MessageBoxButtons]::OK,
-      [System.Windows.Forms.MessageBoxIcon]::Warning
-    )
-    return
-  }
-
-  $script:watchFolder = $txtFolder.Text
-  $script:outputFolder = Join-Path $watchFolder "_ocr_out"
-  New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
-  $lastProcessedUtc.Clear()
-  $queuedPaths.Clear()
-
-  if ($cmbMode.SelectedIndex -eq 1) {
-    Start-Watcher
-    Write-Log "Watcher mode enabled (Created/Changed/Renamed events)."
-  }
-  else {
-    Stop-Watcher
-    Write-Log ("Polling mode enabled (every {0}s)." -f [int]$numInterval.Value)
-  }
-
   $timer.Interval = [int]([int]$numInterval.Value * 1000)
-  $script:isRunning = $true
-  $btnStart.Enabled = $false
-  $btnStop.Enabled = $true
-  Write-Log ("Started OCR test. Watch={0} Output={1}" -f $watchFolder, $outputFolder)
+  $script:autoEnabled = $true
+  $btnAutoStart.Enabled = $false
+  $btnAutoStop.Enabled = $true
+  Write-Log ("Auto OCR started (every {0}s)." -f [int]$numInterval.Value)
 })
 
-$btnStop.Add_Click({
-  $script:isRunning = $false
-  $timer.Stop()
-  Stop-Watcher
-  $btnStart.Enabled = $true
-  $btnStop.Enabled = $false
-  Write-Log "Stopped OCR test."
+$btnAutoStop.Add_Click({
+  $script:autoEnabled = $false
+  $btnAutoStart.Enabled = $true
+  $btnAutoStop.Enabled = $false
+  Write-Log "Auto OCR stopped."
 })
 
 $form.Add_Shown({
-  Write-Log "Ready. Select a folder and click Start."
+  $regionLabel.Text = Format-RegionText -Rect $selectedRegion
+  Write-Log "Ready. Pick a rectangle and run OCR."
   $timer.Start()
 })
 
 $form.Add_FormClosing({
-  $script:isRunning = $false
+  $script:autoEnabled = $false
   $timer.Stop()
-  Stop-Watcher
 })
 
 [void]$form.ShowDialog()
