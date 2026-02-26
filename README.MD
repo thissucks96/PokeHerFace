@@ -201,6 +201,19 @@ OCR note for manual UI prep:
   2. `tesseract` from `PATH`,
   3. fallback path `C:\Program Files\Tesseract-OCR\tesseract.exe`.
 
+Clickable OCR watcher test utility:
+
+```powershell
+.\tesseract_test.ps1
+```
+
+- Select a watch folder.
+- Choose trigger mode:
+  - `Every 5 seconds (polling)`, or
+  - `On file movement (watcher)` (recommended default).
+- Dropped/updated image files in the watch folder are OCR-processed to:
+  - `<watch_folder>\_ocr_out\*.txt`
+
 ## Quick Start (WSL / Linux)
 
 ```bash
