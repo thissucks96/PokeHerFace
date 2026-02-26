@@ -65,6 +65,96 @@ $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $autoEnabled = $false
 
+function Get-OcrProfileSpec {
+  param([string]$ProfileName)
+  $name = [string]$ProfileName
+  switch ($name) {
+    "Cards (ranks/suits)" {
+      return @(
+        @{ psm = 7; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm7" },
+        @{ psm = 13; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm13" }
+      )
+    }
+    "Numeric (pot/stack)" {
+      return @(
+        @{ psm = 7; whitelist = "0123456789.,:$/"; label = "numeric_psm7" },
+        @{ psm = 6; whitelist = "0123456789.,:$/"; label = "numeric_psm6" }
+      )
+    }
+    default {
+      return @(
+        @{ psm = 6; whitelist = $null; label = "general_psm6" },
+        @{ psm = 7; whitelist = $null; label = "general_psm7" }
+      )
+    }
+  }
+}
+
+function Score-OcrCandidate {
+  param(
+    [string]$Text,
+    [string]$ProfileName
+  )
+  $value = ([string]$Text).Trim()
+  if (-not $value) {
+    return 0
+  }
+  switch ($ProfileName) {
+    "Cards (ranks/suits)" {
+      # Reward valid card-ish tokens and penalize junk symbols.
+      $tokenMatches = [regex]::Matches($value, "(?i)\b(?:10|[2-9TJQKA])(?:[SHDC])?\b").Count
+      $junk = [regex]::Matches($value, "[^A-Za-z0-9\s]").Count
+      return ($tokenMatches * 10) - $junk
+    }
+    "Numeric (pot/stack)" {
+      $digitCount = [regex]::Matches($value, "\d").Count
+      $alphaCount = [regex]::Matches($value, "[A-Za-z]").Count
+      return ($digitCount * 3) - ($alphaCount * 5)
+    }
+    default {
+      return [Math]::Min(100, $value.Length)
+    }
+  }
+}
+
+function New-HighContrastVariant {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourcePath,
+    [Parameter(Mandatory = $true)][string]$TargetPath
+  )
+
+  $src = [System.Drawing.Bitmap]::FromFile($SourcePath)
+  try {
+    $w = [Math]::Max(2, $src.Width * 2)
+    $h = [Math]::Max(2, $src.Height * 2)
+    $scaled = New-Object System.Drawing.Bitmap($w, $h)
+    $g = [System.Drawing.Graphics]::FromImage($scaled)
+    try {
+      $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+      $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+      $g.DrawImage($src, 0, 0, $w, $h)
+    }
+    finally {
+      $g.Dispose()
+    }
+
+    # Simple grayscale + threshold binarization.
+    for ($x = 0; $x -lt $scaled.Width; $x++) {
+      for ($y = 0; $y -lt $scaled.Height; $y++) {
+        $c = $scaled.GetPixel($x, $y)
+        $gray = [int](($c.R * 0.299) + ($c.G * 0.587) + ($c.B * 0.114))
+        $v = if ($gray -ge 160) { 255 } else { 0 }
+        $scaled.SetPixel($x, $y, [System.Drawing.Color]::FromArgb($v, $v, $v))
+      }
+    }
+    $scaled.Save($TargetPath, [System.Drawing.Imaging.ImageFormat]::Png)
+    $scaled.Dispose()
+  }
+  finally {
+    $src.Dispose()
+  }
+}
+
 function Select-ScreenRegion {
   $virtualScreen = [System.Windows.Forms.SystemInformation]::VirtualScreen
   $state = [pscustomobject]@{
@@ -308,6 +398,25 @@ $hint.Location = New-Object System.Drawing.Point(20, 148)
 $hint.AutoSize = $true
 $form.Controls.Add($hint)
 
+$lblProfile = New-Object System.Windows.Forms.Label
+$lblProfile.Text = "OCR Profile"
+$lblProfile.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblProfile.Location = New-Object System.Drawing.Point(876, 111)
+$lblProfile.AutoSize = $true
+$form.Controls.Add($lblProfile)
+
+$cmbProfile = New-Object System.Windows.Forms.ComboBox
+$cmbProfile.DropDownStyle = "DropDownList"
+$cmbProfile.Location = New-Object System.Drawing.Point(876, 130)
+$cmbProfile.Size = New-Object System.Drawing.Size(80, 24)
+$cmbProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+[void]$cmbProfile.Items.Add("General")
+[void]$cmbProfile.Items.Add("Cards (ranks/suits)")
+[void]$cmbProfile.Items.Add("Numeric (pot/stack)")
+$cmbProfile.SelectedIndex = 1
+$form.Controls.Add($cmbProfile)
+
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
 $latestLabel.ForeColor = [System.Drawing.Color]::White
@@ -378,22 +487,63 @@ function Run-Ocr {
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
     $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
     $imgPath = Join-Path $tmpDir ("capture_{0}.png" -f $stamp)
-    $outBase = Join-Path $tmpDir ("capture_{0}" -f $stamp)
     Capture-RegionImage -Region $selectedRegion -Path $imgPath
-    $null = & $tesseractExe $imgPath $outBase --psm 6 2>&1
-    $txtPath = "$outBase.txt"
-    if (Test-Path $txtPath) {
-      $raw = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
-      $text = if ($raw -is [System.Array]) { ($raw -join [Environment]::NewLine) } else { [string]$raw }
-      $txtLatest.Text = $text
-      $preview = (($text -replace "\r?\n", " ") -as [string]).Trim()
+
+    $profileName = [string]$cmbProfile.SelectedItem
+    if (-not $profileName) {
+      $profileName = "General"
+    }
+    $specs = Get-OcrProfileSpec -ProfileName $profileName
+    $variantPaths = @($imgPath)
+    $contrastPath = Join-Path $tmpDir ("capture_{0}.contrast.png" -f $stamp)
+    try {
+      New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
+      $variantPaths += $contrastPath
+    }
+    catch {
+      Write-Log ("Preprocess warning: {0}" -f $_.Exception.Message)
+    }
+
+    $bestText = ""
+    $bestScore = [int]::MinValue
+    $bestLabel = ""
+    $bestVariant = ""
+
+    $attempt = 0
+    foreach ($variant in $variantPaths) {
+      foreach ($spec in $specs) {
+        $attempt += 1
+        $outBase = Join-Path $tmpDir ("capture_{0}.try{1}" -f $stamp, $attempt)
+        $cmd = @($variant, $outBase, "--oem", "1", "--psm", [string]$spec.psm)
+        if ($spec.whitelist) {
+          $cmd += @("-c", ("tessedit_char_whitelist={0}" -f [string]$spec.whitelist))
+        }
+        $null = & $tesseractExe @cmd 2>$null
+        $txtPath = "$outBase.txt"
+        if (-not (Test-Path $txtPath)) {
+          continue
+        }
+        $raw = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
+        $candidateText = if ($raw -is [System.Array]) { ($raw -join [Environment]::NewLine) } else { [string]$raw }
+        $candidateScore = Score-OcrCandidate -Text $candidateText -ProfileName $profileName
+        if ($candidateScore -gt $bestScore) {
+          $bestScore = $candidateScore
+          $bestText = $candidateText
+          $bestLabel = [string]$spec.label
+          $bestVariant = [IO.Path]::GetFileName($variant)
+        }
+      }
+    }
+
+    if ($bestText) {
+      $txtLatest.Text = $bestText
+      $preview = (($bestText -replace "\r?\n", " ") -as [string]).Trim()
       if ($preview.Length -gt 120) {
         $preview = $preview.Substring(0, 120) + "..."
       }
-      Write-Log ("OCR OK: {0}" -f $preview)
-    }
-    else {
-      Write-Log "OCR finished but no output text file was generated."
+      Write-Log ("OCR OK [{0}] {1} via {2}: {3}" -f $profileName, $bestLabel, $bestVariant, $preview)
+    } else {
+      Write-Log ("OCR finished but no readable output was produced for profile: {0}" -f $profileName)
     }
   }
   catch {
