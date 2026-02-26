@@ -45,6 +45,15 @@ try:
     RIVER_CANDIDATE_COUNT = int(os.environ.get("RIVER_CANDIDATE_COUNT", "1"))
 except ValueError:
     RIVER_CANDIDATE_COUNT = 1
+ENABLE_CLOUD_CANDIDATE_SEARCH = os.environ.get("ENABLE_CLOUD_CANDIDATE_SEARCH", "0").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+try:
+    CLOUD_CANDIDATE_COUNT_CAP = int(os.environ.get("CLOUD_CANDIDATE_COUNT_CAP", "2"))
+except ValueError:
+    CLOUD_CANDIDATE_COUNT_CAP = 2
 
 
 class SolveRequest(BaseModel):
@@ -356,6 +365,8 @@ def health() -> Dict[str, Any]:
         "benchmark_mode_bypass_routing": BENCHMARK_MODE_BYPASS_ROUTING,
         "turn_candidate_count": TURN_CANDIDATE_COUNT,
         "river_candidate_count": RIVER_CANDIDATE_COUNT,
+        "enable_cloud_candidate_search": ENABLE_CLOUD_CANDIDATE_SEARCH,
+        "cloud_candidate_count_cap": CLOUD_CANDIDATE_COUNT_CAP,
     }
 
 
@@ -386,10 +397,17 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     multi_node_enabled, multi_node_policy_reason, rollout_classes = _resolve_multi_node_policy(request, llm_config)
     spot_street = _detect_spot_street(request.spot)
     candidate_target_count = TURN_CANDIDATE_COUNT if spot_street == "turn" else RIVER_CANDIDATE_COUNT
+    llm_mode = str(llm_config.get("mode", "")).strip().lower()
+    is_local_request = _is_local_request(llm_config)
+    if not is_local_request:
+        # Keep cloud costs controlled by default. Allow parity search only when explicitly enabled.
+        if ENABLE_CLOUD_CANDIDATE_SEARCH and llm_mode == "benchmark":
+            candidate_target_count = min(candidate_target_count, max(1, CLOUD_CANDIDATE_COUNT_CAP))
+        else:
+            candidate_target_count = 1
     candidate_mode_enabled = (
         multi_node_enabled
         and spot_street in {"turn", "river"}
-        and _is_local_request(llm_config)
         and candidate_target_count > 1
     )
     llm_config["allowed_root_actions"] = allowed_root_actions
@@ -569,6 +587,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "llm_candidate_generated_count": len(llm_candidates),
             "llm_candidate_solve_count": locked_candidate_solve_count,
             "llm_candidate_errors": candidate_errors,
+            "llm_is_local_request": is_local_request,
             "multi_node_requested": bool(request.enable_multi_node_locks),
             "multi_node_enabled": multi_node_enabled,
             "multi_node_policy_reason": multi_node_policy_reason,
