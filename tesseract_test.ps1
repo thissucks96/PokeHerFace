@@ -35,7 +35,7 @@ function Resolve-TesseractExecutable {
     "tesseract",
     "C:\Program Files\Tesseract-OCR\tesseract.exe",
     "C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"
-  ) | Where-Object { $_ -and $_.Trim() -ne "" }
+  ) | Where-Object { $_ -and ([string]$_).Trim() -ne "" }
 
   foreach ($candidate in $candidates) {
     try {
@@ -383,9 +383,10 @@ function Run-Ocr {
     $null = & $tesseractExe $imgPath $outBase --psm 6 2>&1
     $txtPath = "$outBase.txt"
     if (Test-Path $txtPath) {
-      $text = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
+      $raw = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
+      $text = if ($raw -is [System.Array]) { ($raw -join [Environment]::NewLine) } else { [string]$raw }
       $txtLatest.Text = $text
-      $preview = ($text -replace "\r?\n", " ").Trim()
+      $preview = (($text -replace "\r?\n", " ") -as [string]).Trim()
       if ($preview.Length -gt 120) {
         $preview = $preview.Substring(0, 120) + "..."
       }
