@@ -54,6 +54,17 @@ This workspace is organized to keep the engine, neural models, hand history data
   - Local-only pipeline is stable and profitable on the canonical 40-spot proxy run set.
   - Full multi-node and class1-shadow routing are effectively at parity in this sweep.
 
+### Estimated Current Strength
+
+- Overall estimate (current build): **strong constrained decision engine, medium overall deployment maturity**.
+- Evidence-backed strength:
+  - Positive proxy edge on canonical benchmark mix: `~ +0.437 bb/100` average across 5 seeds.
+  - Safety/reliability is high: `fallback=0.00`, `keep~0.975` in multi-seed A/B/C sweeps.
+  - Turn and River acceptance gates pass at or above target thresholds.
+- Practical interpretation:
+  - The app is clearly stronger than unguided/gambling play and stable for structured turn/river decision support.
+  - True table-level strength vs stronger human pools still depends on longer live/backtest telemetry beyond canonical packs.
+
 ## Current Limits
 
 - Multi-node lock generation is policy-gated by rollout class/routing in the bridge and should remain controlled via env toggles during canary scheduling.
