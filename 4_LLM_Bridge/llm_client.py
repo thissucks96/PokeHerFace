@@ -254,6 +254,7 @@ def _call_openai_compatible_chat(
     messages: list[Dict[str, str]],
     temperature: float,
     max_tokens: int,
+    token_limit_key: str = "max_tokens",
     timeout_sec: float = 60.0,
 ) -> Dict[str, Any]:
     _apply_openai_rate_limit()
@@ -266,9 +267,9 @@ def _call_openai_compatible_chat(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
+    payload[token_limit_key] = max_tokens
 
     resp = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
     if resp.status_code >= 400:
@@ -1009,6 +1010,7 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                token_limit_key="max_completion_tokens",
                 timeout_sec=timeout_sec,
             )
         elif provider == "local":

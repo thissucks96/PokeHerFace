@@ -147,6 +147,8 @@ OpenAI model defaults can be overridden with env vars:
 - `CLOUD_RIVER_CATALOG_LIMIT` (default `12`; trims node catalog entries for cloud river multi-node prompts)
 - `CLOUD_CATALOG_ACTION_LIMIT` (default `4`; trims action list per catalog node for cloud prompts)
 
+Bridge note: OpenAI requests use `max_completion_tokens` automatically for compatibility with current GPT-5 endpoints.
+
 Examples:
 
 ```powershell
