@@ -86,6 +86,8 @@ Run class-specific acceptance suites:
 .\scripts\test_acceptance.ps1 -Suite river_class23 -Preset local_qwen3_coder_30b
 ```
 
+Current API testing policy: use `openai_52` as the only cloud preset by default.
+
 Run A/B/C routing backtest (`baseline_gto`, `class1_live_shadow23`, `full_multi_node_benchmark`):
 
 ```powershell
@@ -116,7 +118,7 @@ Run the full stack in one command (`CI + turn/river acceptance + A/B/C`; gauntle
 Run live per-call progress in the terminal for API/local benchmark calls:
 
 ```powershell
-.\scripts\test_api_progress.ps1 -Presets openai_5mini,openai_52 -CallsPerModel 10
+.\scripts\test_api_progress.ps1 -Presets openai_52 -CallsPerModel 10
 ```
 
 ## Quick Start (WSL / Linux)

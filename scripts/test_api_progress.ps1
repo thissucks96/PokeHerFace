@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string[]]$Presets = @("openai_5mini", "openai_52"),
+  [string[]]$Presets = @("openai_52"),
   [int]$CallsPerModel = 10,
   [string]$SpotPath = "",
   [double]$EvKeepMargin = 0.001,

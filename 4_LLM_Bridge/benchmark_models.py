@@ -65,7 +65,7 @@ def main() -> int:
     parser.add_argument(
         "--presets",
         nargs="+",
-        default=["local_gpt_oss_20b", "local_qwen3_coder_30b", "openai_fast", "openai_52"],
+        default=["local_gpt_oss_20b", "local_qwen3_coder_30b", "openai_52"],
         help="LLM presets to benchmark.",
     )
     parser.add_argument("--calls-per-model", type=int, default=3, help="Calls per model preset (hard max 10).")

@@ -426,6 +426,8 @@ Classes:
 
 ## Batch Benchmarking (Provider-Aware Caps)
 
+Current API testing policy: use `openai_52` as the only cloud preset by default.
+
 `benchmark_models.py` uses provider-aware call caps:
 
 - Cloud/OpenAI presets: hard cap `10`
@@ -434,7 +436,7 @@ Classes:
 For real-time per-call progress and rolling metrics directly in PowerShell, use:
 
 ```powershell
-.\scripts\test_api_progress.ps1 -Presets openai_5mini,openai_52 -CallsPerModel 10
+.\scripts\test_api_progress.ps1 -Presets openai_52 -CallsPerModel 10
 ```
 
 ```powershell
