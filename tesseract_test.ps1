@@ -70,14 +70,17 @@ function Select-ScreenRegion {
   $start = [System.Drawing.Point]::Empty
   $current = [System.Drawing.Point]::Empty
   $dragging = $false
+  $virtualScreen = [System.Windows.Forms.SystemInformation]::VirtualScreen
 
   $selector = New-Object System.Windows.Forms.Form
   $selector.FormBorderStyle = "None"
-  $selector.WindowState = "Maximized"
+  $selector.StartPosition = "Manual"
+  $selector.Bounds = $virtualScreen
+  $selector.WindowState = "Normal"
   $selector.TopMost = $true
   $selector.ShowInTaskbar = $false
   $selector.BackColor = [System.Drawing.Color]::Black
-  $selector.Opacity = 0.22
+  $selector.Opacity = 0.35
   $selector.Cursor = [System.Windows.Forms.Cursors]::Cross
   $selector.KeyPreview = $true
 
@@ -95,6 +98,7 @@ function Select-ScreenRegion {
       $start = $e.Location
       $current = $e.Location
       $dragging = $true
+      $selector.Capture = $true
       $selector.Invalidate()
     }
   })
@@ -111,13 +115,15 @@ function Select-ScreenRegion {
     param($sender, $e)
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $dragging) {
       $dragging = $false
+      $selector.Capture = $false
       $current = $e.Location
       $x = [Math]::Min($start.X, $current.X)
       $y = [Math]::Min($start.Y, $current.Y)
       $w = [Math]::Abs($start.X - $current.X)
       $h = [Math]::Abs($start.Y - $current.Y)
       if ($w -ge 6 -and $h -ge 6) {
-        $resultRect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+        # Convert selector client coords back to global screen coords.
+        $resultRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
         $selector.DialogResult = [System.Windows.Forms.DialogResult]::OK
       }
       else {
@@ -129,7 +135,7 @@ function Select-ScreenRegion {
 
   $selector.Add_Paint({
     param($sender, $e)
-    if ($start -ne [System.Drawing.Point]::Empty -or $current -ne [System.Drawing.Point]::Empty) {
+    if ($dragging) {
       $x = [Math]::Min($start.X, $current.X)
       $y = [Math]::Min($start.Y, $current.Y)
       $w = [Math]::Abs($start.X - $current.X)
@@ -144,6 +150,11 @@ function Select-ScreenRegion {
         $pen.Dispose()
       }
     }
+  })
+
+  $selector.Add_Shown({
+    $selector.Activate()
+    $selector.Focus()
   })
 
   [void]$selector.ShowDialog()
@@ -367,7 +378,11 @@ $timer.Add_Tick({
 
 $btnPick.Add_Click({
   Write-Log "Selecting OCR rectangle..."
+  $form.Hide()
+  Start-Sleep -Milliseconds 150
   $rect = Select-ScreenRegion
+  $form.Show()
+  $form.Activate()
   if ($rect -ne [System.Drawing.Rectangle]::Empty) {
     $script:selectedRegion = $rect
     $regionLabel.Text = Format-RegionText -Rect $selectedRegion
