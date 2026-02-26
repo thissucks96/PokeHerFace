@@ -82,32 +82,36 @@ function Select-ScreenRegion {
   $selector.KeyPreview = $true
 
   $selector.Add_KeyDown({
-    if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+    param($sender, $e)
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
       $selector.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
       $selector.Close()
     }
   })
 
   $selector.Add_MouseDown({
-    if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-      $start = $_.Location
-      $current = $_.Location
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+      $start = $e.Location
+      $current = $e.Location
       $dragging = $true
       $selector.Invalidate()
     }
   })
 
   $selector.Add_MouseMove({
+    param($sender, $e)
     if ($dragging) {
-      $current = $_.Location
+      $current = $e.Location
       $selector.Invalidate()
     }
   })
 
   $selector.Add_MouseUp({
-    if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $dragging) {
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $dragging) {
       $dragging = $false
-      $current = $_.Location
+      $current = $e.Location
       $x = [Math]::Min($start.X, $current.X)
       $y = [Math]::Min($start.Y, $current.Y)
       $w = [Math]::Abs($start.X - $current.X)
@@ -124,6 +128,7 @@ function Select-ScreenRegion {
   })
 
   $selector.Add_Paint({
+    param($sender, $e)
     if ($start -ne [System.Drawing.Point]::Empty -or $current -ne [System.Drawing.Point]::Empty) {
       $x = [Math]::Min($start.X, $current.X)
       $y = [Math]::Min($start.Y, $current.Y)
@@ -133,8 +138,8 @@ function Select-ScreenRegion {
         $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(70, 0, 200, 120))
         $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(250, 40, 230, 120), 2)
         $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
-        $_.Graphics.FillRectangle($brush, $rect)
-        $_.Graphics.DrawRectangle($pen, $rect)
+        $e.Graphics.FillRectangle($brush, $rect)
+        $e.Graphics.DrawRectangle($pen, $rect)
         $brush.Dispose()
         $pen.Dispose()
       }
