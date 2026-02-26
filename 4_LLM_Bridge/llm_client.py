@@ -35,6 +35,18 @@ try:
 except ValueError:
     TURN_MAX_TARGETS = 2
 try:
+    CLOUD_TURN_CATALOG_LIMIT = int(os.environ.get("CLOUD_TURN_CATALOG_LIMIT", "10"))
+except ValueError:
+    CLOUD_TURN_CATALOG_LIMIT = 10
+try:
+    CLOUD_RIVER_CATALOG_LIMIT = int(os.environ.get("CLOUD_RIVER_CATALOG_LIMIT", "12"))
+except ValueError:
+    CLOUD_RIVER_CATALOG_LIMIT = 12
+try:
+    CLOUD_CATALOG_ACTION_LIMIT = int(os.environ.get("CLOUD_CATALOG_ACTION_LIMIT", "4"))
+except ValueError:
+    CLOUD_CATALOG_ACTION_LIMIT = 4
+try:
     OPENAI_MIN_INTERVAL_SEC = float(os.environ.get("OPENAI_MIN_INTERVAL_SEC", "2.5"))
 except ValueError:
     OPENAI_MIN_INTERVAL_SEC = 2.5
@@ -153,11 +165,22 @@ def _build_messages(
     opponent_profile: Optional[Dict[str, Any]],
     node_lock_catalog: Optional[list[Dict[str, Any]]],
     enable_multi_node: bool,
+    provider: str,
 ) -> list[Dict[str, str]]:
     expected_street = _detect_street(spot_json)
     allowed_streets = sorted(_allowed_lock_streets(expected_street))
     allowed_actions_list = ", ".join(allowed_root_actions or [])
     opp_profile_json = json.dumps(opponent_profile or {}, ensure_ascii=True)
+    is_cloud = provider == "openai"
+    catalog_limit = 24
+    if enable_multi_node and is_cloud:
+        if expected_street == "turn":
+            catalog_limit = max(1, min(CLOUD_TURN_CATALOG_LIMIT, 24))
+        elif expected_street == "river":
+            catalog_limit = max(1, min(CLOUD_RIVER_CATALOG_LIMIT, 24))
+        else:
+            catalog_limit = 8
+    action_limit = max(1, CLOUD_CATALOG_ACTION_LIMIT) if (enable_multi_node and is_cloud) else 32
     catalog_preview = []
     for item in node_lock_catalog or []:
         if not isinstance(item, dict):
@@ -167,8 +190,10 @@ def _build_messages(
         actions = item.get("actions", [])
         if not node_id or street not in STREET_VALUES or not isinstance(actions, list):
             continue
+        if is_cloud and enable_multi_node:
+            actions = actions[:action_limit]
         catalog_preview.append({"node_id": node_id, "street": street, "actions": actions})
-        if len(catalog_preview) >= 24:
+        if len(catalog_preview) >= catalog_limit:
             break
 
     if enable_multi_node:
@@ -251,7 +276,11 @@ def _call_openai_compatible_chat(
         fallback_payload.pop("response_format", None)
         _apply_openai_rate_limit()
         fallback_resp = requests.post(url, headers=headers, json=fallback_payload, timeout=timeout_sec)
-        fallback_resp.raise_for_status()
+        if fallback_resp.status_code >= 400:
+            detail = fallback_resp.text[-800:].replace("\n", " ")
+            raise ValueError(
+                f"OpenAI chat fallback failed status={fallback_resp.status_code}; detail={detail!r}"
+            )
         data = fallback_resp.json()
     else:
         data = resp.json()
@@ -959,6 +988,7 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
         opponent_profile=opponent_profile,
         node_lock_catalog=node_lock_catalog,
         enable_multi_node=enable_multi_node,
+        provider=provider,
     )
     temperature = float(resolved.get("temperature", 0.0))
     max_tokens = int(resolved.get("max_tokens", 400))
@@ -1023,6 +1053,7 @@ def get_llm_intuition(spot_json: Dict[str, Any], config: Optional[Dict[str, Any]
                         opponent_profile=opponent_profile,
                         node_lock_catalog=node_lock_catalog,
                         enable_multi_node=False,
+                        provider=provider,
                     )
                     retry_payload = _call_local_with_retry(
                         base_url=local_base_url,

@@ -143,6 +143,9 @@ OpenAI model defaults can be overridden with env vars:
 - `OPENAI_MODEL_MINI`
 - `OPENAI_MODEL_52`
 - `OPENAI_MIN_INTERVAL_SEC` (default `2.5`; serial delay between OpenAI calls for Tier 1 rate limits)
+- `CLOUD_TURN_CATALOG_LIMIT` (default `10`; trims node catalog entries for cloud turn multi-node prompts)
+- `CLOUD_RIVER_CATALOG_LIMIT` (default `12`; trims node catalog entries for cloud river multi-node prompts)
+- `CLOUD_CATALOG_ACTION_LIMIT` (default `4`; trims action list per catalog node for cloud prompts)
 
 Examples:
 
