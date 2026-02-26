@@ -26,6 +26,8 @@ Example:
 
 ### API Testing Safety Limit
 - Batch testing is capped at 10 calls per model unless the user explicitly grants permission to exceed it.
+- Until the user confirms plan tier is upgraded, enforce cloud/API calls sequentially with a per-call delay.
+- Default minimum delay between OpenAI calls is `OPENAI_MIN_INTERVAL_SEC=2.5` to avoid Tier 1 burst/rate-limit failures.
 
 ### Documentation Maintenance
 - When significant code changes are made (new capabilities, major behavior changes, or new workflows), update `README.MD` in the same workstream.

@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -32,9 +34,29 @@ try:
     TURN_MAX_TARGETS = int(os.environ.get("TURN_MAX_TARGETS", "2"))
 except ValueError:
     TURN_MAX_TARGETS = 2
+try:
+    OPENAI_MIN_INTERVAL_SEC = float(os.environ.get("OPENAI_MIN_INTERVAL_SEC", "2.5"))
+except ValueError:
+    OPENAI_MIN_INTERVAL_SEC = 2.5
 RIVER_ROOT_SIZE_POLICY = str(os.environ.get("RIVER_ROOT_SIZE_POLICY", "split")).strip().lower()
 if RIVER_ROOT_SIZE_POLICY not in {"split", "largest", "highest_frequency"}:
     RIVER_ROOT_SIZE_POLICY = "split"
+
+_OPENAI_RATE_LOCK = threading.Lock()
+_OPENAI_LAST_CALL_TS = 0.0
+
+
+def _apply_openai_rate_limit() -> None:
+    if OPENAI_MIN_INTERVAL_SEC <= 0.0:
+        return
+    global _OPENAI_LAST_CALL_TS  # pylint: disable=global-statement
+    with _OPENAI_RATE_LOCK:
+        now = time.monotonic()
+        wait_for = OPENAI_MIN_INTERVAL_SEC - (now - _OPENAI_LAST_CALL_TS)
+        if wait_for > 0:
+            time.sleep(wait_for)
+            now = time.monotonic()
+        _OPENAI_LAST_CALL_TS = now
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
@@ -209,6 +231,7 @@ def _call_openai_compatible_chat(
     max_tokens: int,
     timeout_sec: float = 60.0,
 ) -> Dict[str, Any]:
+    _apply_openai_rate_limit()
     url = base_url.rstrip("/") + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -226,6 +249,7 @@ def _call_openai_compatible_chat(
     if resp.status_code >= 400:
         fallback_payload = dict(payload)
         fallback_payload.pop("response_format", None)
+        _apply_openai_rate_limit()
         fallback_resp = requests.post(url, headers=headers, json=fallback_payload, timeout=timeout_sec)
         fallback_resp.raise_for_status()
         data = fallback_resp.json()

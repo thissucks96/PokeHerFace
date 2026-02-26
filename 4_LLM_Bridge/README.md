@@ -142,6 +142,7 @@ OpenAI model defaults can be overridden with env vars:
 - `OPENAI_MODEL_FAST`
 - `OPENAI_MODEL_MINI`
 - `OPENAI_MODEL_52`
+- `OPENAI_MIN_INTERVAL_SEC` (default `2.5`; serial delay between OpenAI calls for Tier 1 rate limits)
 
 Examples:
 

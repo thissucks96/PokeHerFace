@@ -42,6 +42,7 @@ This workspace is organized to keep the engine, neural models, hand history data
 - Multi-node lock generation from the LLM is available but should stay gated (`enable_multi_node_locks=false` by default) until broader acceptance metrics are stable.
 - Hand-history ingestion from `3_Hand_Histories` into spot generation is not fully automated yet.
 - LLM quality benchmarking and routing policy tuning are still in progress (current local front-runner: `qwen3-coder:30b`).
+- Cloud/API calls are currently Tier 1 rate-limited; bridge enforces serialized OpenAI call spacing via `OPENAI_MIN_INTERVAL_SEC` (default `2.5`).
 
 ## Quick Start (Windows)
 
