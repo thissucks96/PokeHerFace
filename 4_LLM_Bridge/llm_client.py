@@ -644,6 +644,146 @@ def _cap_turn_targets_if_needed(
     return targets[:cap]
 
 
+def _node_lock_target_depth(node_id: Any) -> int:
+    label = str(node_id or "").strip().lower()
+    if not label or label == "root":
+        return 0
+    if "/" in label:
+        parts = [part for part in label.split("/") if part]
+        if parts and parts[0] == "root":
+            return max(0, len(parts) - 1)
+        return len(parts)
+    if ":" in label:
+        parts = [part for part in label.split(":") if part]
+        if parts and parts[0] == "root":
+            return max(0, len(parts) - 1)
+        return max(1, len(parts))
+    return 1
+
+
+def _coerce_turn_root_anchor_locks(
+    locks: list[Dict[str, Any]],
+    *,
+    allowed_root_actions: Optional[list[str]],
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    allowed_actions = [str(a).strip().lower() for a in (allowed_root_actions or []) if str(a).strip()]
+    normalized_locks: list[Dict[str, Any]] = []
+    for item in locks:
+        if not isinstance(item, dict):
+            continue
+        action = _normalize_action_label(item.get("action"))
+        if not ACTION_PATTERN.match(action):
+            continue
+        freq = _coerce_frequency(item.get("frequency"))
+        if freq is None:
+            continue
+        action_candidates = _action_candidates_for_allowed(action, allowed_actions) if allowed_actions else [action]
+        if not action_candidates:
+            continue
+        split_freq = freq / float(len(action_candidates))
+        for candidate in action_candidates:
+            normalized_locks.append({"action": candidate, "frequency": split_freq})
+
+    normalized_locks = _aggregate_and_normalize_locks(normalized_locks)
+    if not normalized_locks:
+        anchor_action = _pick_mock_action(allowed_actions if allowed_actions else None)
+        normalized_locks = [{"action": anchor_action, "frequency": 1.0}]
+        issues.append("turn_root_anchor_action_synthesized")
+
+    normalized_locks = _inject_root_check_floor_if_needed(
+        normalized_locks,
+        node_id="root",
+        expected_street="turn",
+        allowed_root_actions=allowed_actions,
+        issues=issues,
+    )
+    return normalized_locks
+
+
+def _enforce_turn_root_anchor_and_depth_if_needed(
+    targets: list[Dict[str, Any]],
+    *,
+    expected_street: str,
+    allowed_root_actions: Optional[list[str]],
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    if expected_street != "turn":
+        return targets
+    if not targets:
+        return targets
+
+    pruned_targets: list[Dict[str, Any]] = []
+    deep_pruned_targets: list[Dict[str, Any]] = []
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        node_id = str(target.get("node_id", "")).strip().lower()
+        if node_id == "root":
+            pruned_targets.append(target)
+            continue
+
+        depth = _node_lock_target_depth(node_id)
+        if depth > 1:
+            issues.append("turn_nonroot_depth_pruned")
+            deep_pruned_targets.append(target)
+            continue
+        pruned_targets.append(target)
+
+    if not pruned_targets:
+        # If only deep branch targets were proposed, salvage the highest-confidence
+        # one by coercing it to a root anchor instead of defaulting to check-only.
+        if deep_pruned_targets:
+            best_deep = max(
+                deep_pruned_targets,
+                key=lambda t: float(t.get("confidence", 0.5)) if isinstance(t.get("confidence"), (int, float)) else 0.5,
+            )
+            anchor_from_deep = dict(best_deep)
+            anchor_from_deep["node_id"] = "root"
+            anchor_from_deep["street"] = "turn"
+            anchor_from_deep["locks"] = _coerce_turn_root_anchor_locks(
+                anchor_from_deep.get("locks", []) if isinstance(anchor_from_deep.get("locks"), list) else [],
+                allowed_root_actions=allowed_root_actions,
+                issues=issues,
+            )
+            anchor_from_deep["confidence"] = _normalize_confidence(anchor_from_deep.get("confidence"))
+            issues.append("turn_root_anchor_coerced_from_deep_pruned")
+            return [anchor_from_deep]
+
+        anchor_action = _pick_mock_action(allowed_root_actions if isinstance(allowed_root_actions, list) else None)
+        issues.append("turn_root_anchor_synthesized_from_empty")
+        return [
+            {
+                "node_id": "root",
+                "street": "turn",
+                "confidence": 0.5,
+                "locks": [{"action": anchor_action, "frequency": 1.0}],
+            }
+        ]
+
+    has_root = any(str(t.get("node_id", "")).strip().lower() == "root" for t in pruned_targets if isinstance(t, dict))
+    if has_root:
+        return pruned_targets
+
+    best_index = max(
+        range(len(pruned_targets)),
+        key=lambda idx: float(pruned_targets[idx].get("confidence", 0.5))
+        if isinstance(pruned_targets[idx].get("confidence"), (int, float))
+        else 0.5,
+    )
+    anchor_target = dict(pruned_targets[best_index])
+    anchor_target["node_id"] = "root"
+    anchor_target["street"] = "turn"
+    anchor_target["locks"] = _coerce_turn_root_anchor_locks(
+        anchor_target.get("locks", []) if isinstance(anchor_target.get("locks"), list) else [],
+        allowed_root_actions=allowed_root_actions,
+        issues=issues,
+    )
+    pruned_targets[best_index] = anchor_target
+    issues.append("turn_root_anchor_coerced")
+    return pruned_targets
+
+
 def _normalize_confidence(value: Any) -> float:
     try:
         confidence = float(value)
@@ -957,6 +1097,12 @@ def _normalize_node_lock(
         normalized_targets = [root_targets[0]]
         issues.append("single_node_mode_enforced")
     else:
+        normalized_targets = _enforce_turn_root_anchor_and_depth_if_needed(
+            normalized_targets,
+            expected_street=expected_street,
+            allowed_root_actions=allowed_root_actions,
+            issues=issues,
+        )
         normalized_targets = _cap_turn_targets_if_needed(
             normalized_targets,
             expected_street=expected_street,

@@ -20,6 +20,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - legal-action-constrained lock generation (with opponent profile + node catalog context),
   - locked solve,
   - automatic selection of better result (baseline if lock is not better than baseline by `EV_KEEP_MARGIN`, default `0.001`).
+  - turn multi-node guardrail: requires a root anchor target, prunes deep branch-only locks (`depth > 1`), and coerces the best deep proposal into a legal root anchor when needed to avoid check-only synthetic locks.
 - Spot pack tooling is available via `4_LLM_Bridge/build_spot_pack.py` for bulk PHH -> tagged spot conversion with manifest/report output.
 - PHH opponent-feature extraction is available via `4_LLM_Bridge/extract_opponent_features.py`:
   - `fold_to_turn_probe` (smoothed),

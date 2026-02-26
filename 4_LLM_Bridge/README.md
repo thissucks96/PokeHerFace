@@ -460,3 +460,4 @@ The response JSON includes:
 - Bridge performs two-pass scoring and rejects non-improving locks by selecting baseline GTO.
 - Shark enforces node-lock targets by `node_id` + `street` in CFR (root and non-root).
 - Baseline solve exposes `node_lock_catalog` so prompts can target known action nodes.
+- Turn multi-node normalization requires a root anchor target and prunes deep branch-only targets (`depth > 1`) before final lock selection; if all proposals are deep-only, the highest-confidence one is coerced to a legal root anchor.
