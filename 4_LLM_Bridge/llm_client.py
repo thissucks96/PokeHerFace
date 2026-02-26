@@ -668,12 +668,70 @@ def _extract_raw_targets(node_lock: Dict[str, Any]) -> list[Dict[str, Any]]:
     return [node_lock]
 
 
+def _apply_paired_river_constraint_if_needed(
+    locks: list[Dict[str, Any]],
+    *,
+    node_id: str,
+    expected_street: str,
+    spot_json: Dict[str, Any],
+    issues: list[str],
+) -> list[Dict[str, Any]]:
+    if node_id != "root":
+        return locks
+    if expected_street != "river":
+        return locks
+
+    # Check for paired board either via meta or cards
+    is_paired = False
+    meta = spot_json.get("meta", {})
+    if str(meta.get("texture", "")).strip().lower() == "paired":
+        is_paired = True
+    else:
+        board = spot_json.get("board", [])
+        if isinstance(board, list) and len(board) == 5:
+            ranks = [str(c)[0] for c in board if isinstance(c, str) and len(str(c)) >= 1]
+            if len(set(ranks)) < len(ranks):
+                is_paired = True
+                
+    if not is_paired:
+        return locks
+        
+    aggressive = [item for item in locks if item["action"].startswith("bet") or item["action"].startswith("raise")]
+    if len(aggressive) > 1:
+        return locks
+
+    agg_total = sum(item["frequency"] for item in aggressive)
+    MAX_BET_FREQ = 0.50
+    if agg_total <= MAX_BET_FREQ:
+        return locks
+        
+    passive = [item for item in locks if not (item["action"].startswith("bet") or item["action"].startswith("raise"))]
+    pass_total = sum(item["frequency"] for item in passive)
+
+    adjusted: list[Dict[str, Any]] = []
+    scale_agg = MAX_BET_FREQ / agg_total if agg_total > 0 else 0
+    for item in aggressive:
+        adjusted.append({"action": item["action"], "frequency": item["frequency"] * scale_agg})
+        
+    remaining = 1.0 - MAX_BET_FREQ
+    if pass_total > 0:
+        scale_pass = remaining / pass_total
+        for item in passive:
+            adjusted.append({"action": item["action"], "frequency": item["frequency"] * scale_pass})
+    else:
+        adjusted.append({"action": "check", "frequency": remaining})
+        
+    issues.append(f"paired_river_cap_applied:{int(MAX_BET_FREQ*100)}")
+    return _aggregate_and_normalize_locks(adjusted)
+
+
 def _normalize_target(
     target_payload: Dict[str, Any],
     *,
     expected_street: str,
     provider: str,
     allowed_root_actions: Optional[list[str]],
+    spot_json: Dict[str, Any],
     issues: list[str],
 ) -> Dict[str, Any]:
     node_id_raw = _first_present(target_payload, TARGET_NODE_ID_KEYS, "root")
@@ -746,6 +804,13 @@ def _normalize_target(
         expected_street=expected_street,
         issues=issues,
     )
+    normalized_locks = _apply_paired_river_constraint_if_needed(
+        normalized_locks,
+        node_id=node_id,
+        expected_street=expected_street,
+        spot_json=spot_json,
+        issues=issues,
+    )
     if not normalized_locks:
         raise ValueError("Node-lock target did not contain any valid lock entries after root check floor repair.")
 
@@ -793,6 +858,7 @@ def _normalize_node_lock(
                     expected_street=expected_street,
                     provider=provider,
                     allowed_root_actions=allowed_root_actions,
+                    spot_json=spot_json,
                     issues=issues,
                 )
             )

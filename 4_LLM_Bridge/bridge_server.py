@@ -316,8 +316,20 @@ def _extract_rollout_classes(spot: Dict[str, Any]) -> Dict[str, bool]:
 def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]) -> tuple[bool, str, Dict[str, bool]]:
     requested = bool(request.enable_multi_node_locks)
     classes = _extract_rollout_classes(request.spot)
+    spot_street = _detect_spot_street(request.spot)
+    
     is_class1 = bool(classes.get("turn_probe_punish", False))
     is_class23 = bool(classes.get("river_bigbet_overfold_punish", False) or classes.get("river_underbluff_defense", False))
+    
+    # If no explicit class is defined, fallback to street-level inference for broad pool tagging
+    if not classes:
+        if spot_street == "turn":
+            is_class1 = True
+            classes["turn_probe_punish"] = True
+        elif spot_street == "river":
+            is_class23 = True
+            classes["river_bigbet_overfold_punish"] = True
+            
     mode = str(llm_config.get("mode", "")).strip().lower()
 
     if BENCHMARK_MODE_BYPASS_ROUTING and mode == "benchmark":
