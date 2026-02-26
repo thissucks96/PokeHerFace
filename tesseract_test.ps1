@@ -61,6 +61,8 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $tesseractExe = Resolve-TesseractExecutable
+$ollamaHost = if ($env:OLLAMA_HOST) { [string]$env:OLLAMA_HOST } else { "http://127.0.0.1:11434" }
+$ollamaVisionModel = if ($env:OLLAMA_VISION_MODEL) { [string]$env:OLLAMA_VISION_MODEL } else { "llava:13b" }
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $autoEnabled = $false
@@ -524,6 +526,130 @@ function Get-CardTokenFromRegion {
   }
 }
 
+function Invoke-OllamaVisionCard {
+  param(
+    [Parameter(Mandatory = $true)][string]$ImagePath
+  )
+  $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
+  $b64 = [Convert]::ToBase64String($bytes)
+  $prompt = "Read the poker community card in this image crop. Return only one token in format Rank+Suit using ranks AKQJT98765432 and suits s h d c (example: As, Td, 7h). If unreadable return ??. No extra words."
+  $payload = @{
+    model = $ollamaVisionModel
+    prompt = $prompt
+    images = @($b64)
+    stream = $false
+    options = @{
+      temperature = 0
+      top_p = 0.1
+      num_predict = 12
+    }
+  }
+  $jsonBody = ConvertTo-Json $payload -Depth 8 -Compress
+  $resp = Invoke-RestMethod -Uri ("{0}/api/generate" -f $ollamaHost.TrimEnd("/")) -Method Post -ContentType "application/json" -Body $jsonBody -TimeoutSec 90
+  if ($null -eq $resp) {
+    return ""
+  }
+  if ($resp.response -is [System.Array]) {
+    return [string]::Join(" ", ($resp.response | ForEach-Object { [string]$_ }))
+  }
+  return [string]$resp.response
+}
+
+function Test-OllamaEndpoint {
+  try {
+    $null = Invoke-RestMethod -Uri ("{0}/api/tags" -f $ollamaHost.TrimEnd("/")) -Method Get -TimeoutSec 5
+    return $true
+  }
+  catch {
+    return $false
+  }
+}
+
+function Get-CardTokenFromVisionRegion {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
+    [Parameter(Mandatory = $true)][string]$TmpDir,
+    [Parameter(Mandatory = $true)][string]$SlotTag
+  )
+
+  $regions = @(
+    [pscustomobject]@{ tag = "full"; rect = $Region }
+  )
+  if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
+    $x = $Region.X
+    $y = $Region.Y
+    $w = $Region.Width
+    $h = $Region.Height
+    $regions += [pscustomobject]@{
+      tag = "rankcrop1"
+      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
+    }
+  }
+
+  $bestToken = ""
+  $bestRaw = ""
+  $bestSource = ""
+  $bestVariant = ""
+  $bestScore = -100000
+
+  foreach ($entry in $regions) {
+    $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+    $imgPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.png" -f $SlotTag, $entry.tag, $stamp)
+    Capture-RegionImage -Region $entry.rect -Path $imgPath
+    $imagePaths = @($imgPath)
+    $contrastPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.contrast.png" -f $SlotTag, $entry.tag, $stamp)
+    try {
+      New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
+      $imagePaths += $contrastPath
+    }
+    catch {
+      Write-Log ("Vision preprocess warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+    }
+
+    foreach ($candidatePath in $imagePaths) {
+      try {
+        $raw = Invoke-OllamaVisionCard -ImagePath $candidatePath
+      }
+      catch {
+        Write-Log ("Vision call warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+        continue
+      }
+      $rawText = ([string]$raw).Trim()
+      if (-not $rawText) {
+        continue
+      }
+      $token = Normalize-CardToken -Text $rawText
+      $tokenScore = Get-CardTokenScore -Token $token
+      if ($token -eq "??") {
+        $tokenScore -= 10
+      }
+      if ($tokenScore -gt $bestScore) {
+        $bestScore = $tokenScore
+        $bestToken = if ($token) { $token } else { "??" }
+        $bestRaw = $rawText
+        $bestSource = [string]$entry.tag
+        $bestVariant = [System.IO.Path]::GetFileName($candidatePath)
+      }
+      if ($bestToken -match "^[AKQJT98765432][SHDC]$") {
+        break
+      }
+    }
+  }
+
+  if (-not $bestRaw) {
+    return $null
+  }
+
+  return [pscustomobject]@{
+    token = $bestToken
+    raw_text = $bestRaw
+    label = "vision_llava"
+    variant = $bestVariant
+    source = $bestSource
+    score = $bestScore
+  }
+}
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Tesseract Region Test"
 $form.StartPosition = "CenterScreen"
@@ -668,6 +794,7 @@ $cmbProfile.Size = New-Object System.Drawing.Size(90, 24)
 $cmbProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbProfile.Items.Add("General")
 [void]$cmbProfile.Items.Add("Cards (ranks/suits)")
+[void]$cmbProfile.Items.Add("Cards (local vision llava)")
 [void]$cmbProfile.Items.Add("Numeric (pot/stack)")
 $cmbProfile.SelectedIndex = 1
 $form.Controls.Add($cmbProfile)
@@ -725,20 +852,26 @@ function Format-RegionText {
 }
 
 function Run-Ocr {
-  if (-not $tesseractExe) {
-    Write-Log "OCR skipped: tesseract not found."
-    return
-  }
-  if ($isBusy) {
-    return
-  }
-
   $profileName = [string]$cmbProfile.SelectedItem
   if (-not $profileName) {
     $profileName = "General"
   }
+  $isVisionCards = ($profileName -eq "Cards (local vision llava)")
+  $isCardsProfile = ($profileName -eq "Cards (ranks/suits)" -or $isVisionCards)
 
-  if ($profileName -eq "Cards (ranks/suits)") {
+  if ($isBusy) {
+    return
+  }
+  if ((-not $isVisionCards) -and (-not $tesseractExe)) {
+    Write-Log "OCR skipped: tesseract not found."
+    return
+  }
+  if ($isVisionCards -and (-not (Test-OllamaEndpoint))) {
+    Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
+    return
+  }
+
+  if ($isCardsProfile) {
     $missing = @()
     foreach ($slot in $cardSlotOrder) {
       if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
@@ -759,16 +892,22 @@ function Run-Ocr {
   try {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    if ($profileName -eq "Cards (ranks/suits)") {
+    if ($isCardsProfile) {
+      $cardModeLabel = if ($isVisionCards) { "Cards (local vision llava)" } else { "Cards (ranks/suits)" }
       $cards = @{}
       foreach ($slot in $cardSlotOrder) {
         $cards[$slot] = "--"
       }
       foreach ($slot in $cardSlotOrder) {
-        $bestCard = Get-CardTokenFromRegion -Region $cardRegions[$slot] -TmpDir $tmpDir -SlotTag $slot
+        $bestCard = if ($isVisionCards) {
+          Get-CardTokenFromVisionRegion -Region $cardRegions[$slot] -TmpDir $tmpDir -SlotTag $slot
+        }
+        else {
+          Get-CardTokenFromRegion -Region $cardRegions[$slot] -TmpDir $tmpDir -SlotTag $slot
+        }
         if (-not $bestCard) {
           $cards[$slot] = "??"
-          Write-Log ("OCR warning [Cards (ranks/suits)] {0}: no readable output." -f $slot)
+          Write-Log ("OCR warning [{0}] {1}: no readable output." -f $cardModeLabel, $slot)
           continue
         }
         $cards[$slot] = $bestCard.token
@@ -776,7 +915,7 @@ function Run-Ocr {
         if ($preview.Length -gt 64) {
           $preview = $preview.Substring(0, 64) + "..."
         }
-        Write-Log ("OCR OK [Cards (ranks/suits)] {0} {1} via {2}/{3}: {4}" -f $slot, $bestCard.label, $bestCard.variant, $bestCard.source, $preview)
+        Write-Log ("OCR OK [{0}] {1} {2} via {3}/{4}: {5}" -f $cardModeLabel, $slot, $bestCard.label, $bestCard.variant, $bestCard.source, $preview)
       }
 
       $out = @(
@@ -867,7 +1006,14 @@ $btnOnce.Add_Click({
 })
 
 $btnAutoStart.Add_Click({
-  if (-not $tesseractExe) {
+  $profileName = [string]$cmbProfile.SelectedItem
+  if (-not $profileName) {
+    $profileName = "General"
+  }
+  $isVisionCards = ($profileName -eq "Cards (local vision llava)")
+  $isCardsProfile = ($profileName -eq "Cards (ranks/suits)" -or $isVisionCards)
+
+  if ((-not $isVisionCards) -and (-not $tesseractExe)) {
     [void][System.Windows.Forms.MessageBox]::Show(
       "Tesseract not found. Set TESSERACT_PATH or add tesseract to PATH first.",
       "Missing Tesseract",
@@ -876,11 +1022,17 @@ $btnAutoStart.Add_Click({
     )
     return
   }
-  $profileName = [string]$cmbProfile.SelectedItem
-  if (-not $profileName) {
-    $profileName = "General"
+  if ($isVisionCards -and (-not (Test-OllamaEndpoint))) {
+    [void][System.Windows.Forms.MessageBox]::Show(
+      ("Ollama endpoint not reachable at {0}. Start ollama serve first." -f $ollamaHost),
+      "Missing Ollama",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    return
   }
-  if ($profileName -eq "Cards (ranks/suits)") {
+
+  if ($isCardsProfile) {
     $missing = @()
     foreach ($slot in $cardSlotOrder) {
       if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
@@ -910,7 +1062,7 @@ $btnAutoStart.Add_Click({
   $script:autoEnabled = $true
   $btnAutoStart.Enabled = $false
   $btnAutoStop.Enabled = $true
-  if ($profileName -eq "Cards (ranks/suits)") {
+  if ($isCardsProfile) {
     Write-Log ("Auto OCR started (every {0}s, all five card boxes)." -f [int]$numInterval.Value)
   }
   else {
