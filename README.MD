@@ -38,9 +38,25 @@ This workspace is organized to keep the engine, neural models, hand history data
   - local OpenAI-compatible endpoints (default production model: `qwen3-coder:30b`)
 - Bridge production policy can enforce local routing to `qwen3-coder:30b` only (challengers allowed in `mode=benchmark`).
 
+### Phase 13 Bookmark (Local Baseline Locked)
+
+- 5-seed local A/B/C verification completed on `2026-02-26` across seeds:
+  - `1001`, `2026`, `4090`, `7777`, `9999`
+- 40-spot aggregate results (`test_backtest_abc.ps1`, local `qwen3-coder:30b`):
+  - `class1_live_shadow23 bb100_avg = +0.4373`
+  - `full_multi_node_benchmark bb100_avg = +0.4373`
+  - `fallback_avg = 0.00`
+  - `keep_avg = 0.975`
+- Gate status:
+  - `turn_class1`: pass (`fallback=0.00`, `lock_applied=0.95`, `keep=0.95`)
+  - `river_class23`: pass (`fallback=0.00`, `lock_applied=1.00`, `keep=1.00`)
+- Baseline interpretation:
+  - Local-only pipeline is stable and profitable on the canonical 40-spot proxy run set.
+  - Full multi-node and class1-shadow routing are effectively at parity in this sweep.
+
 ## Current Limits
 
-- Multi-node lock generation from the LLM is available but should stay gated (`enable_multi_node_locks=false` by default) until broader acceptance metrics are stable.
+- Multi-node lock generation is policy-gated by rollout class/routing in the bridge and should remain controlled via env toggles during canary scheduling.
 - Hand-history ingestion from `3_Hand_Histories` into spot generation is not fully automated yet.
 - LLM quality benchmarking and routing policy tuning are still in progress (current local front-runner: `qwen3-coder:30b`).
 - Cloud/API calls are currently Tier 1 rate-limited; bridge enforces serialized OpenAI call spacing via `OPENAI_MIN_INTERVAL_SEC` (default `2.5`).
