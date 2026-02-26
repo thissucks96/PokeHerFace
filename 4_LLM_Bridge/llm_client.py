@@ -50,6 +50,10 @@ try:
     OPENAI_MIN_INTERVAL_SEC = float(os.environ.get("OPENAI_MIN_INTERVAL_SEC", "2.5"))
 except ValueError:
     OPENAI_MIN_INTERVAL_SEC = 2.5
+try:
+    OPENAI_MAX_TOKENS_5MINI = int(os.environ.get("OPENAI_MAX_TOKENS_5MINI", "1600"))
+except ValueError:
+    OPENAI_MAX_TOKENS_5MINI = 1600
 RIVER_ROOT_SIZE_POLICY = str(os.environ.get("RIVER_ROOT_SIZE_POLICY", "split")).strip().lower()
 if RIVER_ROOT_SIZE_POLICY not in {"split", "largest", "highest_frequency"}:
     RIVER_ROOT_SIZE_POLICY = "split"
@@ -74,7 +78,11 @@ PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
     "openai_fast": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_FAST", "gpt-5-mini")},
     "openai_mini": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini")},
-    "openai_5mini": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini")},
+    "openai_5mini": {
+        "provider": "openai",
+        "model": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini"),
+        "max_tokens": OPENAI_MAX_TOKENS_5MINI,
+    },
     "openai_52": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_52", "gpt-5.2")},
     "local_gpt_oss_20b": {
         "provider": "local",
