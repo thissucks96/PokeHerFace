@@ -66,13 +66,14 @@ $isBusy = $false
 $autoEnabled = $false
 
 function Select-ScreenRegion {
-  $resultRect = [System.Drawing.Rectangle]::Empty
   $virtualScreen = [System.Windows.Forms.SystemInformation]::VirtualScreen
   $state = [pscustomobject]@{
     Start = [System.Drawing.Point]::Empty
     Current = [System.Drawing.Point]::Empty
     Dragging = $false
     AnchorMode = $false
+    Accepted = $false
+    SelectedRect = [System.Drawing.Rectangle]::Empty
   }
 
   $selector = New-Object System.Windows.Forms.Form
@@ -121,7 +122,8 @@ function Select-ScreenRegion {
         $w = [Math]::Abs($state.Start.X - $state.Current.X)
         $h = [Math]::Abs($state.Start.Y - $state.Current.Y)
         if ($w -ge 6 -and $h -ge 6) {
-          $resultRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
+          $state.SelectedRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
+          $state.Accepted = $true
           $selector.DialogResult = [System.Windows.Forms.DialogResult]::OK
         }
         else {
@@ -152,7 +154,8 @@ function Select-ScreenRegion {
       $h = [Math]::Abs($state.Start.Y - $state.Current.Y)
       if ($w -ge 6 -and $h -ge 6) {
         # Convert selector client coords back to global screen coords.
-        $resultRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
+        $state.SelectedRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
+        $state.Accepted = $true
         $selector.DialogResult = [System.Windows.Forms.DialogResult]::OK
       }
       else {
@@ -187,7 +190,10 @@ function Select-ScreenRegion {
   })
 
   [void]$selector.ShowDialog()
-  return $resultRect
+  if ($state.Accepted) {
+    return $state.SelectedRect
+  }
+  return [System.Drawing.Rectangle]::Empty
 }
 
 function Capture-RegionImage {
