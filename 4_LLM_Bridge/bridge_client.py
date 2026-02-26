@@ -48,7 +48,7 @@ def main() -> int:
         "--llm-preset",
         default="mock",
         help=(
-            "LLM preset selector: mock | openai_fast | openai_mini | openai_52 | "
+            "LLM preset selector: mock | openai_fast | openai_mini | openai_5mini | openai_52 | "
             "local_gpt_oss_20b | local_qwen3_coder_30b | local_deepseek_coder_33b | local_llama3_8b"
         ),
     )

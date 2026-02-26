@@ -128,13 +128,20 @@ Notes:
 Fast presets:
 
 - `mock` (default)
-- `openai_fast` (uses `gpt-4o-mini`)
-- `openai_mini` (uses `gpt-4o-mini`)
-- `openai_52` (uses `gpt-4o`)
+- `openai_fast` (uses `gpt-5-mini` by default)
+- `openai_mini` (uses `gpt-5-mini` by default)
+- `openai_5mini` (explicit alias for `gpt-5-mini`)
+- `openai_52` (uses `gpt-5.2` by default)
 - `local_gpt_oss_20b` (uses `gpt-oss:20b`)
 - `local_qwen3_coder_30b` (uses `qwen3-coder:30b`)
 - `local_deepseek_coder_33b` (uses `deepseek-coder:33b`)
 - `local_llama3_8b` (uses `llama3.1:8b`)
+
+OpenAI model defaults can be overridden with env vars:
+
+- `OPENAI_MODEL_FAST`
+- `OPENAI_MODEL_MINI`
+- `OPENAI_MODEL_52`
 
 Examples:
 

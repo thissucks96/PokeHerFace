@@ -33,7 +33,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - `4_LLM_Bridge/tag_spot_classes.py` tags spots for phased multi-node rollout classes.
 - LLM provider selection is supported in the bridge:
   - mock
-  - OpenAI API (`gpt-4o-mini`, `gpt-4o`)
+  - OpenAI API (`gpt-5-mini`, `gpt-5.2`)
   - local OpenAI-compatible endpoints (default production model: `qwen3-coder:30b`)
 - Bridge production policy can enforce local routing to `qwen3-coder:30b` only (challengers allowed in `mode=benchmark`).
 

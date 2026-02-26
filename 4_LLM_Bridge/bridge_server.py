@@ -69,7 +69,7 @@ class SolveRequest(BaseModel):
         default=None,
         description=(
             "LLM selector config. Defaults to local qwen3-coder:30b when omitted. Examples: "
-            "{'preset':'mock'} | {'preset':'openai_fast'} | {'preset':'openai_52'} | "
+            "{'preset':'mock'} | {'preset':'openai_fast'} | {'preset':'openai_mini'} | {'preset':'openai_5mini'} | {'preset':'openai_52'} | "
             "{'preset':'local_gpt_oss_20b'} | {'preset':'local_qwen3_coder_30b'} | "
             "{'preset':'local_deepseek_coder_33b'} | {'preset':'local_llama3_8b'} | "
             "{'provider':'openai','model':'gpt-5-mini'}."

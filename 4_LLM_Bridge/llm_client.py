@@ -38,9 +38,10 @@ if RIVER_ROOT_SIZE_POLICY not in {"split", "largest", "highest_frequency"}:
 
 PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
     "mock": {"provider": "mock", "model": "mock-root-check"},
-    "openai_fast": {"provider": "openai", "model": "gpt-4o-mini"},
-    "openai_mini": {"provider": "openai", "model": "gpt-4o-mini"},
-    "openai_52": {"provider": "openai", "model": "gpt-4o"},
+    "openai_fast": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_FAST", "gpt-5-mini")},
+    "openai_mini": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini")},
+    "openai_5mini": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini")},
+    "openai_52": {"provider": "openai", "model": os.environ.get("OPENAI_MODEL_52", "gpt-5.2")},
     "local_gpt_oss_20b": {
         "provider": "local",
         "model": os.environ.get("LOCAL_MODEL_GPT_OSS_20B", "gpt-oss:20b"),
