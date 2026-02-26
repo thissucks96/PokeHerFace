@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
+import math
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -54,6 +57,183 @@ try:
     CLOUD_CANDIDATE_COUNT_CAP = int(os.environ.get("CLOUD_CANDIDATE_COUNT_CAP", "2"))
 except ValueError:
     CLOUD_CANDIDATE_COUNT_CAP = 2
+CANARY_GUARDRAILS_ENABLED = os.environ.get("CANARY_GUARDRAILS_ENABLED", "0").strip() not in {"0", "false", "False"}
+try:
+    CANARY_WINDOW_CALLS = int(os.environ.get("CANARY_WINDOW_CALLS", "50"))
+except ValueError:
+    CANARY_WINDOW_CALLS = 50
+if CANARY_WINDOW_CALLS < 5:
+    CANARY_WINDOW_CALLS = 5
+try:
+    CANARY_MIN_CALLS_BEFORE_TRIP = int(os.environ.get("CANARY_MIN_CALLS_BEFORE_TRIP", "20"))
+except ValueError:
+    CANARY_MIN_CALLS_BEFORE_TRIP = 20
+if CANARY_MIN_CALLS_BEFORE_TRIP < 1:
+    CANARY_MIN_CALLS_BEFORE_TRIP = 1
+try:
+    CANARY_MAX_FALLBACK_RATE = float(os.environ.get("CANARY_MAX_FALLBACK_RATE", "0.0"))
+except ValueError:
+    CANARY_MAX_FALLBACK_RATE = 0.0
+try:
+    CANARY_MIN_KEEP_RATE = float(os.environ.get("CANARY_MIN_KEEP_RATE", "0.90"))
+except ValueError:
+    CANARY_MIN_KEEP_RATE = 0.90
+try:
+    CANARY_MAX_P95_LATENCY_SEC = float(os.environ.get("CANARY_MAX_P95_LATENCY_SEC", "20.0"))
+except ValueError:
+    CANARY_MAX_P95_LATENCY_SEC = 20.0
+CANARY_KILL_SWITCH_MODE = str(os.environ.get("CANARY_KILL_SWITCH_MODE", "baseline_only")).strip().lower()
+if CANARY_KILL_SWITCH_MODE not in {"baseline_only", "reject"}:
+    CANARY_KILL_SWITCH_MODE = "baseline_only"
+CANARY_AUTO_EXIT_ON_TRIP = os.environ.get("CANARY_AUTO_EXIT_ON_TRIP", "0").strip() not in {"0", "false", "False"}
+_CANARY_LOCK = threading.Lock()
+_CANARY_RECENT: deque[Dict[str, Any]] = deque(maxlen=CANARY_WINDOW_CALLS)
+_CANARY_STATE: Dict[str, Any] = {
+    "total_calls": 0,
+    "tripped": False,
+    "trip_reason": "",
+    "trip_metric": "",
+    "trip_value": None,
+    "trip_threshold": None,
+    "trip_at_unix": None,
+}
+
+
+def _percentile(values: list[float], q: float) -> Optional[float]:
+    if not values:
+        return None
+    sorted_vals = sorted(values)
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    q = max(0.0, min(1.0, q))
+    idx = (len(sorted_vals) - 1) * q
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    if lo == hi:
+        return sorted_vals[lo]
+    frac = idx - lo
+    return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
+
+
+def _canary_summary_from_entries(entries: list[Dict[str, Any]]) -> Dict[str, Any]:
+    if not entries:
+        return {
+            "window_calls": 0,
+            "fallback_rate": None,
+            "keep_rate": None,
+            "latency_p95_sec": None,
+        }
+    fallback_rate = sum(1.0 for row in entries if bool(row.get("fallback"))) / float(len(entries))
+    keep_rate = sum(1.0 for row in entries if bool(row.get("kept"))) / float(len(entries))
+    latencies = [float(row["latency_sec"]) for row in entries if isinstance(row.get("latency_sec"), (int, float))]
+    return {
+        "window_calls": len(entries),
+        "fallback_rate": fallback_rate,
+        "keep_rate": keep_rate,
+        "latency_p95_sec": _percentile(latencies, 0.95),
+    }
+
+
+def _canary_status_snapshot() -> Dict[str, Any]:
+    with _CANARY_LOCK:
+        entries = list(_CANARY_RECENT)
+        summary = _canary_summary_from_entries(entries)
+        state = dict(_CANARY_STATE)
+    return {
+        "enabled": CANARY_GUARDRAILS_ENABLED,
+        "window_calls": CANARY_WINDOW_CALLS,
+        "min_calls_before_trip": CANARY_MIN_CALLS_BEFORE_TRIP,
+        "max_fallback_rate": CANARY_MAX_FALLBACK_RATE,
+        "min_keep_rate": CANARY_MIN_KEEP_RATE,
+        "max_p95_latency_sec": CANARY_MAX_P95_LATENCY_SEC,
+        "kill_switch_mode": CANARY_KILL_SWITCH_MODE,
+        "auto_exit_on_trip": CANARY_AUTO_EXIT_ON_TRIP,
+        "summary": summary,
+        "state": state,
+    }
+
+
+def _trip_canary(
+    *,
+    metric: str,
+    value: Optional[float],
+    threshold: Optional[float],
+    reason: str,
+) -> None:
+    with _CANARY_LOCK:
+        if _CANARY_STATE.get("tripped"):
+            return
+        _CANARY_STATE["tripped"] = True
+        _CANARY_STATE["trip_reason"] = reason
+        _CANARY_STATE["trip_metric"] = metric
+        _CANARY_STATE["trip_value"] = value
+        _CANARY_STATE["trip_threshold"] = threshold
+        _CANARY_STATE["trip_at_unix"] = time.time()
+    print(
+        f"[canary_guardrail] KILL SWITCH TRIPPED metric={metric} value={value} threshold={threshold} reason={reason}",
+        flush=True,
+    )
+    if CANARY_AUTO_EXIT_ON_TRIP:
+        # Optional hard-stop for canary process orchestration.
+        os._exit(78)  # noqa: S606
+
+
+def _record_canary_observation(
+    *,
+    fallback: bool,
+    kept: bool,
+    latency_sec: float,
+) -> None:
+    if not CANARY_GUARDRAILS_ENABLED:
+        return
+    with _CANARY_LOCK:
+        _CANARY_STATE["total_calls"] = int(_CANARY_STATE.get("total_calls", 0)) + 1
+        _CANARY_RECENT.append(
+            {
+                "fallback": bool(fallback),
+                "kept": bool(kept),
+                "latency_sec": float(latency_sec),
+                "ts_unix": time.time(),
+            }
+        )
+        if _CANARY_STATE.get("tripped"):
+            return
+        entries = list(_CANARY_RECENT)
+    if len(entries) < CANARY_MIN_CALLS_BEFORE_TRIP:
+        return
+    summary = _canary_summary_from_entries(entries)
+    fallback_rate = summary.get("fallback_rate")
+    keep_rate = summary.get("keep_rate")
+    latency_p95_sec = summary.get("latency_p95_sec")
+    if isinstance(fallback_rate, float) and fallback_rate > CANARY_MAX_FALLBACK_RATE:
+        _trip_canary(
+            metric="fallback_rate",
+            value=fallback_rate,
+            threshold=CANARY_MAX_FALLBACK_RATE,
+            reason="fallback_rate_exceeded",
+        )
+        return
+    if isinstance(keep_rate, float) and keep_rate < CANARY_MIN_KEEP_RATE:
+        _trip_canary(
+            metric="keep_rate",
+            value=keep_rate,
+            threshold=CANARY_MIN_KEEP_RATE,
+            reason="keep_rate_below_minimum",
+        )
+        return
+    if isinstance(latency_p95_sec, float) and latency_p95_sec > CANARY_MAX_P95_LATENCY_SEC:
+        _trip_canary(
+            metric="latency_p95_sec",
+            value=latency_p95_sec,
+            threshold=CANARY_MAX_P95_LATENCY_SEC,
+            reason="latency_p95_exceeded",
+        )
+        return
+
+
+def _is_canary_tripped() -> bool:
+    with _CANARY_LOCK:
+        return bool(_CANARY_STATE.get("tripped", False))
 
 
 class SolveRequest(BaseModel):
@@ -367,6 +547,7 @@ def health() -> Dict[str, Any]:
         "river_candidate_count": RIVER_CANDIDATE_COUNT,
         "enable_cloud_candidate_search": ENABLE_CLOUD_CANDIDATE_SEARCH,
         "cloud_candidate_count_cap": CLOUD_CANDIDATE_COUNT_CAP,
+        "canary_guardrails": _canary_status_snapshot(),
     }
 
 
@@ -390,6 +571,71 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     baseline_solver_time = baseline_run["solver_wall_time_sec"]
     allowed_root_actions = _extract_allowed_root_actions(baseline_result)
     node_lock_catalog = _extract_node_lock_catalog(baseline_result)
+
+    if CANARY_GUARDRAILS_ENABLED and _is_canary_tripped():
+        canary_status = _canary_status_snapshot()
+        if CANARY_KILL_SWITCH_MODE == "reject":
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "canary_kill_switch_tripped",
+                    "canary_guardrails": canary_status,
+                },
+            )
+        total_bridge_time = time.perf_counter() - bridge_started
+        _record_canary_observation(
+            fallback=True,
+            kept=False,
+            latency_sec=total_bridge_time,
+        )
+        return {
+            "status": "ok",
+            "node_lock": None,
+            "node_lock_kept": False,
+            "selected_strategy": "baseline_gto",
+            "selection_reason": "canary_kill_switch_tripped_baseline_only",
+            "allowed_root_actions": allowed_root_actions,
+            "multi_node_policy": {
+                "requested": bool(request.enable_multi_node_locks),
+                "enabled": False,
+                "reason": "canary_kill_switch",
+                "rollout_classes": _extract_rollout_classes(request.spot),
+            },
+            "result": baseline_result,
+            "baseline_result": baseline_result,
+            "locked_result": None,
+            "metrics": {
+                "llm_time_sec": 0.0,
+                "solver_time_sec": baseline_solver_time,
+                "baseline_solver_time_sec": baseline_solver_time,
+                "locked_solver_time_sec": 0.0,
+                "locked_solver_time_total_sec": 0.0,
+                "total_bridge_time_sec": total_bridge_time,
+                "lock_applied": False,
+                "lock_applications": 0,
+                "final_exploitability_pct": baseline_result.get("final_exploitability_pct"),
+                "baseline_exploitability_pct": baseline_result.get("final_exploitability_pct"),
+                "locked_exploitability_pct": None,
+                "exploitability_delta_pct": None,
+                "ev_keep_margin": request.ev_keep_margin,
+                "locked_beats_margin_gate": None,
+                "lock_confidence": None,
+                "lock_confidence_tag": "unknown",
+                "lock_quality_score": 0.0,
+                "node_lock_target_count": 0,
+                "llm_candidate_mode_enabled": False,
+                "llm_candidate_target_count": 1,
+                "llm_candidate_generated_count": 0,
+                "llm_candidate_solve_count": 0,
+                "llm_candidate_errors": ["canary_kill_switch_tripped"],
+                "llm_is_local_request": _is_local_request(llm_config),
+                "multi_node_requested": bool(request.enable_multi_node_locks),
+                "multi_node_enabled": False,
+                "multi_node_policy_reason": "canary_kill_switch",
+                "llm_error": "canary_kill_switch_tripped",
+            },
+            "canary_guardrails": _canary_status_snapshot(),
+        }
 
     llm_started = time.perf_counter()
     llm_error = None
@@ -538,8 +784,13 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     )
 
     total_bridge_time = time.perf_counter() - bridge_started
+    _record_canary_observation(
+        fallback=bool(llm_error),
+        kept=bool(node_lock_kept),
+        latency_sec=total_bridge_time,
+    )
 
-    return {
+    response_payload = {
         "status": "ok",
         "node_lock": node_lock,
         "node_lock_kept": node_lock_kept,
@@ -593,7 +844,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": llm_error,
         },
+        "canary_guardrails": _canary_status_snapshot(),
     }
+    return response_payload
 
 
 if __name__ == "__main__":
