@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 from collections import deque
+from datetime import datetime, timezone
 import json
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -22,6 +24,9 @@ from llm_client import get_llm_intuition, get_llm_intuition_candidates
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SHARK_CLI = ROOT / "1_Engine_Core" / "build_ninja_vcpkg_rel" / "shark_cli.exe"
+VISION_ROOT = ROOT / "5_Vision_Extraction"
+VISION_INCOMING_DIR = VISION_ROOT / "incoming"
+VISION_OUT_DIR = VISION_ROOT / "out"
 DEFAULT_LOCAL_MODEL = os.environ.get("BRIDGE_DEFAULT_LOCAL_MODEL", "qwen3-coder:30b")
 DEFAULT_LLM_CONFIG = {
     "provider": "local",
@@ -86,6 +91,7 @@ CANARY_KILL_SWITCH_MODE = str(os.environ.get("CANARY_KILL_SWITCH_MODE", "baselin
 if CANARY_KILL_SWITCH_MODE not in {"baseline_only", "reject"}:
     CANARY_KILL_SWITCH_MODE = "baseline_only"
 CANARY_AUTO_EXIT_ON_TRIP = os.environ.get("CANARY_AUTO_EXIT_ON_TRIP", "0").strip() not in {"0", "false", "False"}
+TESSERACT_PATH_ENV = os.environ.get("TESSERACT_PATH", "").strip()
 _CANARY_LOCK = threading.Lock()
 _CANARY_RECENT: deque[Dict[str, Any]] = deque(maxlen=CANARY_WINDOW_CALLS)
 _CANARY_STATE: Dict[str, Any] = {
@@ -274,6 +280,15 @@ class SolveRequest(BaseModel):
     )
 
 
+class VisionIngestRequest(BaseModel):
+    image_path: str = Field(..., description="Absolute path to the captured image file.")
+    source: str = Field(default="sharex", description="Capture source label (sharex/manual/etc).")
+    profile: str = Field(default="general", description="OCR profile: general | cards | numeric")
+    psm: Optional[int] = Field(default=None, ge=3, le=13, description="Optional override for tesseract --psm.")
+    whitelist: Optional[str] = Field(default=None, description="Optional explicit tesseract whitelist.")
+    save_copy: bool = Field(default=True, description="Copy source image into 5_Vision_Extraction/incoming.")
+
+
 app = FastAPI(title="PokerBot Bridge", version="0.1.0")
 
 
@@ -302,6 +317,98 @@ def _resolve_shark_cli() -> Path:
             f"Checked: {DEFAULT_SHARK_CLI}"
         ),
     )
+
+
+def _ensure_vision_dirs() -> None:
+    VISION_INCOMING_DIR.mkdir(parents=True, exist_ok=True)
+    VISION_OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_tesseract_executable() -> Path:
+    candidates: list[str] = []
+    if TESSERACT_PATH_ENV:
+        candidates.append(TESSERACT_PATH_ENV)
+    candidates.extend(
+        [
+            "tesseract",
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ]
+    )
+    for candidate in candidates:
+        try:
+            path_obj = Path(candidate)
+            if path_obj.exists():
+                return path_obj
+            probe = subprocess.run(
+                [candidate, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if probe.returncode == 0:
+                return Path(candidate)
+        except (OSError, subprocess.SubprocessError):
+            continue
+    raise HTTPException(
+        status_code=500,
+        detail="tesseract executable not found. Set TESSERACT_PATH or install Tesseract to PATH.",
+    )
+
+
+def _vision_profile_defaults(profile: str) -> tuple[int, Optional[str]]:
+    normalized = str(profile or "general").strip().lower()
+    if normalized == "cards":
+        return 7, "AKQJT98765432shdcSHDC "
+    if normalized == "numeric":
+        return 7, "0123456789.,:$/"
+    return 6, None
+
+
+def _safe_vision_stem(path_value: Path) -> str:
+    raw = path_value.stem.strip()
+    if not raw:
+        return "capture"
+    safe = "".join(ch if (ch.isalnum() or ch in {"_", "-", "."}) else "_" for ch in raw)
+    return safe or "capture"
+
+
+def _run_tesseract_image_to_text(
+    *,
+    tesseract_exe: Path,
+    image_path: Path,
+    output_base: Path,
+    psm: int,
+    whitelist: Optional[str],
+) -> tuple[str, Path, float]:
+    cmd = [str(tesseract_exe), str(image_path), str(output_base), "--psm", str(psm)]
+    if whitelist:
+        cmd.extend(["-c", f"tessedit_char_whitelist={whitelist}"])
+    started = time.perf_counter()
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    elapsed = time.perf_counter() - started
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "tesseract_failed",
+                "returncode": proc.returncode,
+                "stderr": proc.stderr[-4000:],
+                "stdout": proc.stdout[-4000:],
+            },
+        )
+    txt_path = Path(str(output_base) + ".txt")
+    if not txt_path.exists():
+        raise HTTPException(status_code=500, detail="tesseract did not produce OCR text output.")
+    text = txt_path.read_text(encoding="utf-8", errors="ignore")
+    return text, txt_path, elapsed
 
 
 def _run_shark_cli(
@@ -533,6 +640,14 @@ def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
+    tesseract_path = ""
+    tesseract_ok = False
+    try:
+        tesseract_path = str(_resolve_tesseract_executable())
+        tesseract_ok = True
+    except HTTPException:
+        tesseract_path = ""
+        tesseract_ok = False
     return {
         "status": "ok",
         "shark_cli": str(shark_cli),
@@ -547,8 +662,70 @@ def health() -> Dict[str, Any]:
         "river_candidate_count": RIVER_CANDIDATE_COUNT,
         "enable_cloud_candidate_search": ENABLE_CLOUD_CANDIDATE_SEARCH,
         "cloud_candidate_count_cap": CLOUD_CANDIDATE_COUNT_CAP,
+        "vision_root": str(VISION_ROOT),
+        "vision_incoming_dir": str(VISION_INCOMING_DIR),
+        "vision_out_dir": str(VISION_OUT_DIR),
+        "tesseract_available": tesseract_ok,
+        "tesseract_path": tesseract_path,
         "canary_guardrails": _canary_status_snapshot(),
     }
+
+
+@app.post("/vision/ingest")
+def vision_ingest(request: VisionIngestRequest) -> Dict[str, Any]:
+    _ensure_vision_dirs()
+    tesseract_exe = _resolve_tesseract_executable()
+    source_path = Path(request.image_path).expanduser()
+    if not source_path.is_absolute():
+        source_path = (ROOT / source_path).resolve()
+    if not source_path.exists() or not source_path.is_file():
+        raise HTTPException(status_code=400, detail=f"image_path does not exist or is not a file: {source_path}")
+
+    default_psm, default_whitelist = _vision_profile_defaults(request.profile)
+    psm = int(request.psm if request.psm is not None else default_psm)
+    whitelist = request.whitelist if request.whitelist is not None else default_whitelist
+
+    run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    source_stem = _safe_vision_stem(source_path)
+    ingest_path = source_path
+    if request.save_copy:
+        copied_name = f"{source_stem}.{run_stamp}{source_path.suffix.lower()}"
+        copied_path = VISION_INCOMING_DIR / copied_name
+        shutil.copy2(source_path, copied_path)
+        ingest_path = copied_path
+
+    output_base = VISION_OUT_DIR / f"{source_stem}.{run_stamp}"
+    text, txt_path, ocr_elapsed = _run_tesseract_image_to_text(
+        tesseract_exe=tesseract_exe,
+        image_path=ingest_path,
+        output_base=output_base,
+        psm=psm,
+        whitelist=whitelist,
+    )
+    collapsed = " ".join(text.split())
+    preview = collapsed[:240]
+    record = {
+        "status": "ok",
+        "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source": request.source,
+        "profile": request.profile,
+        "psm": psm,
+        "whitelist": whitelist,
+        "tesseract_path": str(tesseract_exe),
+        "ocr_time_sec": ocr_elapsed,
+        "source_image_path": str(source_path),
+        "ingest_image_path": str(ingest_path),
+        "ocr_text_path": str(txt_path),
+        "ocr_text_preview": preview,
+        "ocr_text": text,
+    }
+    record_path = Path(str(output_base) + ".json")
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    latest_path = VISION_OUT_DIR / "latest.json"
+    latest_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    record["record_path"] = str(record_path)
+    record["latest_path"] = str(latest_path)
+    return record
 
 
 @app.post("/solve")
