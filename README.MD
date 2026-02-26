@@ -37,6 +37,10 @@ This workspace is organized to keep the engine, neural models, hand history data
   - OpenAI API (`gpt-5-mini`, `gpt-5.2`)
   - local OpenAI-compatible endpoints (default production model: `qwen3-coder:30b`)
 - Bridge production policy can enforce local routing to `qwen3-coder:30b` only (challengers allowed in `mode=benchmark`).
+- Bridge now supports canary guardrails with auto kill-switch behavior on rolling metrics:
+  - fallback-rate breach,
+  - keep-rate breach,
+  - p95 latency breach.
 
 ### Phase 13 Bookmark (Local Baseline Locked)
 
@@ -136,6 +140,41 @@ Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 .\scripts\test_multiseed_gauntlet.ps1 -Preset local_qwen3_coder_30b
 ```
 
+Run canary sweeps with one command (starts services, applies guardrails, streams progress, writes summary + config snapshot, stops cleanly):
+
+```powershell
+# 2-hour mini-canary (recommended first)
+.\scripts\run_canary.ps1 -Profile mini2h -Preset local_qwen3_coder_30b
+
+# 4-hour mini-canary extension
+.\scripts\run_canary.ps1 -Profile mini4h -Preset local_qwen3_coder_30b
+
+# 48-hour long canary
+.\scripts\run_canary.ps1 -Profile full48h -Preset local_qwen3_coder_30b
+```
+
+Each canary run writes artifacts under:
+`4_LLM_Bridge/examples/canary_runs/canary.<timestamp>.<profile>/`
+
+- `config_snapshot.json` (includes git commit hash + thresholds + run config)
+- `.env.snapshot` (if present at `4_LLM_Bridge/.env`)
+- `records.ndjson` (per-call telemetry)
+- `summary.json` (final pass/fail + alerts)
+
+Alert thresholds are included directly in canary summaries:
+- `fallback_rate > max_fallback_rate`
+- `keep_rate < min_keep_rate`
+- `latency_p95_sec > max_p95_latency_sec`
+
+Guardrail env controls (applied by `run_canary.ps1`):
+- `CANARY_GUARDRAILS_ENABLED=1`
+- `CANARY_WINDOW_CALLS`
+- `CANARY_MIN_CALLS_BEFORE_TRIP`
+- `CANARY_MAX_FALLBACK_RATE`
+- `CANARY_MIN_KEEP_RATE`
+- `CANARY_MAX_P95_LATENCY_SEC`
+- `CANARY_KILL_SWITCH_MODE` (`baseline_only` or `reject`)
+
 Run the full stack in one command (`CI + turn/river acceptance + A/B/C`; gauntlet optional):
 
 ```powershell
@@ -212,3 +251,10 @@ This project combines:
 3. Expand/validate multi-node lock prompts against canonical packs before enabling by default.
 4. Continue PHH -> spot pack automation with stronger depth/position tagging coverage.
 5. Expand opponent-feature set beyond baseline fold metrics (turn check-raise, river bluff rate, line-specific fold rates).
+
+## Long-Test Queue
+
+1. `mini2h` canary: `.\scripts\run_canary.ps1 -Profile mini2h -Preset local_qwen3_coder_30b`
+2. `mini4h` canary: `.\scripts\run_canary.ps1 -Profile mini4h -Preset local_qwen3_coder_30b`
+3. `full48h` canary: `.\scripts\run_canary.ps1 -Profile full48h -Preset local_qwen3_coder_30b`
+4. Post-canary 5-seed reconfirmation: run `test_backtest_abc.ps1` with seeds `1001, 2026, 4090, 7777, 9999`.
