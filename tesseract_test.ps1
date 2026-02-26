@@ -78,10 +78,10 @@ function Test-RegionSelected {
 }
 
 function Format-CardSlotStatus {
-  $missing = @()
+  $missing = New-Object System.Collections.Generic.List[string]
   foreach ($slot in $cardSlotOrder) {
     if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
-      $missing += $slot
+      [void]$missing.Add([string]$slot)
     }
   }
   if ($missing.Count -eq 0) {
@@ -370,11 +370,12 @@ function Get-BestOcrForRegion {
   Capture-RegionImage -Region $Region -Path $imgPath
 
   $specs = Get-OcrProfileSpec -ProfileName $ProfileName
-  $variantPaths = @($imgPath)
+  $variantPaths = New-Object System.Collections.Generic.List[string]
+  [void]$variantPaths.Add([string]$imgPath)
   $contrastPath = Join-Path $TmpDir ("capture_{0}_{1}.contrast.png" -f $Tag, $stamp)
   try {
     New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
-    $variantPaths += $contrastPath
+    [void]$variantPaths.Add([string]$contrastPath)
   }
   catch {
     Write-Log ("Preprocess warning ({0}): {1}" -f $Tag, $_.Exception.Message)
@@ -390,9 +391,16 @@ function Get-BestOcrForRegion {
     foreach ($spec in $specs) {
       $attempt += 1
       $outBase = Join-Path $TmpDir ("capture_{0}_{1}.try{2}" -f $Tag, $stamp, $attempt)
-      $cmd = @($variant, $outBase, "--oem", "1", "--psm", [string]$spec.psm)
+      $cmd = New-Object System.Collections.Generic.List[string]
+      [void]$cmd.Add([string]$variant)
+      [void]$cmd.Add([string]$outBase)
+      [void]$cmd.Add("--oem")
+      [void]$cmd.Add("1")
+      [void]$cmd.Add("--psm")
+      [void]$cmd.Add([string]$spec.psm)
       if ($spec.whitelist) {
-        $cmd += @("-c", ("tessedit_char_whitelist={0}" -f [string]$spec.whitelist))
+        [void]$cmd.Add("-c")
+        [void]$cmd.Add(("tessedit_char_whitelist={0}" -f [string]$spec.whitelist))
       }
       $null = & $tesseractExe @cmd 2>$null
       $txtPath = "$outBase.txt"
@@ -448,24 +456,23 @@ function Get-CardTokenFromRegion {
     [Parameter(Mandatory = $true)][string]$SlotTag
   )
 
-  $regions = @(
-    [pscustomobject]@{ tag = "full"; rect = $Region }
-  )
+  $regions = New-Object System.Collections.Generic.List[object]
+  [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
 
   if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
     $x = $Region.X
     $y = $Region.Y
     $w = $Region.Width
     $h = $Region.Height
-    $regions += [pscustomobject]@{
+    [void]$regions.Add([pscustomobject]@{
       tag = "rankcrop1"
       rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
-    }
-    $regions += [pscustomobject]@{
+    })
+    [void]$regions.Add([pscustomobject]@{
       tag = "rankcrop2"
       rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
-    }
-    $regions += [pscustomobject]@{
+    })
+    [void]$regions.Add([pscustomobject]@{
       tag = "rankcrop3"
       rect = New-Object System.Drawing.Rectangle(
         $x + [Math]::Max(0, [int]($w * 0.03)),
@@ -473,7 +480,7 @@ function Get-CardTokenFromRegion {
         [Math]::Max(8, [int]($w * 0.55)),
         [Math]::Max(8, [int]($h * 0.65))
       )
-    }
+    })
   }
 
   $bestToken = ""
@@ -572,18 +579,17 @@ function Get-CardTokenFromVisionRegion {
     [Parameter(Mandatory = $true)][string]$SlotTag
   )
 
-  $regions = @(
-    [pscustomobject]@{ tag = "full"; rect = $Region }
-  )
+  $regions = New-Object System.Collections.Generic.List[object]
+  [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
   if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
     $x = $Region.X
     $y = $Region.Y
     $w = $Region.Width
     $h = $Region.Height
-    $regions += [pscustomobject]@{
+    [void]$regions.Add([pscustomobject]@{
       tag = "rankcrop1"
       rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
-    }
+    })
   }
 
   $bestToken = ""
@@ -596,11 +602,12 @@ function Get-CardTokenFromVisionRegion {
     $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
     $imgPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.png" -f $SlotTag, $entry.tag, $stamp)
     Capture-RegionImage -Region $entry.rect -Path $imgPath
-    $imagePaths = @($imgPath)
+    $imagePaths = New-Object System.Collections.Generic.List[string]
+    [void]$imagePaths.Add([string]$imgPath)
     $contrastPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.contrast.png" -f $SlotTag, $entry.tag, $stamp)
     try {
       New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
-      $imagePaths += $contrastPath
+      [void]$imagePaths.Add([string]$contrastPath)
     }
     catch {
       Write-Log ("Vision preprocess warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
@@ -872,10 +879,10 @@ function Run-Ocr {
   }
 
   if ($isCardsProfile) {
-    $missing = @()
+    $missing = New-Object System.Collections.Generic.List[string]
     foreach ($slot in $cardSlotOrder) {
       if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
-        $missing += $slot
+        [void]$missing.Add([string]$slot)
       }
     }
     if ($missing.Count -gt 0) {
@@ -954,6 +961,9 @@ function Run-Ocr {
   }
   catch {
     Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
   }
   finally {
     $script:isBusy = $false
@@ -1033,10 +1043,10 @@ $btnAutoStart.Add_Click({
   }
 
   if ($isCardsProfile) {
-    $missing = @()
+    $missing = New-Object System.Collections.Generic.List[string]
     foreach ($slot in $cardSlotOrder) {
       if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
-        $missing += $slot
+        [void]$missing.Add([string]$slot)
       }
     }
     if ($missing.Count -gt 0) {
