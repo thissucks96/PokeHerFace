@@ -188,6 +188,12 @@ Run live per-call progress in the terminal for API/local benchmark calls:
 .\scripts\test_api_progress.ps1 -Presets openai_52 -CallsPerModel 10
 ```
 
+Launch the manual user-facing helper shell (preview UI, no solver actions yet):
+
+```powershell
+.\PLAY_MANUAL.ps1
+```
+
 ## Quick Start (WSL / Linux)
 
 ```bash
