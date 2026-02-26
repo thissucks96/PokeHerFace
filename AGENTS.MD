@@ -29,6 +29,11 @@ Example:
 - Until the user confirms plan tier is upgraded, enforce cloud/API calls sequentially with a per-call delay.
 - Default minimum delay between OpenAI calls is `OPENAI_MIN_INTERVAL_SEC=2.5` to avoid Tier 1 burst/rate-limit failures.
 
+### Local-Only Focus Policy
+- From now on, focus purely on local LLM workflows.
+- Do not run cloud/API model tests unless the user explicitly asks to re-enable them.
+- Default benchmark and validation workflows should target `local_qwen3_coder_30b`.
+
 ### Documentation Maintenance
 - When significant code changes are made (new capabilities, major behavior changes, or new workflows), update `README.MD` in the same workstream.
 
