@@ -146,7 +146,15 @@ def _resolve_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     preset = requested.get("preset", "mock")
     base = dict(PRESET_CONFIGS.get(preset, PRESET_CONFIGS["mock"]))
     base.update({k: v for k, v in requested.items() if v is not None})
-    base.setdefault("temperature", 0.0)
+    if "temperature" not in base:
+        provider = str(base.get("provider", "")).strip().lower()
+        if provider == "openai":
+            try:
+                base["temperature"] = float(os.environ.get("OPENAI_TEMPERATURE", "1.0"))
+            except ValueError:
+                base["temperature"] = 1.0
+        else:
+            base["temperature"] = 0.0
     base.setdefault("max_tokens", 400)
     return base
 
