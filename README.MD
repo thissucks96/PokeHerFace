@@ -113,6 +113,12 @@ Run the full stack in one command (`CI + turn/river acceptance + A/B/C`; gauntle
 .\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -IncludeGauntlet
 ```
 
+Run live per-call progress in the terminal for API/local benchmark calls:
+
+```powershell
+.\scripts\test_api_progress.ps1 -Presets openai_5mini,openai_52 -CallsPerModel 10
+```
+
 ## Quick Start (WSL / Linux)
 
 ```bash

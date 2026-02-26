@@ -431,6 +431,12 @@ Classes:
 - Cloud/OpenAI presets: hard cap `10`
 - Local presets: higher configurable cap via `--max-calls-local`
 
+For real-time per-call progress and rolling metrics directly in PowerShell, use:
+
+```powershell
+.\scripts\test_api_progress.ps1 -Presets openai_5mini,openai_52 -CallsPerModel 10
+```
+
 ```powershell
 python .\4_LLM_Bridge\benchmark_models.py `
   --spot .\4_LLM_Bridge\examples\spot.sample.json `
