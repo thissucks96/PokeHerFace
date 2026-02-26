@@ -64,6 +64,53 @@ $tesseractExe = Resolve-TesseractExecutable
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $autoEnabled = $false
+$cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
+$cardRegions = @{}
+foreach ($slot in $cardSlotOrder) {
+  $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
+}
+
+function Test-RegionSelected {
+  param([System.Drawing.Rectangle]$Rect)
+  return ($Rect.Width -gt 0 -and $Rect.Height -gt 0)
+}
+
+function Format-CardSlotStatus {
+  $missing = @()
+  foreach ($slot in $cardSlotOrder) {
+    if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
+      $missing += $slot
+    }
+  }
+  if ($missing.Count -eq 0) {
+    return "Card ROIs: ready (flop1, flop2, flop3, turn, river)"
+  }
+  return ("Card ROIs missing: {0}" -f ($missing -join ", "))
+}
+
+function Normalize-CardToken {
+  param([string]$Text)
+  $v = ([string]$Text).ToUpperInvariant()
+  if (-not $v) {
+    return ""
+  }
+  $v = $v -replace "\s+", ""
+  $v = $v -replace "10", "T"
+  $v = $v -replace "[^A-Z0-9]", ""
+  if (-not $v) {
+    return ""
+  }
+
+  $rankMatch = [regex]::Match($v, "[AKQJT98765432]")
+  if (-not $rankMatch.Success) {
+    return ""
+  }
+  $suitMatch = [regex]::Match($v, "[SHDC]")
+  if (-not $suitMatch.Success) {
+    return ($rankMatch.Value + "?")
+  }
+  return ($rankMatch.Value + $suitMatch.Value)
+}
 
 function Get-OcrProfileSpec {
   param([string]$ProfileName)
@@ -299,6 +346,71 @@ function Capture-RegionImage {
   $bmp.Dispose()
 }
 
+function Get-BestOcrForRegion {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
+    [Parameter(Mandatory = $true)][string]$ProfileName,
+    [Parameter(Mandatory = $true)][string]$TmpDir,
+    [Parameter(Mandatory = $true)][string]$Tag
+  )
+  $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+  $imgPath = Join-Path $TmpDir ("capture_{0}_{1}.png" -f $Tag, $stamp)
+  Capture-RegionImage -Region $Region -Path $imgPath
+
+  $specs = Get-OcrProfileSpec -ProfileName $ProfileName
+  $variantPaths = @($imgPath)
+  $contrastPath = Join-Path $TmpDir ("capture_{0}_{1}.contrast.png" -f $Tag, $stamp)
+  try {
+    New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
+    $variantPaths += $contrastPath
+  }
+  catch {
+    Write-Log ("Preprocess warning ({0}): {1}" -f $Tag, $_.Exception.Message)
+  }
+
+  $bestText = ""
+  $bestScore = [int]::MinValue
+  $bestLabel = ""
+  $bestVariant = ""
+  $attempt = 0
+
+  foreach ($variant in $variantPaths) {
+    foreach ($spec in $specs) {
+      $attempt += 1
+      $outBase = Join-Path $TmpDir ("capture_{0}_{1}.try{2}" -f $Tag, $stamp, $attempt)
+      $cmd = @($variant, $outBase, "--oem", "1", "--psm", [string]$spec.psm)
+      if ($spec.whitelist) {
+        $cmd += @("-c", ("tessedit_char_whitelist={0}" -f [string]$spec.whitelist))
+      }
+      $null = & $tesseractExe @cmd 2>$null
+      $txtPath = "$outBase.txt"
+      if (-not (Test-Path $txtPath)) {
+        continue
+      }
+      $raw = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
+      $candidateText = if ($raw -is [System.Array]) { ($raw -join [Environment]::NewLine) } else { [string]$raw }
+      $candidateScore = Score-OcrCandidate -Text $candidateText -ProfileName $ProfileName
+      if ($candidateScore -gt $bestScore) {
+        $bestScore = $candidateScore
+        $bestText = $candidateText
+        $bestLabel = [string]$spec.label
+        $bestVariant = [IO.Path]::GetFileName($variant)
+      }
+    }
+  }
+
+  if (-not $bestText) {
+    return $null
+  }
+
+  return [pscustomobject]@{
+    text = $bestText
+    label = $bestLabel
+    variant = $bestVariant
+    score = $bestScore
+  }
+}
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Tesseract Region Test"
 $form.StartPosition = "CenterScreen"
@@ -336,9 +448,17 @@ $regionLabel.Location = New-Object System.Drawing.Point(20, 74)
 $regionLabel.AutoSize = $true
 $form.Controls.Add($regionLabel)
 
+$cardStatusLabel = New-Object System.Windows.Forms.Label
+$cardStatusLabel.Text = Format-CardSlotStatus
+$cardStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
+$cardStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$cardStatusLabel.Location = New-Object System.Drawing.Point(20, 94)
+$cardStatusLabel.AutoSize = $true
+$form.Controls.Add($cardStatusLabel)
+
 $btnPick = New-Object System.Windows.Forms.Button
 $btnPick.Text = "Pick OCR Rectangle"
-$btnPick.Location = New-Object System.Drawing.Point(20, 104)
+$btnPick.Location = New-Object System.Drawing.Point(20, 118)
 $btnPick.Size = New-Object System.Drawing.Size(190, 34)
 $btnPick.FlatStyle = "Flat"
 $btnPick.ForeColor = [System.Drawing.Color]::White
@@ -347,7 +467,7 @@ $form.Controls.Add($btnPick)
 
 $btnOnce = New-Object System.Windows.Forms.Button
 $btnOnce.Text = "Run OCR Once"
-$btnOnce.Location = New-Object System.Drawing.Point(220, 104)
+$btnOnce.Location = New-Object System.Drawing.Point(220, 118)
 $btnOnce.Size = New-Object System.Drawing.Size(140, 34)
 $btnOnce.FlatStyle = "Flat"
 $btnOnce.ForeColor = [System.Drawing.Color]::White
@@ -358,12 +478,12 @@ $lblAuto = New-Object System.Windows.Forms.Label
 $lblAuto.Text = "Auto OCR interval (sec)"
 $lblAuto.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblAuto.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblAuto.Location = New-Object System.Drawing.Point(380, 111)
+$lblAuto.Location = New-Object System.Drawing.Point(380, 125)
 $lblAuto.AutoSize = $true
 $form.Controls.Add($lblAuto)
 
 $numInterval = New-Object System.Windows.Forms.NumericUpDown
-$numInterval.Location = New-Object System.Drawing.Point(520, 108)
+$numInterval.Location = New-Object System.Drawing.Point(520, 122)
 $numInterval.Size = New-Object System.Drawing.Size(70, 30)
 $numInterval.Minimum = 1
 $numInterval.Maximum = 60
@@ -373,7 +493,7 @@ $form.Controls.Add($numInterval)
 
 $btnAutoStart = New-Object System.Windows.Forms.Button
 $btnAutoStart.Text = "Start Auto"
-$btnAutoStart.Location = New-Object System.Drawing.Point(610, 104)
+$btnAutoStart.Location = New-Object System.Drawing.Point(610, 118)
 $btnAutoStart.Size = New-Object System.Drawing.Size(120, 34)
 $btnAutoStart.FlatStyle = "Flat"
 $btnAutoStart.ForeColor = [System.Drawing.Color]::White
@@ -382,7 +502,7 @@ $form.Controls.Add($btnAutoStart)
 
 $btnAutoStop = New-Object System.Windows.Forms.Button
 $btnAutoStop.Text = "Stop Auto"
-$btnAutoStop.Location = New-Object System.Drawing.Point(740, 104)
+$btnAutoStop.Location = New-Object System.Drawing.Point(740, 118)
 $btnAutoStop.Size = New-Object System.Drawing.Size(120, 34)
 $btnAutoStop.FlatStyle = "Flat"
 $btnAutoStop.ForeColor = [System.Drawing.Color]::White
@@ -391,25 +511,47 @@ $btnAutoStop.Enabled = $false
 $form.Controls.Add($btnAutoStop)
 
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "Pick rectangle with left-drag. Fallback: right-click first corner, then right-click second corner. Auto mode samples every N seconds."
+$hint.Text = "Pick ROI with left-drag (or right-click 2 corners). In Cards profile, set all 5 boxes (flop1/2/3, turn, river)."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$hint.Location = New-Object System.Drawing.Point(20, 148)
+$hint.Location = New-Object System.Drawing.Point(20, 162)
 $hint.AutoSize = $true
 $form.Controls.Add($hint)
+
+$lblTarget = New-Object System.Windows.Forms.Label
+$lblTarget.Text = "ROI Target"
+$lblTarget.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblTarget.Location = New-Object System.Drawing.Point(876, 90)
+$lblTarget.AutoSize = $true
+$form.Controls.Add($lblTarget)
+
+$cmbTarget = New-Object System.Windows.Forms.ComboBox
+$cmbTarget.DropDownStyle = "DropDownList"
+$cmbTarget.Location = New-Object System.Drawing.Point(876, 108)
+$cmbTarget.Size = New-Object System.Drawing.Size(90, 24)
+$cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+[void]$cmbTarget.Items.Add("General ROI")
+[void]$cmbTarget.Items.Add("flop1")
+[void]$cmbTarget.Items.Add("flop2")
+[void]$cmbTarget.Items.Add("flop3")
+[void]$cmbTarget.Items.Add("turn")
+[void]$cmbTarget.Items.Add("river")
+$cmbTarget.SelectedIndex = 1
+$form.Controls.Add($cmbTarget)
 
 $lblProfile = New-Object System.Windows.Forms.Label
 $lblProfile.Text = "OCR Profile"
 $lblProfile.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblProfile.Location = New-Object System.Drawing.Point(876, 111)
+$lblProfile.Location = New-Object System.Drawing.Point(876, 136)
 $lblProfile.AutoSize = $true
 $form.Controls.Add($lblProfile)
 
 $cmbProfile = New-Object System.Windows.Forms.ComboBox
 $cmbProfile.DropDownStyle = "DropDownList"
-$cmbProfile.Location = New-Object System.Drawing.Point(876, 130)
-$cmbProfile.Size = New-Object System.Drawing.Size(80, 24)
+$cmbProfile.Location = New-Object System.Drawing.Point(876, 154)
+$cmbProfile.Size = New-Object System.Drawing.Size(90, 24)
 $cmbProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbProfile.Items.Add("General")
 [void]$cmbProfile.Items.Add("Cards (ranks/suits)")
@@ -474,76 +616,99 @@ function Run-Ocr {
     Write-Log "OCR skipped: tesseract not found."
     return
   }
-  if ($selectedRegion -eq [System.Drawing.Rectangle]::Empty) {
-    Write-Log "OCR skipped: select a region first."
-    return
-  }
   if ($isBusy) {
     return
   }
+
+  $profileName = [string]$cmbProfile.SelectedItem
+  if (-not $profileName) {
+    $profileName = "General"
+  }
+
+  if ($profileName -eq "Cards (ranks/suits)") {
+    $missing = @()
+    foreach ($slot in $cardSlotOrder) {
+      if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
+        $missing += $slot
+      }
+    }
+    if ($missing.Count -gt 0) {
+      Write-Log ("OCR skipped: set all card ROIs first ({0})." -f ($missing -join ", "))
+      return
+    }
+  }
+  elseif (-not (Test-RegionSelected -Rect $selectedRegion)) {
+    Write-Log "OCR skipped: select a region first."
+    return
+  }
+
   $script:isBusy = $true
   try {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
-    $imgPath = Join-Path $tmpDir ("capture_{0}.png" -f $stamp)
-    Capture-RegionImage -Region $selectedRegion -Path $imgPath
-
-    $profileName = [string]$cmbProfile.SelectedItem
-    if (-not $profileName) {
-      $profileName = "General"
-    }
-    $specs = Get-OcrProfileSpec -ProfileName $profileName
-    $variantPaths = @($imgPath)
-    $contrastPath = Join-Path $tmpDir ("capture_{0}.contrast.png" -f $stamp)
-    try {
-      New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
-      $variantPaths += $contrastPath
-    }
-    catch {
-      Write-Log ("Preprocess warning: {0}" -f $_.Exception.Message)
-    }
-
-    $bestText = ""
-    $bestScore = [int]::MinValue
-    $bestLabel = ""
-    $bestVariant = ""
-
-    $attempt = 0
-    foreach ($variant in $variantPaths) {
-      foreach ($spec in $specs) {
-        $attempt += 1
-        $outBase = Join-Path $tmpDir ("capture_{0}.try{1}" -f $stamp, $attempt)
-        $cmd = @($variant, $outBase, "--oem", "1", "--psm", [string]$spec.psm)
-        if ($spec.whitelist) {
-          $cmd += @("-c", ("tessedit_char_whitelist={0}" -f [string]$spec.whitelist))
-        }
-        $null = & $tesseractExe @cmd 2>$null
-        $txtPath = "$outBase.txt"
-        if (-not (Test-Path $txtPath)) {
+    if ($profileName -eq "Cards (ranks/suits)") {
+      $cards = @{}
+      foreach ($slot in $cardSlotOrder) {
+        $cards[$slot] = "--"
+      }
+      foreach ($slot in $cardSlotOrder) {
+        $best = Get-BestOcrForRegion -Region $cardRegions[$slot] -ProfileName $profileName -TmpDir $tmpDir -Tag $slot
+        if (-not $best) {
+          $cards[$slot] = "??"
+          Write-Log ("OCR warning [Cards (ranks/suits)] {0}: no readable output." -f $slot)
           continue
         }
-        $raw = Get-Content $txtPath -Raw -ErrorAction SilentlyContinue
-        $candidateText = if ($raw -is [System.Array]) { ($raw -join [Environment]::NewLine) } else { [string]$raw }
-        $candidateScore = Score-OcrCandidate -Text $candidateText -ProfileName $profileName
-        if ($candidateScore -gt $bestScore) {
-          $bestScore = $candidateScore
-          $bestText = $candidateText
-          $bestLabel = [string]$spec.label
-          $bestVariant = [IO.Path]::GetFileName($variant)
+        $bestText = if ($best.text -is [System.Array]) {
+          [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
         }
+        else {
+          [string]$best.text
+        }
+        $bestText = $bestText.Trim()
+        $token = Normalize-CardToken -Text $bestText
+        if (-not $token) {
+          $token = "??"
+        }
+        $cards[$slot] = $token
+        $preview = (($bestText -replace "\r?\n", " ") -as [string]).Trim()
+        if ($preview.Length -gt 64) {
+          $preview = $preview.Substring(0, 64) + "..."
+        }
+        Write-Log ("OCR OK [Cards (ranks/suits)] {0} {1} via {2}: {3}" -f $slot, $best.label, $best.variant, $preview)
       }
-    }
 
-    if ($bestText) {
-      $txtLatest.Text = $bestText
-      $preview = (($bestText -replace "\r?\n", " ") -as [string]).Trim()
-      if ($preview.Length -gt 120) {
-        $preview = $preview.Substring(0, 120) + "..."
+      $out = @(
+        "run:   all_cards"
+        ("flop1: {0}" -f $cards["flop1"])
+        ("flop2: {0}" -f $cards["flop2"])
+        ("flop3: {0}" -f $cards["flop3"])
+        ("turn:  {0}" -f $cards["turn"])
+        ("river: {0}" -f $cards["river"])
+        ("flop:  {0} {1} {2}" -f $cards["flop1"], $cards["flop2"], $cards["flop3"])
+      ) -join "`r`n"
+      $txtLatest.Text = $out
+      Write-Log ("Board OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
+    }
+    else {
+      $best = Get-BestOcrForRegion -Region $selectedRegion -ProfileName $profileName -TmpDir $tmpDir -Tag "region"
+      if ($best) {
+        $bestText = if ($best.text -is [System.Array]) {
+          [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
+        }
+        else {
+          [string]$best.text
+        }
+        $bestText = $bestText.Trim()
+        $txtLatest.Text = $bestText
+        $preview = (($bestText -replace "\r?\n", " ") -as [string]).Trim()
+        if ($preview.Length -gt 120) {
+          $preview = $preview.Substring(0, 120) + "..."
+        }
+        Write-Log ("OCR OK [{0}] {1} via {2}: {3}" -f $profileName, $best.label, $best.variant, $preview)
       }
-      Write-Log ("OCR OK [{0}] {1} via {2}: {3}" -f $profileName, $bestLabel, $bestVariant, $preview)
-    } else {
-      Write-Log ("OCR finished but no readable output was produced for profile: {0}" -f $profileName)
+      else {
+        Write-Log ("OCR finished but no readable output was produced for profile: {0}" -f $profileName)
+      }
     }
   }
   catch {
@@ -570,9 +735,25 @@ $btnPick.Add_Click({
   $form.Show()
   $form.Activate()
   if ($rect -ne [System.Drawing.Rectangle]::Empty) {
-    $script:selectedRegion = $rect
-    $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-    Write-Log $regionLabel.Text
+    $target = [string]$cmbTarget.SelectedItem
+    if (-not $target) {
+      $target = "General ROI"
+    }
+    if ($target -eq "General ROI") {
+      $script:selectedRegion = $rect
+      $regionLabel.Text = Format-RegionText -Rect $selectedRegion
+      Write-Log ("General ROI updated. {0}" -f $regionLabel.Text)
+    }
+    else {
+      if ($cardRegions.ContainsKey($target)) {
+        $cardRegions[$target] = $rect
+        Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+        $cardStatusLabel.Text = Format-CardSlotStatus
+      }
+      else {
+        Write-Log ("Unknown ROI target: {0}" -f $target)
+      }
+    }
   }
   else {
     Write-Log "Rectangle selection canceled."
@@ -584,15 +765,6 @@ $btnOnce.Add_Click({
 })
 
 $btnAutoStart.Add_Click({
-  if ($selectedRegion -eq [System.Drawing.Rectangle]::Empty) {
-    [void][System.Windows.Forms.MessageBox]::Show(
-      "Pick an OCR rectangle first.",
-      "No Region",
-      [System.Windows.Forms.MessageBoxButtons]::OK,
-      [System.Windows.Forms.MessageBoxIcon]::Warning
-    )
-    return
-  }
   if (-not $tesseractExe) {
     [void][System.Windows.Forms.MessageBox]::Show(
       "Tesseract not found. Set TESSERACT_PATH or add tesseract to PATH first.",
@@ -602,11 +774,46 @@ $btnAutoStart.Add_Click({
     )
     return
   }
+  $profileName = [string]$cmbProfile.SelectedItem
+  if (-not $profileName) {
+    $profileName = "General"
+  }
+  if ($profileName -eq "Cards (ranks/suits)") {
+    $missing = @()
+    foreach ($slot in $cardSlotOrder) {
+      if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
+        $missing += $slot
+      }
+    }
+    if ($missing.Count -gt 0) {
+      [void][System.Windows.Forms.MessageBox]::Show(
+        ("Set all five card ROIs before auto mode. Missing: {0}" -f ($missing -join ", ")),
+        "Missing Card ROIs",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+      )
+      return
+    }
+  }
+  elseif (-not (Test-RegionSelected -Rect $selectedRegion)) {
+    [void][System.Windows.Forms.MessageBox]::Show(
+      "Pick an OCR rectangle first.",
+      "No Region",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    return
+  }
   $timer.Interval = [int]([int]$numInterval.Value * 1000)
   $script:autoEnabled = $true
   $btnAutoStart.Enabled = $false
   $btnAutoStop.Enabled = $true
-  Write-Log ("Auto OCR started (every {0}s)." -f [int]$numInterval.Value)
+  if ($profileName -eq "Cards (ranks/suits)") {
+    Write-Log ("Auto OCR started (every {0}s, all five card boxes)." -f [int]$numInterval.Value)
+  }
+  else {
+    Write-Log ("Auto OCR started (every {0}s)." -f [int]$numInterval.Value)
+  }
 })
 
 $btnAutoStop.Add_Click({
@@ -618,7 +825,8 @@ $btnAutoStop.Add_Click({
 
 $form.Add_Shown({
   $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-  Write-Log "Ready. Pick a rectangle and run OCR."
+  $cardStatusLabel.Text = Format-CardSlotStatus
+  Write-Log "Ready. In Cards profile, set ROI target and pick all five card boxes."
   $timer.Start()
 })
 
