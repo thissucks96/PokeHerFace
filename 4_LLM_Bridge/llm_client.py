@@ -146,8 +146,8 @@ def _resolve_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     preset = requested.get("preset", "mock")
     base = dict(PRESET_CONFIGS.get(preset, PRESET_CONFIGS["mock"]))
     base.update({k: v for k, v in requested.items() if v is not None})
+    provider = str(base.get("provider", "")).strip().lower()
     if "temperature" not in base:
-        provider = str(base.get("provider", "")).strip().lower()
         if provider == "openai":
             try:
                 base["temperature"] = float(os.environ.get("OPENAI_TEMPERATURE", "1.0"))
@@ -155,7 +155,9 @@ def _resolve_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 base["temperature"] = 1.0
         else:
             base["temperature"] = 0.0
+            
     base.setdefault("max_tokens", 400)
+        
     return base
 
 
@@ -297,8 +299,12 @@ def _call_openai_compatible_chat(
     choices = data.get("choices", [])
     if not choices:
         raise ValueError("LLM response missing choices.")
-    message = choices[0].get("message", {})
+        
+    choice = choices[0]
+    finish_reason = choice.get("finish_reason")
+    message = choice.get("message", {})
     content = message.get("content")
+    
     if isinstance(content, list):
         text_parts = []
         for part in content:
@@ -309,6 +315,11 @@ def _call_openai_compatible_chat(
         content = "\n".join(text_parts)
 
     if not isinstance(content, str) or not content.strip():
+        if finish_reason == "length":
+            raise ValueError("LLM response empty due to finish_reason=length. Model exhausted tokens on reasoning/output. Increase max_tokens.")
+        refusal = message.get("refusal")
+        if refusal:
+            raise ValueError(f"LLM response empty due to model refusal: {refusal}")
         raise ValueError("LLM response missing message.content JSON.")
 
     text = str(content).strip()
