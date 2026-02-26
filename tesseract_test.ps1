@@ -67,10 +67,13 @@ $autoEnabled = $false
 
 function Select-ScreenRegion {
   $resultRect = [System.Drawing.Rectangle]::Empty
-  $start = [System.Drawing.Point]::Empty
-  $current = [System.Drawing.Point]::Empty
-  $dragging = $false
   $virtualScreen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $state = [pscustomobject]@{
+    Start = [System.Drawing.Point]::Empty
+    Current = [System.Drawing.Point]::Empty
+    Dragging = $false
+    AnchorMode = $false
+  }
 
   $selector = New-Object System.Windows.Forms.Form
   $selector.FormBorderStyle = "None"
@@ -95,32 +98,58 @@ function Select-ScreenRegion {
   $selector.Add_MouseDown({
     param($sender, $e)
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-      $start = $e.Location
-      $current = $e.Location
-      $dragging = $true
+      $state.Start = $e.Location
+      $state.Current = $e.Location
+      $state.Dragging = $true
+      $state.AnchorMode = $false
       $selector.Capture = $true
       $selector.Invalidate()
+    }
+    elseif ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+      if (-not $state.AnchorMode) {
+        # Right-click first corner.
+        $state.Start = $e.Location
+        $state.Current = $e.Location
+        $state.AnchorMode = $true
+        $selector.Invalidate()
+      }
+      else {
+        # Right-click second corner.
+        $state.Current = $e.Location
+        $x = [Math]::Min($state.Start.X, $state.Current.X)
+        $y = [Math]::Min($state.Start.Y, $state.Current.Y)
+        $w = [Math]::Abs($state.Start.X - $state.Current.X)
+        $h = [Math]::Abs($state.Start.Y - $state.Current.Y)
+        if ($w -ge 6 -and $h -ge 6) {
+          $resultRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
+          $selector.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        }
+        else {
+          $selector.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        }
+        $selector.Close()
+      }
     }
   })
 
   $selector.Add_MouseMove({
     param($sender, $e)
-    if ($dragging) {
-      $current = $e.Location
+    if ($state.Dragging) {
+      $state.Current = $e.Location
       $selector.Invalidate()
     }
   })
 
   $selector.Add_MouseUp({
     param($sender, $e)
-    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $dragging) {
-      $dragging = $false
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left -and $state.Dragging) {
+      $state.Dragging = $false
       $selector.Capture = $false
-      $current = $e.Location
-      $x = [Math]::Min($start.X, $current.X)
-      $y = [Math]::Min($start.Y, $current.Y)
-      $w = [Math]::Abs($start.X - $current.X)
-      $h = [Math]::Abs($start.Y - $current.Y)
+      $state.Current = $e.Location
+      $x = [Math]::Min($state.Start.X, $state.Current.X)
+      $y = [Math]::Min($state.Start.Y, $state.Current.Y)
+      $w = [Math]::Abs($state.Start.X - $state.Current.X)
+      $h = [Math]::Abs($state.Start.Y - $state.Current.Y)
       if ($w -ge 6 -and $h -ge 6) {
         # Convert selector client coords back to global screen coords.
         $resultRect = New-Object System.Drawing.Rectangle(($x + $virtualScreen.X), ($y + $virtualScreen.Y), $w, $h)
@@ -135,11 +164,11 @@ function Select-ScreenRegion {
 
   $selector.Add_Paint({
     param($sender, $e)
-    if ($dragging) {
-      $x = [Math]::Min($start.X, $current.X)
-      $y = [Math]::Min($start.Y, $current.Y)
-      $w = [Math]::Abs($start.X - $current.X)
-      $h = [Math]::Abs($start.Y - $current.Y)
+    if ($state.Dragging -or $state.AnchorMode) {
+      $x = [Math]::Min($state.Start.X, $state.Current.X)
+      $y = [Math]::Min($state.Start.Y, $state.Current.Y)
+      $w = [Math]::Abs($state.Start.X - $state.Current.X)
+      $h = [Math]::Abs($state.Start.Y - $state.Current.Y)
       if ($w -gt 0 -and $h -gt 0) {
         $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(70, 0, 200, 120))
         $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(250, 40, 230, 120), 2)
@@ -266,7 +295,7 @@ $btnAutoStop.Enabled = $false
 $form.Controls.Add($btnAutoStop)
 
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "Use Pick OCR Rectangle, then either Run OCR Once or Start Auto. Auto mode samples that same region every N seconds."
+$hint.Text = "Pick rectangle with left-drag. Fallback: right-click first corner, then right-click second corner. Auto mode samples every N seconds."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $hint.Location = New-Object System.Drawing.Point(20, 148)
