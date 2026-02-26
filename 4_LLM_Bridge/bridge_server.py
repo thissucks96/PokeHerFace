@@ -27,7 +27,7 @@ DEFAULT_LLM_CONFIG = {
 }
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
 PROD_CLASS1_MULTI_NODE_LIVE = os.environ.get("PROD_CLASS1_MULTI_NODE_LIVE", "1").strip() not in {"0", "false", "False"}
-PROD_RIVER_MULTI_NODE_SHADOW = os.environ.get("PROD_RIVER_MULTI_NODE_SHADOW", "1").strip() not in {"0", "false", "False"}
+PROD_RIVER_MULTI_NODE_SHADOW = os.environ.get("PROD_RIVER_MULTI_NODE_SHADOW", "0").strip() not in {"0", "false", "False"}
 BENCHMARK_MODE_BYPASS_ROUTING = os.environ.get("BENCHMARK_MODE_BYPASS_ROUTING", "1").strip() not in {
     "0",
     "false",
