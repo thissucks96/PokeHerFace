@@ -201,6 +201,20 @@ OCR note for manual UI prep:
   2. `tesseract` from `PATH`,
   3. fallback path `C:\Program Files\Tesseract-OCR\tesseract.exe`.
 
+ShareX API ingest setup (dedicated vision pipeline):
+
+- Workspace: `5_Vision_Extraction/`
+- Local endpoint: `POST http://127.0.0.1:8000/vision/ingest`
+- ShareX hook script:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File A:\PokeHerFace\Version1\5_Vision_Extraction\sharex_ingest.ps1 -ImagePath "$input"
+```
+
+The hook ensures the bridge is running, submits capture path to `/vision/ingest`, and writes latest response logs under:
+- `5_Vision_Extraction/out/latest_sharex_ingest_response.json`
+- `5_Vision_Extraction/out/sharex_ingest_response.*.json`
+
 Clickable OCR watcher test utility:
 
 ```powershell

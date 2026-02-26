@@ -12,7 +12,7 @@ Production local policy defaults to `qwen3-coder:30b` only; challenger local mod
 
 ## Files
 
-- `bridge_server.py`: FastAPI server with `POST /solve`.
+- `bridge_server.py`: FastAPI server with `POST /solve` and `POST /vision/ingest`.
 - `llm_client.py`: provider router for `mock`, `openai`, and `local` LLM calls.
 - `bridge_client.py`: test client that posts spot JSON to `bridge_server.py`.
 - `phh_to_spot.py`: converts `.phh` hand history files into `spot.json`.
@@ -92,6 +92,34 @@ Top-level response also includes:
 Lock keep rule:
 
 - keep lock iff `locked_exploitability + ev_keep_margin < baseline_exploitability`
+
+## Vision Ingest Endpoint
+
+`POST /vision/ingest` accepts a local image path and runs Tesseract OCR through the bridge.
+
+Request body:
+
+```json
+{
+  "image_path": "A:\\captures\\table.png",
+  "source": "sharex",
+  "profile": "general",
+  "save_copy": true
+}
+```
+
+Profiles:
+
+- `general`
+- `cards`
+- `numeric`
+
+Artifacts are written under `5_Vision_Extraction/`:
+
+- `incoming/` copied source captures (when `save_copy=true`)
+- `out/*.txt` raw OCR text
+- `out/*.json` per-ingest OCR records
+- `out/latest.json` latest OCR record
 
 ## Solve Request Example
 

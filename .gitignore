@@ -73,6 +73,16 @@ libs/*.zip
 4_LLM_Bridge/examples/**/multinode_*.tagged_manifest.json
 4_LLM_Bridge/examples/**/profile_input_manifest*.json
 
+# Vision extraction runtime artifacts
+5_Vision_Extraction/incoming/*
+!5_Vision_Extraction/incoming/.gitkeep
+5_Vision_Extraction/out/*
+!5_Vision_Extraction/out/.gitkeep
+5_Vision_Extraction/processed/*
+!5_Vision_Extraction/processed/.gitkeep
+5_Vision_Extraction/failed/*
+!5_Vision_Extraction/failed/.gitkeep
+
 # Local planning / notes
 task.md
 [Ll]og.md
