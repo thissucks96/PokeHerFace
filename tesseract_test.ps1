@@ -94,6 +94,14 @@ function Normalize-CardToken {
   if (-not $v) {
     return ""
   }
+  $v = $v -replace "♠", "S"
+  $v = $v -replace "♣", "C"
+  $v = $v -replace "♥", "H"
+  $v = $v -replace "♦", "D"
+  $v = $v -replace "SPADES?", "S"
+  $v = $v -replace "CLUBS?", "C"
+  $v = $v -replace "HEARTS?", "H"
+  $v = $v -replace "DIAMONDS?", "D"
   $v = $v -replace "\s+", ""
   $v = $v -replace "10", "T"
   $v = $v -replace "[^A-Z0-9]", ""
@@ -118,8 +126,10 @@ function Get-OcrProfileSpec {
   switch ($name) {
     "Cards (ranks/suits)" {
       return @(
+        @{ psm = 10; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm10" },
         @{ psm = 7; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm7" },
-        @{ psm = 13; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm13" }
+        @{ psm = 13; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm13" },
+        @{ psm = 8; whitelist = "AKQJT98765432shdcSHDC"; label = "cards_psm8" }
       )
     }
     "Numeric (pot/stack)" {
@@ -411,6 +421,109 @@ function Get-BestOcrForRegion {
   }
 }
 
+function Get-CardTokenScore {
+  param([string]$Token)
+  $t = ([string]$Token).Trim().ToUpperInvariant()
+  if (-not $t) {
+    return -1000
+  }
+  if ($t -match "^[AKQJT98765432][SHDC]$") {
+    return 100
+  }
+  if ($t -match "^[AKQJT98765432]\?$") {
+    return 60
+  }
+  if ($t -match "^[AKQJT98765432]$") {
+    return 50
+  }
+  return 0
+}
+
+function Get-CardTokenFromRegion {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
+    [Parameter(Mandatory = $true)][string]$TmpDir,
+    [Parameter(Mandatory = $true)][string]$SlotTag
+  )
+
+  $regions = @(
+    [pscustomobject]@{ tag = "full"; rect = $Region }
+  )
+
+  if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
+    $x = $Region.X
+    $y = $Region.Y
+    $w = $Region.Width
+    $h = $Region.Height
+    $regions += [pscustomobject]@{
+      tag = "rankcrop1"
+      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
+    }
+    $regions += [pscustomobject]@{
+      tag = "rankcrop2"
+      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
+    }
+    $regions += [pscustomobject]@{
+      tag = "rankcrop3"
+      rect = New-Object System.Drawing.Rectangle(
+        $x + [Math]::Max(0, [int]($w * 0.03)),
+        $y + [Math]::Max(0, [int]($h * 0.05)),
+        [Math]::Max(8, [int]($w * 0.55)),
+        [Math]::Max(8, [int]($h * 0.65))
+      )
+    }
+  }
+
+  $bestToken = ""
+  $bestRawText = ""
+  $bestLabel = ""
+  $bestVariant = ""
+  $bestSource = ""
+  $bestScore = -100000
+
+  foreach ($entry in $regions) {
+    $best = Get-BestOcrForRegion -Region $entry.rect -ProfileName "Cards (ranks/suits)" -TmpDir $TmpDir -Tag ("{0}_{1}" -f $SlotTag, $entry.tag)
+    if (-not $best) {
+      continue
+    }
+    $rawText = if ($best.text -is [System.Array]) {
+      [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
+    }
+    else {
+      [string]$best.text
+    }
+    $rawText = $rawText.Trim()
+    $token = Normalize-CardToken -Text $rawText
+    $tokenScore = Get-CardTokenScore -Token $token
+    $combinedScore = $tokenScore + [int]$best.score
+    if ($combinedScore -gt $bestScore) {
+      $bestScore = $combinedScore
+      $bestToken = $token
+      $bestRawText = $rawText
+      $bestLabel = [string]$best.label
+      $bestVariant = [string]$best.variant
+      $bestSource = [string]$entry.tag
+    }
+  }
+
+  if (-not $bestRawText) {
+    return $null
+  }
+
+  if (-not $bestToken) {
+    $bestToken = "??"
+  }
+
+  return [pscustomobject]@{
+    token = $bestToken
+    raw_text = $bestRawText
+    label = $bestLabel
+    variant = $bestVariant
+    source = $bestSource
+    score = $bestScore
+  }
+}
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Tesseract Region Test"
 $form.StartPosition = "CenterScreen"
@@ -652,29 +765,18 @@ function Run-Ocr {
         $cards[$slot] = "--"
       }
       foreach ($slot in $cardSlotOrder) {
-        $best = Get-BestOcrForRegion -Region $cardRegions[$slot] -ProfileName $profileName -TmpDir $tmpDir -Tag $slot
-        if (-not $best) {
+        $bestCard = Get-CardTokenFromRegion -Region $cardRegions[$slot] -TmpDir $tmpDir -SlotTag $slot
+        if (-not $bestCard) {
           $cards[$slot] = "??"
           Write-Log ("OCR warning [Cards (ranks/suits)] {0}: no readable output." -f $slot)
           continue
         }
-        $bestText = if ($best.text -is [System.Array]) {
-          [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
-        }
-        else {
-          [string]$best.text
-        }
-        $bestText = $bestText.Trim()
-        $token = Normalize-CardToken -Text $bestText
-        if (-not $token) {
-          $token = "??"
-        }
-        $cards[$slot] = $token
-        $preview = (($bestText -replace "\r?\n", " ") -as [string]).Trim()
+        $cards[$slot] = $bestCard.token
+        $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
         if ($preview.Length -gt 64) {
           $preview = $preview.Substring(0, 64) + "..."
         }
-        Write-Log ("OCR OK [Cards (ranks/suits)] {0} {1} via {2}: {3}" -f $slot, $best.label, $best.variant, $preview)
+        Write-Log ("OCR OK [Cards (ranks/suits)] {0} {1} via {2}/{3}: {4}" -f $slot, $bestCard.label, $bestCard.variant, $bestCard.source, $preview)
       }
 
       $out = @(
