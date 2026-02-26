@@ -194,6 +194,13 @@ Launch the manual user-facing clickable interface (desktop preview, no solver ac
 .\PLAY_MANUAL.ps1
 ```
 
+OCR note for manual UI prep:
+- `PLAY_MANUAL.ps1` now detects Tesseract and includes an `OCR Check` button.
+- Detection order:
+  1. `TESSERACT_PATH` env var,
+  2. `tesseract` from `PATH`,
+  3. fallback path `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+
 ## Quick Start (WSL / Linux)
 
 ```bash

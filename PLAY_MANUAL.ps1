@@ -32,6 +32,54 @@ if (-not (Ensure-StaSession)) {
   return
 }
 
+function Resolve-TesseractExecutable {
+  $candidates = New-Object System.Collections.Generic.List[string]
+  if ($env:TESSERACT_PATH) {
+    $candidates.Add($env:TESSERACT_PATH)
+  }
+  $candidates.Add("tesseract")
+  $candidates.Add("C:\Program Files\Tesseract-OCR\tesseract.exe")
+  $candidates.Add("C:\Program Files (x86)\Tesseract-OCR\tesseract.exe")
+
+  foreach ($candidate in $candidates) {
+    try {
+      if ($candidate -eq "tesseract") {
+        $cmd = Get-Command tesseract -ErrorAction Stop
+        if ($cmd -and $cmd.Source) {
+          $ver = & $cmd.Source --version 2>$null | Select-Object -First 1
+          return @{
+            available = $true
+            path = $cmd.Source
+            source = "PATH"
+            version = [string]$ver
+          }
+        }
+      }
+      elseif (Test-Path $candidate) {
+        $ver = & $candidate --version 2>$null | Select-Object -First 1
+        return @{
+          available = $true
+          path = $candidate
+          source = "fallback"
+          version = [string]$ver
+        }
+      }
+    }
+    catch {
+      continue
+    }
+  }
+
+  return @{
+    available = $false
+    path = ""
+    source = "none"
+    version = ""
+  }
+}
+
+$tesseract = Resolve-TesseractExecutable
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -67,11 +115,25 @@ $statusLabel.Location = New-Object System.Drawing.Point(22, 78)
 $statusLabel.AutoSize = $true
 $form.Controls.Add($statusLabel)
 
+$ocrStatusLabel = New-Object System.Windows.Forms.Label
+if ($tesseract.available) {
+  $ocrStatusLabel.Text = "OCR: Tesseract detected ($($tesseract.path))"
+  $ocrStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 170)
+}
+else {
+  $ocrStatusLabel.Text = "OCR: Tesseract not found (set TESSERACT_PATH or install to Program Files)"
+  $ocrStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 120)
+}
+$ocrStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$ocrStatusLabel.Location = New-Object System.Drawing.Point(22, 99)
+$ocrStatusLabel.AutoSize = $true
+$form.Controls.Add($ocrStatusLabel)
+
 $actionsBox = New-Object System.Windows.Forms.GroupBox
 $actionsBox.Text = "Actions"
 $actionsBox.ForeColor = [System.Drawing.Color]::White
 $actionsBox.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$actionsBox.Location = New-Object System.Drawing.Point(20, 110)
+$actionsBox.Location = New-Object System.Drawing.Point(20, 128)
 $actionsBox.Size = New-Object System.Drawing.Size(280, 470)
 $form.Controls.Add($actionsBox)
 
@@ -79,7 +141,7 @@ $snapshotBox = New-Object System.Windows.Forms.GroupBox
 $snapshotBox.Text = "Spot Snapshot (Preview)"
 $snapshotBox.ForeColor = [System.Drawing.Color]::White
 $snapshotBox.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$snapshotBox.Location = New-Object System.Drawing.Point(320, 110)
+$snapshotBox.Location = New-Object System.Drawing.Point(320, 128)
 $snapshotBox.Size = New-Object System.Drawing.Size(640, 470)
 $form.Controls.Add($snapshotBox)
 
@@ -143,7 +205,38 @@ $actionsBox.Controls.Add((New-ActionButton -Text "Settings" -Top 200 -OnClick {
     [System.Windows.Forms.MessageBoxIcon]::Information
   )
 }))
-$actionsBox.Controls.Add((New-ActionButton -Text "Exit" -Top 255 -OnClick {
+$actionsBox.Controls.Add((New-ActionButton -Text "OCR Check" -Top 255 -OnClick {
+  if (-not $tesseract.available) {
+    Set-UiStatus "OCR check failed (tesseract not found)"
+    [void][System.Windows.Forms.MessageBox]::Show(
+      "Tesseract binary not found. Set TESSERACT_PATH or install in C:\Program Files\Tesseract-OCR.",
+      "OCR Check",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    return
+  }
+  try {
+    $ver = & $tesseract.path --version 2>$null | Select-Object -First 1
+    Set-UiStatus "OCR check passed"
+    [void][System.Windows.Forms.MessageBox]::Show(
+      "Detected: $($tesseract.path)`n$ver",
+      "OCR Check",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    )
+  }
+  catch {
+    Set-UiStatus "OCR check failed to execute binary"
+    [void][System.Windows.Forms.MessageBox]::Show(
+      "Tesseract found but failed to execute.",
+      "OCR Check",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Error
+    )
+  }
+}))
+$actionsBox.Controls.Add((New-ActionButton -Text "Exit" -Top 310 -OnClick {
   $form.Close()
 }))
 
