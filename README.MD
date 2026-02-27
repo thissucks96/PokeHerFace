@@ -254,11 +254,22 @@ Bridge runtime profile budgets (`POST /solve`):
   - LLM stage timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
   - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `120`)
   - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `180`)
+  - lean spot profile auto-tuning:
+    - `FAST_SPOT_MAX_ITERATIONS` (default `2`)
+    - `FAST_SPOT_MAX_THREADS` (default `8`)
+    - `FAST_SPOT_MAX_RAISE_CAP` (default `2`)
+    - `FAST_SPOT_MIN_ALL_IN_THRESHOLD` (default `0.80`)
+    - `FAST_SPOT_FORCE_COMPRESS_STRATEGY` (default `1`)
+    - `FAST_SPOT_FORCE_REMOVE_DONK_BETS` (default `1`)
+    - `FAST_SPOT_BET_SIZES` csv (default `0.5`)
+    - `FAST_SPOT_RAISE_SIZES` csv (default `1.0`)
 - `runtime_profile=normal`:
   - baseline timeout cap: `NORMAL_BASELINE_TIMEOUT_SEC` (default `900`)
   - LLM stage timeout cap: `NORMAL_LLM_TIMEOUT_SEC` (default `60`)
   - locked solve timeout cap: `NORMAL_LOCKED_TIMEOUT_SEC` (default `900`)
   - locked stage total budget: `NORMAL_LOCKED_STAGE_TOTAL_SEC` (default `900`)
+
+In `runtime_profile=fast`, bridge metrics now include `fast_spot_profile` so timing reports can confirm exactly which spot reductions were applied.
 
 Run live per-call progress in the terminal for API/local benchmark calls:
 

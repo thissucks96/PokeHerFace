@@ -77,6 +77,34 @@ try:
 except ValueError:
     FAST_MAX_TOKENS = 280
 try:
+    FAST_SPOT_MAX_ITERATIONS = int(os.environ.get("FAST_SPOT_MAX_ITERATIONS", "2"))
+except ValueError:
+    FAST_SPOT_MAX_ITERATIONS = 2
+try:
+    FAST_SPOT_MAX_THREADS = int(os.environ.get("FAST_SPOT_MAX_THREADS", "8"))
+except ValueError:
+    FAST_SPOT_MAX_THREADS = 8
+try:
+    FAST_SPOT_MAX_RAISE_CAP = int(os.environ.get("FAST_SPOT_MAX_RAISE_CAP", "2"))
+except ValueError:
+    FAST_SPOT_MAX_RAISE_CAP = 2
+try:
+    FAST_SPOT_MIN_ALL_IN_THRESHOLD = float(os.environ.get("FAST_SPOT_MIN_ALL_IN_THRESHOLD", "0.80"))
+except ValueError:
+    FAST_SPOT_MIN_ALL_IN_THRESHOLD = 0.80
+FAST_SPOT_FORCE_COMPRESS_STRATEGY = os.environ.get("FAST_SPOT_FORCE_COMPRESS_STRATEGY", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_SPOT_FORCE_REMOVE_DONK_BETS", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_SPOT_BET_SIZES_RAW = os.environ.get("FAST_SPOT_BET_SIZES", "0.5")
+FAST_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_SPOT_RAISE_SIZES", "1.0")
+try:
     NORMAL_BASELINE_TIMEOUT_SEC = int(os.environ.get("NORMAL_BASELINE_TIMEOUT_SEC", "900"))
 except ValueError:
     NORMAL_BASELINE_TIMEOUT_SEC = 900
@@ -717,6 +745,102 @@ def _resolve_stage_budgets(runtime_profile: str, request_timeout: int) -> Dict[s
     }
 
 
+def _parse_sizing_env(raw: str, fallback: list[float]) -> list[float]:
+    out: list[float] = []
+    for token in str(raw or "").split(","):
+        value = token.strip()
+        if not value:
+            continue
+        try:
+            fval = float(value)
+        except ValueError:
+            continue
+        if fval > 0.0:
+            out.append(fval)
+    return out or list(fallback)
+
+
+def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    tuned = dict(spot)
+    changes: Dict[str, Any] = {}
+
+    iterations = _to_float_or_none(tuned.get("iterations"))
+    if iterations is not None:
+        capped = int(max(1, min(int(iterations), FAST_SPOT_MAX_ITERATIONS)))
+        if capped != int(iterations):
+            changes["iterations"] = {"from": int(iterations), "to": capped}
+        tuned["iterations"] = capped
+    else:
+        tuned["iterations"] = max(1, FAST_SPOT_MAX_ITERATIONS)
+        changes["iterations"] = {"from": None, "to": tuned["iterations"]}
+
+    thread_count = _to_float_or_none(tuned.get("thread_count"))
+    if thread_count is not None:
+        capped_threads = int(max(1, min(int(thread_count), FAST_SPOT_MAX_THREADS)))
+        if capped_threads != int(thread_count):
+            changes["thread_count"] = {"from": int(thread_count), "to": capped_threads}
+        tuned["thread_count"] = capped_threads
+    else:
+        tuned["thread_count"] = max(1, FAST_SPOT_MAX_THREADS)
+        changes["thread_count"] = {"from": None, "to": tuned["thread_count"]}
+
+    raise_cap = _to_float_or_none(tuned.get("raise_cap"))
+    if raise_cap is not None:
+        capped_raise = int(max(1, min(int(raise_cap), FAST_SPOT_MAX_RAISE_CAP)))
+        if capped_raise != int(raise_cap):
+            changes["raise_cap"] = {"from": int(raise_cap), "to": capped_raise}
+        tuned["raise_cap"] = capped_raise
+    else:
+        tuned["raise_cap"] = max(1, FAST_SPOT_MAX_RAISE_CAP)
+        changes["raise_cap"] = {"from": None, "to": tuned["raise_cap"]}
+
+    all_in_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
+    if all_in_threshold is not None:
+        clamped_threshold = max(FAST_SPOT_MIN_ALL_IN_THRESHOLD, float(all_in_threshold))
+        clamped_threshold = min(clamped_threshold, 0.99)
+        if abs(clamped_threshold - float(all_in_threshold)) > 1e-9:
+            changes["all_in_threshold"] = {"from": float(all_in_threshold), "to": clamped_threshold}
+        tuned["all_in_threshold"] = clamped_threshold
+    else:
+        tuned["all_in_threshold"] = min(max(FAST_SPOT_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
+        changes["all_in_threshold"] = {"from": None, "to": tuned["all_in_threshold"]}
+
+    if FAST_SPOT_FORCE_COMPRESS_STRATEGY:
+        old = tuned.get("compress_strategy")
+        tuned["compress_strategy"] = True
+        if old is not True:
+            changes["compress_strategy"] = {"from": old, "to": True}
+    if FAST_SPOT_FORCE_REMOVE_DONK_BETS:
+        old = tuned.get("remove_donk_bets")
+        tuned["remove_donk_bets"] = True
+        if old is not True:
+            changes["remove_donk_bets"] = {"from": old, "to": True}
+
+    bet_sizes = _parse_sizing_env(FAST_SPOT_BET_SIZES_RAW, [0.5])
+    raise_sizes = _parse_sizing_env(FAST_SPOT_RAISE_SIZES_RAW, [1.0])
+    target_bet_sizing = {
+        "flop": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+        "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+        "river": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+    }
+    old_bet_sizing = tuned.get("bet_sizing")
+    tuned["bet_sizing"] = target_bet_sizing
+    if old_bet_sizing != target_bet_sizing:
+        changes["bet_sizing"] = "reduced_to_fast_profile"
+
+    summary = {
+        "applied": True,
+        "max_iterations": FAST_SPOT_MAX_ITERATIONS,
+        "max_threads": FAST_SPOT_MAX_THREADS,
+        "max_raise_cap": FAST_SPOT_MAX_RAISE_CAP,
+        "min_all_in_threshold": FAST_SPOT_MIN_ALL_IN_THRESHOLD,
+        "bet_sizes": bet_sizes,
+        "raise_sizes": raise_sizes,
+        "changes": changes,
+    }
+    return tuned, summary
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
@@ -746,6 +870,14 @@ def health() -> Dict[str, Any]:
         "fast_locked_timeout_sec": FAST_LOCKED_TIMEOUT_SEC,
         "fast_locked_stage_total_sec": FAST_LOCKED_STAGE_TOTAL_SEC,
         "fast_max_tokens": FAST_MAX_TOKENS,
+        "fast_spot_max_iterations": FAST_SPOT_MAX_ITERATIONS,
+        "fast_spot_max_threads": FAST_SPOT_MAX_THREADS,
+        "fast_spot_max_raise_cap": FAST_SPOT_MAX_RAISE_CAP,
+        "fast_spot_min_all_in_threshold": FAST_SPOT_MIN_ALL_IN_THRESHOLD,
+        "fast_spot_force_compress_strategy": FAST_SPOT_FORCE_COMPRESS_STRATEGY,
+        "fast_spot_force_remove_donk_bets": FAST_SPOT_FORCE_REMOVE_DONK_BETS,
+        "fast_spot_bet_sizes_raw": FAST_SPOT_BET_SIZES_RAW,
+        "fast_spot_raise_sizes_raw": FAST_SPOT_RAISE_SIZES_RAW,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
         "normal_locked_timeout_sec": NORMAL_LOCKED_TIMEOUT_SEC,
@@ -829,11 +961,15 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     runtime_profile = _normalize_runtime_profile(request.runtime_profile)
     stage_budgets = _resolve_stage_budgets(runtime_profile, request.timeout_sec)
     _enforce_local_production_policy(llm_config)
+    effective_spot = dict(request.spot)
+    fast_spot_profile_summary: Optional[Dict[str, Any]] = None
+    if runtime_profile == "fast":
+        effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
 
     # Pass 1: baseline (no lock) is always computed first.
     baseline_run = _run_shark_cli(
         shark_cli,
-        spot_payload=request.spot,
+        spot_payload=effective_spot,
         node_lock_payload=None,
         timeout_sec=stage_budgets["baseline_timeout_sec"],
         quiet=request.quiet,
@@ -908,6 +1044,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 "llm_error": "canary_kill_switch_tripped",
                 "runtime_profile": runtime_profile,
                 "stage_budgets": stage_budgets,
+                "fast_spot_profile": fast_spot_profile_summary,
                 "effective_stage_budgets": {
                     "request_total_budget_sec": request_total_budget_sec,
                     "llm_timeout_sec": llm_timeout_effective,
@@ -1000,7 +1137,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             try:
                 locked_run = _run_shark_cli(
                     shark_cli,
-                    spot_payload=request.spot,
+                    spot_payload=effective_spot,
                     node_lock_payload=candidate,
                     timeout_sec=locked_timeout_effective,
                     quiet=request.quiet,
@@ -1044,7 +1181,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             locked_timeout_effective = int(max(1, min(stage_budgets["locked_timeout_sec"], int(math.floor(remaining)))))
             locked_run = _run_shark_cli(
                 shark_cli,
-                spot_payload=request.spot,
+                spot_payload=effective_spot,
                 node_lock_payload=node_lock,
                 timeout_sec=locked_timeout_effective,
                 quiet=request.quiet,
@@ -1164,6 +1301,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "llm_error": llm_error,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
+            "fast_spot_profile": fast_spot_profile_summary,
             "effective_stage_budgets": {
                 "request_total_budget_sec": request_total_budget_sec,
                 "llm_timeout_sec": llm_timeout_effective,
