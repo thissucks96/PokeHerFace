@@ -192,7 +192,6 @@ function Clone-Flop1ToAllCardRois {
     Set-RoiRectByKey -Key $slot -Rect $flop1Rect
   }
   Save-RoiState -ForceWriteEmpty
-  Close-RoiOverlays
   Refresh-RoiOverlays
   return $true
 }
@@ -204,7 +203,6 @@ function Clone-Hero1ToHero2Roi {
   }
   Set-RoiRectByKey -Key "hero2" -Rect $heroRect
   Save-RoiState -ForceWriteEmpty
-  Close-RoiOverlays
   Refresh-RoiOverlays
   return $true
 }
@@ -2806,7 +2804,8 @@ function Resolve-CardTokenForSlot {
     [Parameter(Mandatory = $true)][string]$Slot,
     [Parameter(Mandatory = $true)][string]$TmpDir,
     [Parameter(Mandatory = $true)][string]$SlotTagPrefix,
-    [switch]$FastMode
+    [switch]$FastMode,
+    [switch]$SkipPresenceCheck
   )
 
   if (-not ($allSlotOrder -contains $Slot)) {
@@ -2838,18 +2837,25 @@ function Resolve-CardTokenForSlot {
     }
   }
 
-  $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
-  if (-not $presence.likely_card) {
-    return [pscustomobject]@{
-      status = "ok"
-      token = "NO_CARD"
-      preview = ""
-      variant = ""
-      source = ""
-      message = ""
-      no_card = $true
-      white_ratio = [double]$presence.white_ratio
-      green_ratio = [double]$presence.green_ratio
+  $presence = [pscustomobject]@{
+    likely_card = $true
+    white_ratio = 0.0
+    green_ratio = 0.0
+  }
+  if (-not $SkipPresenceCheck) {
+    $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
+    if (-not $presence.likely_card) {
+      return [pscustomobject]@{
+        status = "ok"
+        token = "NO_CARD"
+        preview = ""
+        variant = ""
+        source = ""
+        message = ""
+        no_card = $true
+        white_ratio = [double]$presence.white_ratio
+        green_ratio = [double]$presence.green_ratio
+      }
     }
   }
 
@@ -2938,7 +2944,7 @@ function Run-OcrSingleSlot {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
-    $resolved = Resolve-CardTokenForSlot -Slot $Slot -TmpDir $tmpDir -SlotTagPrefix "single" -FastMode:$FastMode
+    $resolved = Resolve-CardTokenForSlot -Slot $Slot -TmpDir $tmpDir -SlotTagPrefix "single" -FastMode:$FastMode -SkipPresenceCheck:($Slot -in $playerSlotOrder)
     if ($resolved.status -ne "ok") {
       Write-Log ("OCR ERROR [{0}]: {1}" -f $Slot, $resolved.message)
       return
@@ -3186,6 +3192,7 @@ function Run-OcrBoardSetAndQueueEngine {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
     $cards = @{}
+    $previewBySlot = @{}
     foreach ($slot in $Slots) {
       $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant())
       if ($resolved.status -ne "ok") {
@@ -3199,6 +3206,7 @@ function Run-OcrBoardSetAndQueueEngine {
         continue
       }
       $cards[$slot] = [string]$resolved.token
+      $previewBySlot[$slot] = [string]$resolved.preview
       if ($cards[$slot] -eq "??") {
         Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
         continue
@@ -3209,6 +3217,40 @@ function Run-OcrBoardSetAndQueueEngine {
         raw = [string]$resolved.preview
         source = [string]$resolved.source
         variant = [string]$resolved.variant
+      }
+    }
+
+    $retrySlots = New-Object System.Collections.Generic.List[string]
+    foreach ($slot in $Slots) {
+      $tk = if ($cards.ContainsKey($slot)) { ([string]$cards[$slot]).Trim().ToUpperInvariant() } else { "??" }
+      if (-not (Test-CardTokenStrict -Token $tk)) {
+        [void]$retrySlots.Add([string]$slot)
+      }
+    }
+    if ($retrySlots.Count -gt 0) {
+      Write-Log ("{0} batch retry: unresolved slots -> {1}" -f $StageLabel, ($retrySlots -join ", "))
+      Start-Sleep -Milliseconds 120
+      foreach ($slot in $retrySlots) {
+        $retryResolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}retry" -f $StageLabel.ToLowerInvariant())
+        if ($retryResolved.status -ne "ok") {
+          continue
+        }
+        if ($retryResolved.no_card) {
+          continue
+        }
+        $retryToken = ([string]$retryResolved.token).Trim().ToUpperInvariant()
+        if ($retryToken -eq "??") {
+          continue
+        }
+        $cards[$slot] = $retryToken
+        $previewBySlot[$slot] = [string]$retryResolved.preview
+        Write-Log ("OCR RETRY OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $retryResolved.variant, $retryResolved.source, $retryToken, [string]$retryResolved.preview) -Type "ocr_slot_retry" -Data @{
+          slot = $slot
+          parsed = $retryToken
+          raw = [string]$retryResolved.preview
+          source = [string]$retryResolved.source
+          variant = [string]$retryResolved.variant
+        }
       }
     }
 
@@ -3261,16 +3303,12 @@ function Run-OcrFlopSet {
 }
 
 function Reset-NewHandState {
+  # Reset solver/engine-relevant hand state only. Keep ROI overlays and UI layout untouched.
   $script:lastBoardTokens = @()
   $script:lastHeroAutoSendKey = ""
   $heroCards["hero1"] = "??"
   $heroCards["hero2"] = "??"
-  $txtLatest.Text = @(
-    "run:   new_hand_reset"
-    "board: ?? ?? ?? ?? ??"
-    "hero:  ?? ??"
-  ) -join "`r`n"
-  Write-Log "New hand reset: cleared board/hero cache before hero scan."
+  Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
 }
 
 function Run-OcrHeroSet {
