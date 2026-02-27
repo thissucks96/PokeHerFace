@@ -61,50 +61,6 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 try {
   Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
-
-public class RoiOverlayForm : Form
-{
-    private const int WM_GETMINMAXINFO = 0x0024;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT
-    {
-        public int x;
-        public int y;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MINMAXINFO
-    {
-        public POINT ptReserved;
-        public POINT ptMaxSize;
-        public POINT ptMaxPosition;
-        public POINT ptMinTrackSize;
-        public POINT ptMaxTrackSize;
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        if (m.Msg == WM_GETMINMAXINFO && m.LParam != IntPtr.Zero)
-        {
-            var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
-            mmi.ptMinTrackSize.x = 1;
-            mmi.ptMinTrackSize.y = 1;
-            Marshal.StructureToPtr(mmi, m.LParam, false);
-        }
-        base.WndProc(ref m);
-    }
-}
-"@ -ErrorAction SilentlyContinue | Out-Null
-}
-catch {
-  # Non-fatal.
-}
-try {
-  Add-Type -TypeDefinition @"
 using System.Runtime.InteropServices;
 public static class NativeDpi {
   [DllImport("user32.dll")]
@@ -1488,7 +1444,7 @@ function New-RoiOverlayForm {
     [System.Drawing.Rectangle]$Rect,
     [System.Drawing.Color]$Color
   )
-  $overlay = New-Object RoiOverlayForm
+  $overlay = New-Object System.Windows.Forms.Form
   $overlay.FormBorderStyle = "None"
   $overlay.StartPosition = "Manual"
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
@@ -1498,6 +1454,7 @@ function New-RoiOverlayForm {
   $overlay.TopMost = $true
   $overlay.BackColor = $Color
   $overlay.Opacity = 0.28
+  $overlay.Padding = New-Object System.Windows.Forms.Padding(0)
   $overlay.Bounds = New-Object System.Drawing.Rectangle([int]$Rect.X, [int]$Rect.Y, [Math]::Max(1, [int]$Rect.Width), [Math]::Max(1, [int]$Rect.Height))
   $overlay.Tag = [pscustomobject]@{
     key = $Key
@@ -1505,17 +1462,27 @@ function New-RoiOverlayForm {
     offsetX = 0
     offsetY = 0
   }
-
-  $tagLabel = New-Object System.Windows.Forms.Label
-  $tagLabel.Text = $Key
-  $tagLabel.ForeColor = [System.Drawing.Color]::White
-  $tagLabel.BackColor = [System.Drawing.Color]::Transparent
-  $tagLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-  $tagLabel.AutoSize = $false
-  $tagLabel.Size = New-Object System.Drawing.Size(64, 16)
-  $tagLabel.Location = New-Object System.Drawing.Point(4, 2)
-  $tagLabel.Tag = $overlay
-  $overlay.Controls.Add($tagLabel)
+  $overlay.Add_Paint({
+    param($sender, $e)
+    $state = $sender.Tag
+    if ($null -eq $state) { return }
+    $text = [string]$state.key
+    if (-not $text) { return }
+    $fontSize = 9.0
+    if ($sender.Width -lt 52 -or $sender.Height -lt 22) {
+      $fontSize = 7.0
+    }
+    $font = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold)
+    $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(235, 245, 255))
+    try {
+      $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+      $e.Graphics.DrawString($text, $font, $brush, 4, 2)
+    }
+    finally {
+      $brush.Dispose()
+      $font.Dispose()
+    }
+  })
 
   $overlay.Add_MouseDown({
     param($sender, $e)
@@ -1545,43 +1512,6 @@ function New-RoiOverlayForm {
     }
     $state.down = $false
     Sync-OverlayToRoi -Key ([string]$state.key) -OverlayForm $sender
-  })
-
-  # Dragging on the label moves the overlay too.
-  $tagLabel.Add_MouseDown({
-    param($sender, $e)
-    $owner = $sender.Tag
-    if ($null -eq $owner) { return }
-    $state = $owner.Tag
-    if ($null -eq $state) { return }
-    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-      $state.down = $true
-      $state.offsetX = [int]$e.X + [int]$sender.Left
-      $state.offsetY = [int]$e.Y + [int]$sender.Top
-    }
-  })
-  $tagLabel.Add_MouseMove({
-    param($sender, $e)
-    $owner = $sender.Tag
-    if ($null -eq $owner) { return }
-    $state = $owner.Tag
-    if ($null -eq $state -or -not $state.down) {
-      return
-    }
-    $pt = [System.Windows.Forms.Control]::MousePosition
-    $owner.Left = [int]($pt.X - [int]$state.offsetX)
-    $owner.Top = [int]($pt.Y - [int]$state.offsetY)
-  })
-  $tagLabel.Add_MouseUp({
-    param($sender, $e)
-    $owner = $sender.Tag
-    if ($null -eq $owner) { return }
-    $state = $owner.Tag
-    if ($null -eq $state -or -not $state.down) {
-      return
-    }
-    $state.down = $false
-    Sync-OverlayToRoi -Key ([string]$state.key) -OverlayForm $owner
   })
 
   return $overlay
