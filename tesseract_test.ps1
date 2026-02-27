@@ -3185,19 +3185,27 @@ function Run-OcrBoardSetAndQueueEngine {
 
   $script:isBusy = $true
   $restoreOverlaysAfter = $false
+  $previousKeepAlive = [string]$ollamaVisionKeepAlive
+  $useFastPrimary = $false
+  if (([string]$StageLabel).Trim().ToLowerInvariant() -eq "flop") {
+    $useFastPrimary = $true
+  }
   try {
     if ($overlayVisible) {
       $restoreOverlaysAfter = $true
       Set-OverlayVisibilityForCapture -Enable $false
       Start-Sleep -Milliseconds 50
     }
+    # Keep model warm for the current staged pass (flop/turn/river),
+    # then release it in finally to preserve VRAM for solver tasks.
+    $script:ollamaVisionKeepAlive = "20s"
 
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
     $cards = @{}
     $previewBySlot = @{}
     foreach ($slot in $Slots) {
-      $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant())
+      $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
       if ($resolved.status -ne "ok") {
         $cards[$slot] = "??"
         Write-Log ("OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
@@ -3259,7 +3267,12 @@ function Run-OcrBoardSetAndQueueEngine {
 
     $boardTokens = @()
     foreach ($slot in $Slots) {
-      $boardTokens += (if ($cards.ContainsKey($slot)) { [string]$cards[$slot] } else { "??" })
+      if ($cards.ContainsKey($slot)) {
+        $boardTokens += [string]$cards[$slot]
+      }
+      else {
+        $boardTokens += "??"
+      }
     }
     $boardReady = Get-BoardReadyFromTokens -Tokens $boardTokens
     $script:lastBoardTokens = @($boardTokens)
@@ -3294,6 +3307,8 @@ function Run-OcrBoardSetAndQueueEngine {
     }
   }
   finally {
+    $script:ollamaVisionKeepAlive = $previousKeepAlive
+    Release-OllamaVisionModel
     if ($restoreOverlaysAfter) {
       Set-OverlayVisibilityForCapture -Enable $true
     }

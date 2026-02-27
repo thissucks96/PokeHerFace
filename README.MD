@@ -228,7 +228,7 @@ Clickable OCR watcher test utility:
   - `Run Hero` reads only `hero1` + `hero2` in one optimized pass and shows a compact hero summary.
   - `Run Flop (1-3)` for atomic flop capture.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
-  - Batch stage runs now include one automatic retry for unresolved slots before final summary/handoff.
+  - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
 - Hero auto-send:
   - define `hero` ROI once (tester auto-clones to `hero2`),
   - once both hero cards are identified and board cards are valid, tester auto-queues engine solve.
