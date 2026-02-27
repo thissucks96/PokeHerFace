@@ -250,10 +250,10 @@ python .\4_LLM_Bridge\run_synthetic_hand_pack.py `
 
 Bridge runtime profile budgets (`POST /solve`):
 - `runtime_profile=fast`:
-  - baseline timeout cap: `FAST_BASELINE_TIMEOUT_SEC` (default `180`)
+  - baseline timeout cap: `FAST_BASELINE_TIMEOUT_SEC` (default `60`)
   - LLM stage timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
-  - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `120`)
-  - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `180`)
+  - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `60`)
+  - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `90`)
   - lean spot profile auto-tuning:
     - `FAST_SPOT_MAX_ITERATIONS` (default `2`)
     - `FAST_SPOT_MAX_THREADS` (default `8`)
@@ -263,6 +263,12 @@ Bridge runtime profile budgets (`POST /solve`):
     - `FAST_SPOT_FORCE_REMOVE_DONK_BETS` (default `1`)
     - `FAST_SPOT_BET_SIZES` csv (default `0.5`)
     - `FAST_SPOT_RAISE_SIZES` csv (default `1.0`)
+  - fast runtime policy router:
+    - `FAST_FORCE_ROOT_ONLY` (default `1`) forces root-only lock path in fast profile.
+    - `FAST_SKIP_LLM_STAGE` (default `1`) skips lock generation in fast profile unless benchmark mode.
+  - fast fallback ladder:
+    - `FAST_FAILOVER_ON_BASELINE_ERROR` (default `1`) returns immediate lookup fallback payload instead of HTTP 504 when baseline stage fails.
+    - `FAST_FAILOVER_DEFAULT_FLOP_ACTION` / `FAST_FAILOVER_DEFAULT_TURN_ACTION` / `FAST_FAILOVER_DEFAULT_RIVER_ACTION` (defaults `check`).
 - `runtime_profile=normal`:
   - baseline timeout cap: `NORMAL_BASELINE_TIMEOUT_SEC` (default `900`)
   - LLM stage timeout cap: `NORMAL_LLM_TIMEOUT_SEC` (default `60`)

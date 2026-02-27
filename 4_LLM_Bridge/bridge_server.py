@@ -57,21 +57,21 @@ try:
 except ValueError:
     RIVER_CANDIDATE_COUNT = 1
 try:
-    FAST_BASELINE_TIMEOUT_SEC = int(os.environ.get("FAST_BASELINE_TIMEOUT_SEC", "180"))
+    FAST_BASELINE_TIMEOUT_SEC = int(os.environ.get("FAST_BASELINE_TIMEOUT_SEC", "60"))
 except ValueError:
-    FAST_BASELINE_TIMEOUT_SEC = 180
+    FAST_BASELINE_TIMEOUT_SEC = 60
 try:
     FAST_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LLM_TIMEOUT_SEC", "25"))
 except ValueError:
     FAST_LLM_TIMEOUT_SEC = 25
 try:
-    FAST_LOCKED_TIMEOUT_SEC = int(os.environ.get("FAST_LOCKED_TIMEOUT_SEC", "120"))
+    FAST_LOCKED_TIMEOUT_SEC = int(os.environ.get("FAST_LOCKED_TIMEOUT_SEC", "60"))
 except ValueError:
-    FAST_LOCKED_TIMEOUT_SEC = 120
+    FAST_LOCKED_TIMEOUT_SEC = 60
 try:
-    FAST_LOCKED_STAGE_TOTAL_SEC = int(os.environ.get("FAST_LOCKED_STAGE_TOTAL_SEC", "180"))
+    FAST_LOCKED_STAGE_TOTAL_SEC = int(os.environ.get("FAST_LOCKED_STAGE_TOTAL_SEC", "90"))
 except ValueError:
-    FAST_LOCKED_STAGE_TOTAL_SEC = 180
+    FAST_LOCKED_STAGE_TOTAL_SEC = 90
 try:
     FAST_MAX_TOKENS = int(os.environ.get("FAST_MAX_TOKENS", "280"))
 except ValueError:
@@ -104,6 +104,16 @@ FAST_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_SPOT_FORCE_REMOVE_DONK_B
 }
 FAST_SPOT_BET_SIZES_RAW = os.environ.get("FAST_SPOT_BET_SIZES", "0.5")
 FAST_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_SPOT_RAISE_SIZES", "1.0")
+FAST_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_FAILOVER_ON_BASELINE_ERROR", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_FAILOVER_DEFAULT_FLOP_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_FLOP_ACTION", "check")).strip().lower()
+FAST_FAILOVER_DEFAULT_TURN_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_TURN_ACTION", "check")).strip().lower()
+FAST_FAILOVER_DEFAULT_RIVER_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_RIVER_ACTION", "check")).strip().lower()
+FAST_FORCE_ROOT_ONLY = os.environ.get("FAST_FORCE_ROOT_ONLY", "1").strip() not in {"0", "false", "False"}
+FAST_SKIP_LLM_STAGE = os.environ.get("FAST_SKIP_LLM_STAGE", "1").strip() not in {"0", "false", "False"}
 try:
     NORMAL_BASELINE_TIMEOUT_SEC = int(os.environ.get("NORMAL_BASELINE_TIMEOUT_SEC", "900"))
 except ValueError:
@@ -841,6 +851,165 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
     return tuned, summary
 
 
+def _fallback_actions_from_spot(spot: Dict[str, Any]) -> list[str]:
+    street = _detect_spot_street(spot)
+    actions: list[str] = ["check"]
+    minimum_bet = _to_float_or_none(spot.get("minimum_bet")) or 1.0
+    starting_pot = _to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0)
+    bet_sizing = spot.get("bet_sizing", {})
+    if isinstance(bet_sizing, dict):
+        street_cfg = bet_sizing.get(street, {})
+        if isinstance(street_cfg, dict):
+            bet_sizes = street_cfg.get("bet_sizes", [])
+            if isinstance(bet_sizes, list):
+                numeric_sizes = [float(x) for x in bet_sizes if isinstance(x, (int, float)) and float(x) > 0.0]
+                if numeric_sizes:
+                    amount = int(max(minimum_bet, round(starting_pot * min(numeric_sizes))))
+                    actions.append(f"bet:{amount}")
+    if all(not token.startswith("bet:") for token in actions):
+        actions.append(f"bet:{int(max(1.0, minimum_bet))}")
+    actions.append("fold")
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in actions:
+        key = token.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str]) -> str:
+    street = _detect_spot_street(spot)
+    preferred_by_street = {
+        "flop": FAST_FAILOVER_DEFAULT_FLOP_ACTION,
+        "turn": FAST_FAILOVER_DEFAULT_TURN_ACTION,
+        "river": FAST_FAILOVER_DEFAULT_RIVER_ACTION,
+    }
+    preferred = str(preferred_by_street.get(street, "check")).strip().lower()
+    if preferred:
+        if preferred in allowed_actions:
+            return preferred
+        pref_base = preferred.split(":", 1)[0]
+        for action in allowed_actions:
+            if action.split(":", 1)[0] == pref_base:
+                return action
+    for candidate in ("check", "call"):
+        if candidate in allowed_actions:
+            return candidate
+    return allowed_actions[0] if allowed_actions else "check"
+
+
+def _token_to_root_action(token: str, chosen: str) -> Dict[str, Any]:
+    base = token
+    amount = None
+    if ":" in token:
+        lhs, rhs = token.split(":", 1)
+        base = lhs.strip().lower()
+        try:
+            amount = int(float(rhs))
+        except ValueError:
+            amount = None
+    item: Dict[str, Any] = {
+        "action": base,
+        "frequency": 1.0 if token == chosen else 0.0,
+    }
+    if amount is not None and base in {"bet", "raise"}:
+        item["amount"] = amount
+    return item
+
+
+def _build_fast_failover_response(
+    *,
+    request: SolveRequest,
+    runtime_profile: str,
+    stage_budgets: Dict[str, int],
+    request_total_budget_sec: int,
+    llm_timeout_effective: int,
+    locked_stage_total_effective: float,
+    total_bridge_time: float,
+    baseline_error: str,
+    fast_spot_profile_summary: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    allowed_actions = _fallback_actions_from_spot(request.spot)
+    chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
+    root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+    result_payload = {
+        "runtime_fallback": True,
+        "final_exploitability_pct": None,
+        "root_actions": root_actions,
+        "node_lock": {
+            "provided": False,
+            "applied": False,
+            "applications": 0,
+            "reason": "fast_failover_no_solver_result",
+        },
+        "decision": {
+            "action": chosen_action,
+            "street": _detect_spot_street(request.spot),
+            "policy": "lookup_fallback",
+        },
+        "warnings": [f"fast_failover_applied:{baseline_error}"],
+    }
+    return {
+        "status": "ok",
+        "node_lock": None,
+        "node_lock_kept": False,
+        "selected_strategy": "fallback_lookup_policy",
+        "selection_reason": "fast_profile_baseline_failed_lookup_fallback",
+        "allowed_root_actions": allowed_actions,
+        "multi_node_policy": {
+            "requested": bool(request.enable_multi_node_locks),
+            "enabled": False,
+            "reason": "fast_failover_lookup",
+            "rollout_classes": _extract_rollout_classes(request.spot),
+        },
+        "result": result_payload,
+        "baseline_result": None,
+        "locked_result": None,
+        "metrics": {
+            "llm_time_sec": 0.0,
+            "solver_time_sec": 0.0,
+            "baseline_solver_time_sec": 0.0,
+            "locked_solver_time_sec": 0.0,
+            "locked_solver_time_total_sec": 0.0,
+            "total_bridge_time_sec": total_bridge_time,
+            "lock_applied": False,
+            "lock_applications": 0,
+            "final_exploitability_pct": None,
+            "baseline_exploitability_pct": None,
+            "locked_exploitability_pct": None,
+            "exploitability_delta_pct": None,
+            "ev_keep_margin": request.ev_keep_margin,
+            "locked_beats_margin_gate": None,
+            "lock_confidence": None,
+            "lock_confidence_tag": "unknown",
+            "lock_quality_score": 0.0,
+            "node_lock_target_count": 0,
+            "llm_candidate_mode_enabled": False,
+            "llm_candidate_target_count": 0,
+            "llm_candidate_generated_count": 0,
+            "llm_candidate_solve_count": 0,
+            "llm_candidate_errors": [baseline_error],
+            "llm_is_local_request": _is_local_request(dict(request.llm or DEFAULT_LLM_CONFIG)),
+            "multi_node_requested": bool(request.enable_multi_node_locks),
+            "multi_node_enabled": False,
+            "multi_node_policy_reason": "fast_failover_lookup",
+            "llm_error": baseline_error,
+            "runtime_profile": runtime_profile,
+            "stage_budgets": stage_budgets,
+            "fast_spot_profile": fast_spot_profile_summary,
+            "effective_stage_budgets": {
+                "request_total_budget_sec": request_total_budget_sec,
+                "llm_timeout_sec": llm_timeout_effective,
+                "locked_stage_total_sec": locked_stage_total_effective,
+            },
+        },
+        "canary_guardrails": _canary_status_snapshot(),
+    }
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
@@ -878,6 +1047,12 @@ def health() -> Dict[str, Any]:
         "fast_spot_force_remove_donk_bets": FAST_SPOT_FORCE_REMOVE_DONK_BETS,
         "fast_spot_bet_sizes_raw": FAST_SPOT_BET_SIZES_RAW,
         "fast_spot_raise_sizes_raw": FAST_SPOT_RAISE_SIZES_RAW,
+        "fast_failover_on_baseline_error": FAST_FAILOVER_ON_BASELINE_ERROR,
+        "fast_failover_default_flop_action": FAST_FAILOVER_DEFAULT_FLOP_ACTION,
+        "fast_failover_default_turn_action": FAST_FAILOVER_DEFAULT_TURN_ACTION,
+        "fast_failover_default_river_action": FAST_FAILOVER_DEFAULT_RIVER_ACTION,
+        "fast_force_root_only": FAST_FORCE_ROOT_ONLY,
+        "fast_skip_llm_stage": FAST_SKIP_LLM_STAGE,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
         "normal_locked_timeout_sec": NORMAL_LOCKED_TIMEOUT_SEC,
@@ -967,15 +1142,39 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
 
     # Pass 1: baseline (no lock) is always computed first.
-    baseline_run = _run_shark_cli(
-        shark_cli,
-        spot_payload=effective_spot,
-        node_lock_payload=None,
-        timeout_sec=stage_budgets["baseline_timeout_sec"],
-        quiet=request.quiet,
-    )
-    baseline_result = baseline_run["result"]
-    baseline_solver_time = baseline_run["solver_wall_time_sec"]
+    baseline_result: Dict[str, Any]
+    baseline_solver_time = 0.0
+    try:
+        baseline_run = _run_shark_cli(
+            shark_cli,
+            spot_payload=effective_spot,
+            node_lock_payload=None,
+            timeout_sec=stage_budgets["baseline_timeout_sec"],
+            quiet=request.quiet,
+        )
+        baseline_result = baseline_run["result"]
+        baseline_solver_time = baseline_run["solver_wall_time_sec"]
+    except HTTPException as exc:
+        if runtime_profile == "fast" and FAST_FAILOVER_ON_BASELINE_ERROR:
+            total_bridge_time = time.perf_counter() - bridge_started
+            baseline_error = f"baseline_stage_failed:{exc.detail}"
+            _record_canary_observation(
+                fallback=True,
+                kept=False,
+                latency_sec=total_bridge_time,
+            )
+            return _build_fast_failover_response(
+                request=request,
+                runtime_profile=runtime_profile,
+                stage_budgets=stage_budgets,
+                request_total_budget_sec=request_total_budget_sec,
+                llm_timeout_effective=int(stage_budgets["llm_timeout_sec"]),
+                locked_stage_total_effective=float(stage_budgets["locked_stage_total_sec"]),
+                total_bridge_time=total_bridge_time,
+                baseline_error=baseline_error,
+                fast_spot_profile_summary=fast_spot_profile_summary,
+            )
+        raise
     allowed_root_actions = _extract_allowed_root_actions(baseline_result)
     node_lock_catalog = _extract_node_lock_catalog(baseline_result)
     llm_timeout_effective = int(stage_budgets["llm_timeout_sec"])
@@ -1061,6 +1260,10 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     spot_street = _detect_spot_street(request.spot)
     candidate_target_count = TURN_CANDIDATE_COUNT if spot_street == "turn" else RIVER_CANDIDATE_COUNT
     llm_mode = str(llm_config.get("mode", "")).strip().lower()
+    if runtime_profile == "fast" and FAST_FORCE_ROOT_ONLY and llm_mode != "benchmark":
+        multi_node_enabled = False
+        multi_node_policy_reason = f"{multi_node_policy_reason}+fast_root_only"
+        candidate_target_count = 1
     is_local_request = _is_local_request(llm_config)
     llm_budget_remaining = max(0.0, request_deadline - time.perf_counter())
     llm_timeout_effective = int(max(1, min(stage_budgets["llm_timeout_sec"], int(math.ceil(llm_budget_remaining)))))
@@ -1083,7 +1286,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     llm_config["opponent_profile"] = dict(request.opponent_profile or {})
     llm_config["enable_multi_node_locks"] = multi_node_enabled
     llm_candidates: list[Dict[str, Any]] = []
-    if llm_budget_remaining < 1.0:
+    if runtime_profile == "fast" and FAST_SKIP_LLM_STAGE and llm_mode != "benchmark":
+        llm_error = "fast_profile_llm_stage_skipped"
+    elif llm_budget_remaining < 1.0:
         llm_error = "global_budget_exhausted_before_llm_stage"
     else:
         try:
@@ -1225,6 +1430,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         selection_reason = "baseline_missing_metric"
         result = locked_result
         node_lock_kept = True
+    elif llm_error == "fast_profile_llm_stage_skipped":
+        selection_reason = "fast_profile_llm_stage_skipped_using_baseline"
     elif llm_error:
         selection_reason = "llm_generation_failed_using_baseline"
     elif node_lock is None:
