@@ -77,6 +77,16 @@ $tesseractExe = Resolve-TesseractExecutable
 $ollamaHost = if ($env:OLLAMA_HOST) { [string]$env:OLLAMA_HOST } else { "http://127.0.0.1:11434" }
 $ollamaVisionModel = if ($env:OLLAMA_VISION_MODEL) { [string]$env:OLLAMA_VISION_MODEL } else { "llava:13b" }
 $bridgeSolveEndpoint = if ($env:BRIDGE_SOLVE_ENDPOINT) { [string]$env:BRIDGE_SOLVE_ENDPOINT } else { "http://127.0.0.1:8000/solve" }
+$bridgeHealthEndpoint = "http://127.0.0.1:8000/health"
+try {
+  $uri = [System.Uri]$bridgeSolveEndpoint
+  $bridgeHealthEndpoint = ("{0}://{1}:{2}/health" -f $uri.Scheme, $uri.Host, $uri.Port)
+}
+catch {
+  if ($bridgeSolveEndpoint.ToLowerInvariant().EndsWith("/solve")) {
+    $bridgeHealthEndpoint = ($bridgeSolveEndpoint.Substring(0, $bridgeSolveEndpoint.Length - 6) + "/health")
+  }
+}
 $engineSpotTemplatePath = if ($env:ENGINE_SPOT_TEMPLATE_PATH) { [string]$env:ENGINE_SPOT_TEMPLATE_PATH } else { (Join-Path $PSScriptRoot "4_LLM_Bridge\examples\spot.sample.json") }
 $engineOutputDir = if ($env:ENGINE_OCR_OUT_DIR) { [string]$env:ENGINE_OCR_OUT_DIR } else { (Join-Path $PSScriptRoot "5_Vision_Extraction\out\flop_engine") }
 $engineLlmPreset = if ($env:ENGINE_LLM_PRESET) { [string]$env:ENGINE_LLM_PRESET } else { "local_qwen3_coder_30b" }
@@ -87,6 +97,10 @@ if ($env:ENGINE_ENABLE_MULTI_NODE -and ([string]$env:ENGINE_ENABLE_MULTI_NODE).T
 $engineSolverTimeoutSec = 180
 if ($env:ENGINE_SOLVER_TIMEOUT_SEC -and [int]::TryParse([string]$env:ENGINE_SOLVER_TIMEOUT_SEC, [ref]$engineSolverTimeoutSec)) {
   if ($engineSolverTimeoutSec -lt 30) { $engineSolverTimeoutSec = 30 }
+}
+$backendAutoStart = $true
+if ($env:BACKEND_AUTOSTART -and ([string]$env:BACKEND_AUTOSTART).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
+  $backendAutoStart = $false
 }
 $roiStatePath = Join-Path (Join-Path $env:APPDATA "PokeHerFace") "vision_tester_rois.json"
 $roiAutoScale = $false
@@ -101,6 +115,10 @@ $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $engineHandoffBusy = $false
 $enginePendingJobs = @{}
+$managedOllamaProcess = $null
+$managedBridgeProcess = $null
+$managedOllamaStartedByUi = $false
+$managedBridgeStartedByUi = $false
 $autoEnabled = $false
 $overlayVisible = $true
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
@@ -2116,6 +2134,178 @@ function Write-Log {
   $logBox.AppendText("[$stamp] $Message`r`n")
 }
 
+function Resolve-BridgePythonCommand {
+  $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+  if (Test-Path $venvPy) {
+    return [pscustomobject]@{
+      file = $venvPy
+      prefix = @()
+      label = "venv-python"
+    }
+  }
+  $py = Get-Command python -ErrorAction SilentlyContinue
+  if ($py -and $py.Source) {
+    return [pscustomobject]@{
+      file = [string]$py.Source
+      prefix = @()
+      label = "python"
+    }
+  }
+  $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+  if ($pyLauncher -and $pyLauncher.Source) {
+    return [pscustomobject]@{
+      file = [string]$pyLauncher.Source
+      prefix = @("-3")
+      label = "py-launcher"
+    }
+  }
+  return $null
+}
+
+function Wait-Until {
+  param(
+    [Parameter(Mandatory = $true)][scriptblock]$Condition,
+    [int]$TimeoutSec = 20,
+    [int]$IntervalMs = 300
+  )
+  $start = Get-Date
+  while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSec) {
+    try {
+      if (& $Condition) {
+        return $true
+      }
+    }
+    catch {
+      # ignore transient probe errors
+    }
+    Start-Sleep -Milliseconds $IntervalMs
+  }
+  return $false
+}
+
+function Test-TcpPortOpen {
+  param(
+    [Parameter(Mandatory = $true)][string]$Host,
+    [Parameter(Mandatory = $true)][int]$Port,
+    [int]$TimeoutMs = 800
+  )
+  $client = New-Object System.Net.Sockets.TcpClient
+  try {
+    $iar = $client.BeginConnect($Host, $Port, $null, $null)
+    $ok = $iar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+    if (-not $ok) {
+      return $false
+    }
+    $client.EndConnect($iar) | Out-Null
+    return $client.Connected
+  }
+  catch {
+    return $false
+  }
+  finally {
+    try { $client.Close() } catch {}
+  }
+}
+
+function Test-BridgeEndpoint {
+  try {
+    $null = Invoke-RestMethod -Uri $bridgeHealthEndpoint -Method Get -TimeoutSec 3
+    return $true
+  }
+  catch {
+    try {
+      $uri = [System.Uri]$bridgeSolveEndpoint
+      return (Test-TcpPortOpen -Host $uri.Host -Port $uri.Port -TimeoutMs 700)
+    }
+    catch {
+      return $false
+    }
+  }
+}
+
+function Stop-ManagedBackends {
+  if ($managedBridgeStartedByUi -and $managedBridgeProcess -and -not $managedBridgeProcess.HasExited) {
+    try {
+      Stop-Process -Id $managedBridgeProcess.Id -Force -ErrorAction SilentlyContinue
+      Write-Log ("Stopped managed bridge process (pid={0})." -f $managedBridgeProcess.Id)
+    }
+    catch {}
+  }
+  if ($managedOllamaStartedByUi -and $managedOllamaProcess -and -not $managedOllamaProcess.HasExited) {
+    try {
+      Stop-Process -Id $managedOllamaProcess.Id -Force -ErrorAction SilentlyContinue
+      Write-Log ("Stopped managed Ollama process (pid={0})." -f $managedOllamaProcess.Id)
+    }
+    catch {}
+  }
+  $script:managedBridgeProcess = $null
+  $script:managedOllamaProcess = $null
+  $script:managedBridgeStartedByUi = $false
+  $script:managedOllamaStartedByUi = $false
+}
+
+function Ensure-BackendsRunning {
+  if (-not $backendAutoStart) {
+    Write-Log "Backend auto-start disabled (BACKEND_AUTOSTART=0)."
+    return
+  }
+
+  if (-not (Test-OllamaEndpoint)) {
+    $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
+    if (-not $ollamaCmd -or -not $ollamaCmd.Source) {
+      Write-Log ("Ollama unavailable: command not found. Vision host: {0}" -f $ollamaHost)
+    }
+    else {
+      Write-Log ("Starting Ollama service for vision/model host at {0}..." -f $ollamaHost)
+      try {
+        $script:managedOllamaProcess = Start-Process -FilePath $ollamaCmd.Source -ArgumentList @("serve") -PassThru
+        $script:managedOllamaStartedByUi = $true
+      }
+      catch {
+        Write-Log ("Failed to start Ollama service: {0}" -f $_.Exception.Message)
+      }
+    }
+  }
+  if (Wait-Until -TimeoutSec 30 -IntervalMs 400 -Condition { Test-OllamaEndpoint }) {
+    Write-Log "Ollama endpoint ready."
+  }
+  else {
+    Write-Log ("Ollama endpoint still unavailable at {0}. Vision/OCR will be blocked." -f $ollamaHost)
+  }
+
+  if (-not (Test-BridgeEndpoint)) {
+    $bridgeScript = Join-Path $PSScriptRoot "4_LLM_Bridge\bridge_server.py"
+    if (-not (Test-Path $bridgeScript)) {
+      Write-Log ("Bridge server script not found: {0}" -f $bridgeScript)
+    }
+    else {
+      $pyCmd = Resolve-BridgePythonCommand
+      if ($null -eq $pyCmd) {
+        Write-Log "Bridge auto-start unavailable: no Python runtime found."
+      }
+      else {
+        Write-Log ("Starting bridge server at {0} using {1}..." -f $bridgeHealthEndpoint, $pyCmd.label)
+        try {
+          $args = @()
+          $args += $pyCmd.prefix
+          $args += @($bridgeScript)
+          $script:managedBridgeProcess = Start-Process -FilePath $pyCmd.file -ArgumentList $args -WorkingDirectory $PSScriptRoot -PassThru
+          $script:managedBridgeStartedByUi = $true
+        }
+        catch {
+          Write-Log ("Failed to start bridge server: {0}" -f $_.Exception.Message)
+        }
+      }
+    }
+  }
+  if (Wait-Until -TimeoutSec 30 -IntervalMs 400 -Condition { Test-BridgeEndpoint }) {
+    Write-Log ("Bridge endpoint ready: {0}" -f $bridgeHealthEndpoint)
+  }
+  else {
+    Write-Log ("Bridge endpoint still unavailable: {0}" -f $bridgeHealthEndpoint)
+  }
+}
+
 function Update-FlopButtonState {
   if ($engineHandoffBusy) {
     $btnRunFlopSet.Text = "Run Flop (1-3) [Engine Busy]"
@@ -3093,6 +3283,7 @@ $btnRestart.Add_Click({
     }
   }
   catch {}
+  Stop-ManagedBackends
   $form.Close()
 })
 
@@ -3125,6 +3316,7 @@ $form.Add_Shown({
   $cardStatusLabel.Text = Format-CardSlotStatus
   Update-TargetsButtonText
   Refresh-RoiOverlays
+  Ensure-BackendsRunning
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
   $engineJobTimer.Start()
@@ -3152,6 +3344,7 @@ $form.Add_FormClosing({
   $enginePendingJobs.Clear()
   $script:engineHandoffBusy = $false
   Update-FlopButtonState
+  Stop-ManagedBackends
   Save-RoiState
   Close-RoiOverlays
 })

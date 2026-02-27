@@ -237,6 +237,11 @@ Clickable OCR watcher test utility:
   - `ENGINE_LLM_PRESET` (default `local_qwen3_coder_30b`)
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
+  - `BACKEND_AUTOSTART` (`1`/`0`, default `1`)
+
+Backend lifecycle in tester:
+- On launch, tester checks Ollama + bridge endpoints and auto-starts missing services.
+- On close/restart, tester stops only the backend processes it started in that session.
 
 ## Quick Start (WSL / Linux)
 
