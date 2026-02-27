@@ -102,6 +102,15 @@ $engineSolverTimeoutSec = 180
 if ($env:ENGINE_SOLVER_TIMEOUT_SEC -and [int]::TryParse([string]$env:ENGINE_SOLVER_TIMEOUT_SEC, [ref]$engineSolverTimeoutSec)) {
   if ($engineSolverTimeoutSec -lt 30) { $engineSolverTimeoutSec = 30 }
 }
+$engineJobMaxAgeSec = [int]([Math]::Max(120, $engineSolverTimeoutSec + 45))
+if ($env:ENGINE_JOB_MAX_AGE_SEC) {
+  $parsedMaxAge = 0
+  if ([int]::TryParse([string]$env:ENGINE_JOB_MAX_AGE_SEC, [ref]$parsedMaxAge)) {
+    if ($parsedMaxAge -ge 60) {
+      $engineJobMaxAgeSec = [int]$parsedMaxAge
+    }
+  }
+}
 $backendAutoStart = $true
 if ($env:BACKEND_AUTOSTART -and ([string]$env:BACKEND_AUTOSTART).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
   $backendAutoStart = $false
@@ -2011,6 +2020,14 @@ $status.Text = ("{0} | Engine: idle" -f $statusBaseText)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
+$engineStatusLine = New-Object System.Windows.Forms.Label
+$engineStatusLine.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$engineStatusLine.Location = New-Object System.Drawing.Point(20, 58)
+$engineStatusLine.AutoSize = $true
+$engineStatusLine.Text = "Engine queue: idle"
+$engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(165, 190, 210)
+$form.Controls.Add($engineStatusLine)
+
 $regionLabel = New-Object System.Windows.Forms.Label
 $regionLabel.Text = "Selected: none"
 $regionLabel.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
@@ -2593,13 +2610,56 @@ function Ensure-BackendsRunning {
 }
 
 function Update-EngineButtonState {
+  $hasJobs = ($enginePendingJobs.Count -gt 0)
+  if ($hasJobs -and (-not $engineHandoffBusy)) {
+    $script:engineHandoffBusy = $true
+  }
+  elseif ((-not $hasJobs) -and $engineHandoffBusy) {
+    $script:engineHandoffBusy = $false
+  }
+
+  $oldestJobId = $null
+  $oldestStage = ""
+  $oldestElapsedSec = 0.0
+  if ($hasJobs) {
+    $oldestTime = $null
+    foreach ($jid in @($enginePendingJobs.Keys)) {
+      $meta = $enginePendingJobs[$jid]
+      if ($null -eq $meta) { continue }
+      $queuedUtc = $null
+      if ($meta.ContainsKey("queued_utc") -and $meta.queued_utc) {
+        try { $queuedUtc = [datetime]$meta.queued_utc } catch { $queuedUtc = $null }
+      }
+      if ($null -eq $queuedUtc) {
+        $queuedUtc = (Get-Date).ToUniversalTime()
+      }
+      if ($null -eq $oldestTime -or $queuedUtc -lt $oldestTime) {
+        $oldestTime = $queuedUtc
+        $oldestJobId = [int]$jid
+        $oldestStage = [string]$meta.stage
+      }
+    }
+    if ($null -ne $oldestTime) {
+      $oldestElapsedSec = ((Get-Date).ToUniversalTime() - $oldestTime).TotalSeconds
+    }
+  }
+
   $engineText = ""
-  if ($engineHandoffBusy) {
+  if ($engineHandoffBusy -or $hasJobs) {
     $engineText = ("Engine: BUSY ({0} job{1})" -f [int]$enginePendingJobs.Count, $(if ([int]$enginePendingJobs.Count -eq 1) { "" } else { "s" }))
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
     $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
     $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 220, 120)
+    if ($null -ne $engineStatusLine) {
+      if ($null -ne $oldestJobId) {
+        $engineStatusLine.Text = ("Engine queue: job={0} stage={1} elapsed={2:N1}s (max={3}s)" -f $oldestJobId, $oldestStage, [double]$oldestElapsedSec, [int]$engineJobMaxAgeSec)
+      }
+      else {
+        $engineStatusLine.Text = ("Engine queue: busy ({0} pending)." -f [int]$enginePendingJobs.Count)
+      }
+      $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(255, 208, 135)
+    }
   }
   else {
     $engineText = "Engine: idle"
@@ -2607,6 +2667,10 @@ function Update-EngineButtonState {
     $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
     $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
+    if ($null -ne $engineStatusLine) {
+      $engineStatusLine.Text = "Engine queue: idle"
+      $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(165, 190, 210)
+    }
   }
   $status.Text = ("{0} | {1}" -f $statusBaseText, $engineText)
 }
@@ -3187,6 +3251,8 @@ function Queue-EngineSolveForBoard {
       response_path = $responsePath
       stage = $StageLabel
       board = $BoardTokens
+      queued_utc = (Get-Date).ToUniversalTime()
+      max_age_sec = [int]$engineJobMaxAgeSec
     }
     $script:engineHandoffBusy = $true
     Update-EngineButtonState
@@ -3194,6 +3260,7 @@ function Queue-EngineSolveForBoard {
       job_id = [int]$job.Id
       stage = $StageLabel
       board = $BoardTokens
+      max_age_sec = [int]$engineJobMaxAgeSec
       payload_path = $payloadPath
       response_path = $responsePath
     }
@@ -3545,16 +3612,44 @@ function Poll-EngineJobs {
 
   $completedIds = New-Object System.Collections.Generic.List[int]
   foreach ($jobId in @($enginePendingJobs.Keys)) {
+    $meta = $enginePendingJobs[$jobId]
+    if ($null -eq $meta) {
+      [void]$completedIds.Add([int]$jobId)
+      continue
+    }
     $job = Get-Job -Id ([int]$jobId) -ErrorAction SilentlyContinue
     if ($null -eq $job) {
       [void]$completedIds.Add([int]$jobId)
       continue
     }
+    $jobElapsedSec = 0.0
+    $maxAgeSec = [int]$engineJobMaxAgeSec
+    if ($meta.ContainsKey("max_age_sec") -and $meta.max_age_sec) {
+      try { $maxAgeSec = [int]$meta.max_age_sec } catch { $maxAgeSec = [int]$engineJobMaxAgeSec }
+    }
+    if ($meta.ContainsKey("queued_utc") -and $meta.queued_utc) {
+      try {
+        $queuedUtc = [datetime]$meta.queued_utc
+        $jobElapsedSec = ((Get-Date).ToUniversalTime() - $queuedUtc).TotalSeconds
+      }
+      catch {
+        $jobElapsedSec = 0.0
+      }
+    }
     if ($job.State -notin @("Completed", "Failed", "Stopped")) {
+      if ($jobElapsedSec -ge [double]$maxAgeSec) {
+        Write-Log ("Engine job {0} timed out after {1:N1}s (stage={2}, max={3}s). Cleaning up stale job." -f $jobId, [double]$jobElapsedSec, [string]$meta.stage, [int]$maxAgeSec) -Type "engine_job_timeout" -Data @{
+          job_id = [int]$jobId
+          stage = [string]$meta.stage
+          elapsed_sec = [double]$jobElapsedSec
+          max_age_sec = [int]$maxAgeSec
+        }
+        try { Stop-Job -Id ([int]$jobId) -ErrorAction SilentlyContinue } catch {}
+        try { Remove-Job -Id ([int]$jobId) -Force -ErrorAction SilentlyContinue } catch {}
+        [void]$completedIds.Add([int]$jobId)
+      }
       continue
     }
-
-    $meta = $enginePendingJobs[$jobId]
     try {
       $resultRows = Receive-Job -Id ([int]$jobId) -ErrorAction Stop
     }

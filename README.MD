@@ -246,6 +246,7 @@ Clickable OCR watcher test utility:
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
 - Engine status is shown in the top header text (`Engine: idle|busy`) instead of changing button labels.
+- Engine queue line now shows active job metadata in real time (`job id`, `stage`, `elapsed`, `max age`), and stale jobs are auto-cleaned on timeout.
 - Hero auto-send:
   - define `hero` ROI once (tester auto-clones to `hero2`),
   - once both hero cards are identified and board cards are valid, tester auto-queues engine solve.
@@ -264,6 +265,7 @@ Clickable OCR watcher test utility:
   - `ENGINE_LLM_PRESET` (default `local_qwen3_coder_30b`)
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
+  - `ENGINE_JOB_MAX_AGE_SEC` (default `max(120, ENGINE_SOLVER_TIMEOUT_SEC+45)`) for stale background-job cleanup
   - `BACKEND_AUTOSTART` (`1`/`0`, default `1`)
   - `OLLAMA_VISION_KEEP_ALIVE` (default `0s`; unloads vision model after each OCR call to free VRAM for solver/LLM work)
 
