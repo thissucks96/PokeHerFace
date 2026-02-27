@@ -2898,6 +2898,112 @@ function Sync-OverlayToRoi {
   Save-RoiState
 }
 
+function Clear-RoiForSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+  if (-not ($allSlotOrder -contains $Key)) {
+    return
+  }
+  Set-RoiRectByKey -Key $Key -Rect ([System.Drawing.Rectangle]::Empty)
+  if ($Key -in $playerSlotOrder) {
+    $heroCards[$Key] = "??"
+    $script:lastHeroAutoSendKey = ""
+  }
+  elseif ($Key -in $cardSlotOrder) {
+    Update-LastBoardTokenFromSlot -Slot $Key -Token "??"
+  }
+  $regionLabel.Text = ("Selected: cleared {0}" -f $Key)
+  $cardStatusLabel.Text = Format-CardSlotStatus
+  Save-RoiState -ForceWriteEmpty
+  Refresh-RoiOverlays
+  Write-Log ("Cleared ROI for {0}." -f $Key) -Type "roi_clear" -Data @{ slot = $Key }
+}
+
+function Repick-RoiForSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+  if (-not ($allSlotOrder -contains $Key)) {
+    return
+  }
+  if ($isBusy) {
+    Write-Log ("Repick skipped for {0}: OCR is currently busy." -f $Key)
+    return
+  }
+
+  $restoreOverlaysAfter = $false
+  try {
+    if ($overlayVisible) {
+      $restoreOverlaysAfter = $true
+      Set-OverlayVisibilityForCapture -Enable $false
+      Start-Sleep -Milliseconds 40
+    }
+    Write-Log ("Selecting ROI for {0}..." -f $Key)
+    $region = Select-ScreenRegion
+    if (Test-RegionSelected -Rect $region) {
+      Set-RoiRectByKey -Key $Key -Rect $region
+      $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $Key, $region.X, $region.Y, $region.Width, $region.Height)
+      $cardStatusLabel.Text = Format-CardSlotStatus
+      Save-RoiState
+      Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $Key, $region.X, $region.Y, $region.Width, $region.Height) -Type "roi_set" -Data @{
+        slot = $Key
+        x = [int]$region.X
+        y = [int]$region.Y
+        w = [int]$region.Width
+        h = [int]$region.Height
+      }
+    }
+    else {
+      Write-Log ("Repick canceled for {0}." -f $Key)
+    }
+  }
+  finally {
+    if ($restoreOverlaysAfter) {
+      Set-OverlayVisibilityForCapture -Enable $true
+    }
+    Refresh-RoiOverlays
+  }
+}
+
+function New-RoiSlotContextMenu {
+  param(
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+  $slotKey = [string]$Key
+  $menu = New-Object System.Windows.Forms.ContextMenuStrip
+
+  $title = New-Object System.Windows.Forms.ToolStripMenuItem
+  $title.Text = ("Slot: {0}" -f $slotKey)
+  $title.Enabled = $false
+  [void]$menu.Items.Add($title)
+
+  [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+  $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $runItem.Text = "Run OCR"
+  $runItem.Add_Click({
+    Run-OcrSingleSlot -Slot $slotKey
+  })
+  [void]$menu.Items.Add($runItem)
+
+  $repickItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $repickItem.Text = "Repick ROI"
+  $repickItem.Add_Click({
+    Repick-RoiForSlot -Key $slotKey
+  })
+  [void]$menu.Items.Add($repickItem)
+
+  $clearItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $clearItem.Text = "Clear ROI"
+  $clearItem.Add_Click({
+    Clear-RoiForSlot -Key $slotKey
+  })
+  [void]$menu.Items.Add($clearItem)
+
+  return $menu
+}
+
 function New-RoiOverlayForm {
   param(
     [string]$Key,
@@ -2921,6 +3027,9 @@ function New-RoiOverlayForm {
     down = $false
     offsetX = 0
     offsetY = 0
+  }
+  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder)) {
+    $overlay.ContextMenuStrip = New-RoiSlotContextMenu -Key $Key
   }
   $overlay.Add_Paint({
     param($sender, $e)
