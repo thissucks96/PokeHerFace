@@ -1452,9 +1452,7 @@ function Refresh-RoiOverlays {
       $overlayForms[$key] = New-RoiOverlayForm -Key $key -Rect $rect -Color $color
     }
     $overlay = $overlayForms[$key]
-    if ($overlay.Bounds -ne $rect) {
-      $overlay.Bounds = $rect
-    }
+    $overlay.Bounds = $rect
     if (-not $overlay.Visible) {
       $overlay.Show()
     }
@@ -1558,6 +1556,7 @@ $timer.Add_Tick({
 
 $btnPick.Add_Click({
   Write-Log "Selecting OCR rectangle..."
+  $didClone = $false
   foreach ($key in @($overlayForms.Keys)) {
     try {
       if ($overlayForms[$key] -and -not $overlayForms[$key].IsDisposed) {
@@ -1591,6 +1590,7 @@ $btnPick.Add_Click({
           foreach ($cloneSlot in @("flop2", "flop3", "turn", "river")) {
             $cardRegions[$cloneSlot] = New-Object System.Drawing.Rectangle($rect.X, $rect.Y, $rect.Width, $rect.Height)
           }
+          $didClone = $true
           Write-Log "Cloned flop1 ROI to flop2/flop3/turn/river. Drag each overlay into final position."
         }
       }
@@ -1600,6 +1600,9 @@ $btnPick.Add_Click({
       Write-Log ("Unknown ROI target: {0}" -f $target)
     }
     Save-RoiState
+    if ($didClone) {
+      Close-RoiOverlays
+    }
     Refresh-RoiOverlays
   }
   else {
