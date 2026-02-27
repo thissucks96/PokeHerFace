@@ -2149,10 +2149,15 @@ function Run-OcrSingleSlot {
     if ($preview.Length -gt 96) {
       $preview = $preview.Substring(0, 96) + "..."
     }
-    Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $Slot, $bestCard.variant, $bestCard.source, $preview)
     $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
     if ($rankOnlyMode) {
       $token = Convert-ToRankOnlyToken -Token $token
+    }
+    if ($rankOnlyMode) {
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $bestCard.variant, $bestCard.source, $token, $preview)
+    }
+    else {
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $Slot, $bestCard.variant, $bestCard.source, $preview)
     }
     $txtLatest.Text = @(
       "run:   single_slot"
@@ -2237,7 +2242,12 @@ function Run-Ocr {
       if ($preview.Length -gt 96) {
         $preview = $preview.Substring(0, 96) + "..."
       }
-      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
+      if ($rankOnlyMode) {
+        Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $bestCard.variant, $bestCard.source, $cards[$slot], $preview)
+      }
+      else {
+        Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
+      }
     }
 
     # Sanity pass: if vision returned the exact same card for most/all slots, try tesseract rescue.
