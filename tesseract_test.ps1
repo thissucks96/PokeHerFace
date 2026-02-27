@@ -381,6 +381,49 @@ function Get-BoardReadyFromTokens {
   return $true
 }
 
+function Update-LastBoardTokenFromSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$Token
+  )
+  $idx = -1
+  $targetCount = 0
+  if ($Slot -eq "flop1") { $idx = 0; $targetCount = 3 }
+  elseif ($Slot -eq "flop2") { $idx = 1; $targetCount = 3 }
+  elseif ($Slot -eq "flop3") { $idx = 2; $targetCount = 3 }
+  elseif ($Slot -eq "turn") { $idx = 3; $targetCount = 4 }
+  elseif ($Slot -eq "river") { $idx = 4; $targetCount = 5 }
+  else { return }
+
+  $existing = @()
+  if ($lastBoardTokens -is [System.Array] -and $lastBoardTokens.Count -gt 0) {
+    $existing = @($lastBoardTokens)
+  }
+  $arr = New-Object System.Collections.Generic.List[string]
+  for ($i = 0; $i -lt $targetCount; $i++) {
+    if ($i -lt $existing.Count) {
+      $arr.Add([string]$existing[$i])
+    }
+    else {
+      $arr.Add("??")
+    }
+  }
+  if (Test-CardTokenStrict -Token $Token) {
+    $arr[$idx] = ([string]$Token).Trim().ToUpperInvariant()
+  }
+  else {
+    $arr[$idx] = "??"
+  }
+  $script:lastBoardTokens = @($arr)
+}
+
+function Get-BoardTokensText {
+  if (-not ($lastBoardTokens -is [System.Array]) -or $lastBoardTokens.Count -eq 0) {
+    return "(none)"
+  }
+  return (@($lastBoardTokens) -join " ")
+}
+
 function Normalize-CardToken {
   param([string]$Text)
   $v = ([string]$Text).ToUpperInvariant()
@@ -1963,7 +2006,8 @@ $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
-$status.Text = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | bridge: {4}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $bridgeSolveEndpoint)
+$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | bridge: {4}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $bridgeSolveEndpoint)
+$status.Text = ("{0} | Engine: idle" -f $statusBaseText)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
@@ -2415,15 +2459,15 @@ function Test-BridgeEndpoint {
 
 function Stop-ProcessTreeByPid {
   param(
-    [int]$Pid
+    [int]$ProcessId
   )
-  if ($Pid -le 0) {
+  if ($ProcessId -le 0) {
     return $false
   }
 
   $stopped = $false
   try {
-    & taskkill.exe /PID $Pid /T /F 1>$null 2>$null
+    & taskkill.exe /PID $ProcessId /T /F 1>$null 2>$null
     if ($LASTEXITCODE -eq 0) {
       $stopped = $true
     }
@@ -2432,7 +2476,7 @@ function Stop-ProcessTreeByPid {
 
   if (-not $stopped) {
     try {
-      Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue
+      Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
       $stopped = $true
     }
     catch {}
@@ -2447,7 +2491,7 @@ function Stop-ManagedBackends {
       try { $bridgePid = [int]$managedBridgeProcess.Id } catch { $bridgePid = 0 }
     }
     if ($bridgePid -gt 0) {
-      if (Stop-ProcessTreeByPid -Pid $bridgePid) {
+      if (Stop-ProcessTreeByPid -ProcessId $bridgePid) {
         Write-Log ("Stopped managed bridge process tree (pid={0})." -f $bridgePid)
       }
     }
@@ -2458,7 +2502,7 @@ function Stop-ManagedBackends {
       try { $ollamaPid = [int]$managedOllamaProcess.Id } catch { $ollamaPid = 0 }
     }
     if ($ollamaPid -gt 0) {
-      if (Stop-ProcessTreeByPid -Pid $ollamaPid) {
+      if (Stop-ProcessTreeByPid -ProcessId $ollamaPid) {
         Write-Log ("Stopped managed Ollama process tree (pid={0})." -f $ollamaPid)
       }
     }
@@ -2467,7 +2511,7 @@ function Stop-ManagedBackends {
     if ($leftover.Count -gt 0) {
       foreach ($proc in $leftover) {
         try {
-          Stop-ProcessTreeByPid -Pid ([int]$proc.Id) | Out-Null
+          Stop-ProcessTreeByPid -ProcessId ([int]$proc.Id) | Out-Null
         }
         catch {}
       }
@@ -2500,7 +2544,7 @@ function Ensure-BackendsRunning {
     else {
       Write-Log ("Starting Ollama service for vision/model host at {0}..." -f $ollamaHost)
       try {
-        $script:managedOllamaProcess = Start-Process -FilePath $ollamaCmd.Source -ArgumentList @("serve") -PassThru
+        $script:managedOllamaProcess = Start-Process -FilePath $ollamaCmd.Source -ArgumentList @("serve") -WindowStyle Minimized -PassThru
         $script:managedOllamaStartedByUi = $true
       }
       catch {
@@ -2531,7 +2575,7 @@ function Ensure-BackendsRunning {
           $args = @()
           $args += $pyCmd.prefix
           $args += @($bridgeScript)
-          $script:managedBridgeProcess = Start-Process -FilePath $pyCmd.file -ArgumentList $args -WorkingDirectory $PSScriptRoot -PassThru
+          $script:managedBridgeProcess = Start-Process -FilePath $pyCmd.file -ArgumentList $args -WorkingDirectory $PSScriptRoot -WindowStyle Minimized -PassThru
           $script:managedBridgeStartedByUi = $true
         }
         catch {
@@ -2549,18 +2593,22 @@ function Ensure-BackendsRunning {
 }
 
 function Update-EngineButtonState {
+  $engineText = ""
   if ($engineHandoffBusy) {
-    $btnRunFlopSet.Text = "Run Flop (1-3) [Engine Busy]"
-    $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(90, 80, 32)
-    $btnRunTurn.Text = "Run Turn+E [Busy]"
-    $btnRunRiver.Text = "Run River+E [Busy]"
+    $engineText = ("Engine: BUSY ({0} job{1})" -f [int]$enginePendingJobs.Count, $(if ([int]$enginePendingJobs.Count -eq 1) { "" } else { "s" }))
+    $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
+    $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
+    $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
+    $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 220, 120)
   }
   else {
-    $btnRunFlopSet.Text = "Run Flop (1-3)"
+    $engineText = "Engine: idle"
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
-    $btnRunTurn.Text = "Run Turn+E"
-    $btnRunRiver.Text = "Run River+E"
+    $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
+    $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
+    $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
   }
+  $status.Text = ("{0} | {1}" -f $statusBaseText, $engineText)
 }
 
 function Format-RegionText {
@@ -2954,11 +3002,16 @@ function Run-OcrSingleSlot {
       if ($Slot -in $playerSlotOrder) {
         $heroCards[$Slot] = "NO_CARD"
       }
+      elseif ($Slot -in $cardSlotOrder) {
+        Update-LastBoardTokenFromSlot -Slot $Slot -Token "??"
+      }
       Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $Slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
       $txtLatest.Text = @(
         "run:   single_slot"
         ("slot:  {0}" -f $Slot)
         "card:  NO_CARD"
+        ("hero_cards: {0}" -f (Get-HeroCardsText))
+        ("board: {0}" -f (Get-BoardTokensText))
       ) -join "`r`n"
       if (($Slot -in $playerSlotOrder) -and (-not $suppressHeroAutoSend)) {
         Try-AutoSendHeroCardsToEngine
@@ -2969,11 +3022,16 @@ function Run-OcrSingleSlot {
       if ($Slot -in $playerSlotOrder) {
         $heroCards[$Slot] = "??"
       }
+      elseif ($Slot -in $cardSlotOrder) {
+        Update-LastBoardTokenFromSlot -Slot $Slot -Token "??"
+      }
       Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $Slot)
       $txtLatest.Text = @(
         "run:   single_slot"
         ("slot:  {0}" -f $Slot)
         "card:  ??"
+        ("hero_cards: {0}" -f (Get-HeroCardsText))
+        ("board: {0}" -f (Get-BoardTokensText))
       ) -join "`r`n"
       if (($Slot -in $playerSlotOrder) -and (-not $suppressHeroAutoSend)) {
         Try-AutoSendHeroCardsToEngine
@@ -2995,10 +3053,20 @@ function Run-OcrSingleSlot {
         Try-AutoSendHeroCardsToEngine
       }
     }
+    elseif ($Slot -in $cardSlotOrder) {
+      Update-LastBoardTokenFromSlot -Slot $Slot -Token $token
+      $manualBoardReady = Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)
+      if ($manualBoardReady) {
+        [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel "manual_single")
+      }
+    }
     $txtLatest.Text = @(
       "run:   single_slot"
       ("slot:  {0}" -f $Slot)
       ("card:  {0}" -f $token)
+      ("hero_cards: {0}" -f (Get-HeroCardsText))
+      ("board: {0}" -f (Get-BoardTokensText))
+      ("board_ready: {0}" -f (Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)))
       ("source:{0}/{1}" -f [string]$resolved.variant, [string]$resolved.source)
     ) -join "`r`n"
   }
@@ -3187,9 +3255,6 @@ function Run-OcrBoardSetAndQueueEngine {
   $restoreOverlaysAfter = $false
   $previousKeepAlive = [string]$ollamaVisionKeepAlive
   $useFastPrimary = $false
-  if (([string]$StageLabel).Trim().ToLowerInvariant() -eq "flop") {
-    $useFastPrimary = $true
-  }
   try {
     if ($overlayVisible) {
       $restoreOverlaysAfter = $true
@@ -3219,7 +3284,6 @@ function Run-OcrBoardSetAndQueueEngine {
       $cards[$slot] = [string]$resolved.token
       $previewBySlot[$slot] = [string]$resolved.preview
       if ($cards[$slot] -eq "??") {
-        Write-Log ("OCR info [Cards (local vision llava)] {0}: primary pass unresolved; retry will run." -f $slot)
         continue
       }
       Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $cards[$slot], $resolved.preview) -Type "ocr_slot" -Data @{
@@ -3738,7 +3802,18 @@ $timer.Add_Tick({
 $engineJobTimer = New-Object System.Windows.Forms.Timer
 $engineJobTimer.Interval = 500
 $engineJobTimer.Add_Tick({
-  Poll-EngineJobs
+  try {
+    Poll-EngineJobs
+  }
+  catch {
+    Write-Log ("Engine poll error: {0}" -f $_.Exception.Message)
+    if ($enginePendingJobs.Count -eq 0) {
+      $script:engineHandoffBusy = $false
+    }
+  }
+  finally {
+    Update-EngineButtonState
+  }
 })
 
 $btnPick.Add_Click({
@@ -3903,7 +3978,12 @@ $btnRestart.Add_Click({
   }
   catch {}
   Release-OllamaVisionModel
-  Stop-ManagedBackends
+  try {
+    Stop-ManagedBackends
+  }
+  catch {
+    Write-Log ("Shutdown warning during restart: {0}" -f $_.Exception.Message)
+  }
   $form.Close()
 })
 
@@ -3984,7 +4064,12 @@ $form.Add_FormClosing({
   $script:engineHandoffBusy = $false
   Update-EngineButtonState
   Release-OllamaVisionModel
-  Stop-ManagedBackends
+  try {
+    Stop-ManagedBackends
+  }
+  catch {
+    Write-Log ("Shutdown warning during close: {0}" -f $_.Exception.Message)
+  }
   Save-RoiState
   Close-RoiOverlays
 })

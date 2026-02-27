@@ -224,11 +224,12 @@ Clickable OCR watcher test utility:
 - Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
 - `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
 - Fast testing controls:
-  - `Run flop1` ... `Run river` for single-slot OCR checks.
+  - `Run flop1` ... `Run river` for single-slot OCR checks (now also updates live hero/board profile state in the UI summary).
   - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved.
   - `Run Flop (1-3)` for atomic flop capture.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
+- Engine status is shown in the top header text (`Engine: idle|busy`) instead of changing button labels.
 - Hero auto-send:
   - define `hero` ROI once (tester auto-clones to `hero2`),
   - once both hero cards are identified and board cards are valid, tester auto-queues engine solve.
@@ -251,7 +252,7 @@ Clickable OCR watcher test utility:
   - `OLLAMA_VISION_KEEP_ALIVE` (default `0s`; unloads vision model after each OCR call to free VRAM for solver/LLM work)
 
 Backend lifecycle in tester:
-- On launch, tester checks Ollama + bridge endpoints and auto-starts missing services.
+- On launch, tester checks Ollama + bridge endpoints and auto-starts missing services (backend windows start minimized).
 - On close/restart, tester stops only the backend processes it started in that session.
 - Vision model lifecycle:
   - tester sends vision calls with configurable Ollama `keep_alive` (default `0s`),
