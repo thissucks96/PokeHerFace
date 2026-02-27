@@ -958,6 +958,60 @@ function Get-CardSuitHintFromRegionColor {
   }
 }
 
+function Apply-SuitHintOverride {
+  param(
+    [Parameter(Mandatory = $true)][string]$Token,
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region
+  )
+
+  $t = ([string]$Token).Trim().ToUpperInvariant()
+  if ($t -notmatch "^[AKQJT98765432][SHDC]$") {
+    return [pscustomobject]@{
+      token = $t
+      changed = $false
+      reason = ""
+    }
+  }
+
+  $hint = Get-CardSuitHintFromRegionColor -Region $Region
+  if ($null -eq $hint -or -not $hint.suit) {
+    return [pscustomobject]@{
+      token = $t
+      changed = $false
+      reason = ""
+    }
+  }
+
+  $hintSuit = ([string]$hint.suit).ToUpperInvariant()
+  $tokenSuit = $t.Substring(1, 1).ToUpperInvariant()
+  $rank = $t.Substring(0, 1)
+  if ($hintSuit -eq $tokenSuit) {
+    return [pscustomobject]@{
+      token = $t
+      changed = $false
+      reason = ""
+    }
+  }
+
+  # Bias fix: model frequently defaults to clubs when uncertain.
+  $clubBiasOverride = ($tokenSuit -eq "C" -and $hintSuit -ne "C" -and [double]$hint.score -ge 9.0 -and [double]$hint.confidence -ge 1.10)
+  $strongOverride = ([double]$hint.score -ge 10.0 -and [double]$hint.confidence -ge 1.12)
+  if (-not ($clubBiasOverride -or $strongOverride)) {
+    return [pscustomobject]@{
+      token = $t
+      changed = $false
+      reason = ""
+    }
+  }
+
+  $newToken = ("{0}{1}" -f $rank, $hintSuit)
+  return [pscustomobject]@{
+    token = $newToken
+    changed = $true
+    reason = ("color hint {0} (score={1:N2}, conf={2:N2})" -f $hintSuit, [double]$hint.score, [double]$hint.confidence)
+  }
+}
+
 function Resolve-BoardCardCollisions {
   param(
     [hashtable]$Cards,
@@ -2154,10 +2208,15 @@ function Run-OcrSingleSlot {
       $token = Convert-ToRankOnlyToken -Token $token
     }
     if ($rankOnlyMode) {
-      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $bestCard.variant, $bestCard.source, $token, $preview)
+    Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $bestCard.variant, $bestCard.source, $token, $preview)
     }
     else {
-      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $Slot, $bestCard.variant, $bestCard.source, $preview)
+      $ovr = Apply-SuitHintOverride -Token $token -Region $slotRect
+      if ($ovr.changed) {
+        $token = [string]$ovr.token
+        Write-Log ("OCR info [{0}] suit override applied: {1}" -f $Slot, [string]$ovr.reason)
+      }
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $bestCard.variant, $bestCard.source, $token, $preview)
     }
     $txtLatest.Text = @(
       "run:   single_slot"
@@ -2242,12 +2301,14 @@ function Run-Ocr {
       if ($preview.Length -gt 96) {
         $preview = $preview.Substring(0, 96) + "..."
       }
-      if ($rankOnlyMode) {
-        Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $bestCard.variant, $bestCard.source, $cards[$slot], $preview)
+      if (-not $rankOnlyMode) {
+        $ovr = Apply-SuitHintOverride -Token ([string]$cards[$slot]) -Region $slotRect
+        if ($ovr.changed) {
+          $cards[$slot] = [string]$ovr.token
+          Write-Log ("OCR info [{0}] suit override applied: {1}" -f $slot, [string]$ovr.reason)
+        }
       }
-      else {
-        Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
-      }
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $bestCard.variant, $bestCard.source, $cards[$slot], $preview)
     }
 
     # Sanity pass: if vision returned the exact same card for most/all slots, try tesseract rescue.
