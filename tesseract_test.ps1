@@ -3318,36 +3318,106 @@ function Run-OcrHeroSet {
   if ($isBusy) {
     return
   }
-  $started = Get-Date
-  Write-Log "Run Hero: scanning hero1 and hero2 only."
-  $script:suppressHeroAutoSend = $true
-  try {
-    Run-OcrSingleSlot -Slot "hero1"
-    Run-OcrSingleSlot -Slot "hero2"
-  }
-  finally {
-    $script:suppressHeroAutoSend = $false
+  if (-not (Test-OllamaEndpoint)) {
+    Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
+    return
   }
 
-  $heroReady = Get-HeroCardsReady
-  $elapsed = ((Get-Date) - $started).TotalSeconds
-  $txtLatest.Text = @(
-    "run:   hero_only"
-    ("hero1: {0}" -f [string]$heroCards["hero1"])
-    ("hero2: {0}" -f [string]$heroCards["hero2"])
-    ("hero_ready: {0}" -f $heroReady)
-    ("elapsed_sec: {0:N2}" -f [double]$elapsed)
-  ) -join "`r`n"
-  Write-Log ("Hero OCR summary: hero1={0}, hero2={1}, hero_ready={2}, elapsed={3:N2}s" -f
-    [string]$heroCards["hero1"],
-    [string]$heroCards["hero2"],
-    [bool]$heroReady,
-    [double]$elapsed) -Type "hero_summary" -Data @{
-      hero1 = [string]$heroCards["hero1"]
-      hero2 = [string]$heroCards["hero2"]
-      hero_ready = [bool]$heroReady
-      elapsed_sec = [double]$elapsed
+  $missing = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $playerSlotOrder) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missing.Add([string]$slot)
     }
+  }
+  if ($missing.Count -gt 0) {
+    Write-Log ("Run Hero skipped: set hero ROIs first ({0})." -f ($missing -join ", "))
+    return
+  }
+
+  $started = Get-Date
+  $restoreOverlaysAfter = $false
+  $previousKeepAlive = [string]$ollamaVisionKeepAlive
+  $script:isBusy = $true
+  $script:suppressHeroAutoSend = $true
+  try {
+    if ($overlayVisible) {
+      $restoreOverlaysAfter = $true
+      Set-OverlayVisibilityForCapture -Enable $false
+      Start-Sleep -Milliseconds 40
+    }
+
+    # Keep model warm only for hero1->hero2 sequence, then unload.
+    $script:ollamaVisionKeepAlive = "20s"
+    $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    foreach ($slot in $playerSlotOrder) {
+      $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
+      if ($resolved.status -ne "ok") {
+        $heroCards[$slot] = "??"
+        Write-Log ("Hero OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
+        continue
+      }
+      if ($resolved.no_card) {
+        $heroCards[$slot] = "NO_CARD"
+        Write-Log ("Hero OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
+        continue
+      }
+      $token = ([string]$resolved.token).Trim().ToUpperInvariant()
+      if (-not $token) {
+        $token = "??"
+      }
+      $heroCards[$slot] = $token
+      if ($token -eq "??") {
+        Write-Log ("Hero OCR warning [{0}]: no readable output." -f $slot)
+      }
+      else {
+        Write-Log ("Hero OCR OK [{0}] via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $token, $resolved.preview) -Type "ocr_slot" -Data @{
+          slot = $slot
+          parsed = $token
+          raw = [string]$resolved.preview
+          source = [string]$resolved.source
+          variant = [string]$resolved.variant
+        }
+      }
+    }
+
+    $heroReady = Get-HeroCardsReady
+    $elapsed = ((Get-Date) - $started).TotalSeconds
+    $txtLatest.Text = @(
+      "run:   hero_only"
+      ("hero1: {0}" -f [string]$heroCards["hero1"])
+      ("hero2: {0}" -f [string]$heroCards["hero2"])
+      ("hero_ready: {0}" -f $heroReady)
+      ("elapsed_sec: {0:N2}" -f [double]$elapsed)
+    ) -join "`r`n"
+    Write-Log ("Hero OCR summary: hero1={0}, hero2={1}, hero_ready={2}, elapsed={3:N2}s" -f
+      [string]$heroCards["hero1"],
+      [string]$heroCards["hero2"],
+      [bool]$heroReady,
+      [double]$elapsed) -Type "hero_summary" -Data @{
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+        hero_ready = [bool]$heroReady
+        elapsed_sec = [double]$elapsed
+      }
+  }
+  catch {
+    Write-Log ("Hero OCR ERROR: {0}" -f $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("Hero OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
+  }
+  finally {
+    $script:ollamaVisionKeepAlive = $previousKeepAlive
+    Release-OllamaVisionModel
+    if ($restoreOverlaysAfter) {
+      Set-OverlayVisibilityForCapture -Enable $true
+    }
+    $script:suppressHeroAutoSend = $false
+    $script:isBusy = $false
+  }
 }
 
 function Run-OcrTurnSet {
