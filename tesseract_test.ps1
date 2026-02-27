@@ -338,6 +338,7 @@ function Select-ScreenRegion {
   $selector.FormBorderStyle = "None"
   $selector.StartPosition = "Manual"
   $selector.Bounds = $virtualScreen
+  $selector.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $selector.WindowState = "Normal"
   $selector.TopMost = $true
   $selector.ShowInTaskbar = $false
@@ -988,6 +989,7 @@ function Get-BoardTokensFromVisionRegion {
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Poker Board Vision Tester"
 $form.StartPosition = "CenterScreen"
+$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
 $form.Size = New-Object System.Drawing.Size(980, 700)
 $form.MinimumSize = New-Object System.Drawing.Size(980, 700)
 $form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
@@ -1238,6 +1240,7 @@ function New-RoiOverlayForm {
   $overlay = New-Object System.Windows.Forms.Form
   $overlay.FormBorderStyle = "None"
   $overlay.StartPosition = "Manual"
+  $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $overlay.ShowInTaskbar = $false
   $overlay.TopMost = $true
   $overlay.BackColor = $Color
