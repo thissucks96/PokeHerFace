@@ -902,14 +902,14 @@ function Get-BoardTokensFromVisionRegion {
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Tesseract Region Test"
+$form.Text = "Poker Board Vision Tester"
 $form.StartPosition = "CenterScreen"
 $form.Size = New-Object System.Drawing.Size(980, 700)
 $form.MinimumSize = New-Object System.Drawing.Size(980, 700)
 $form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
 
 $title = New-Object System.Windows.Forms.Label
-$title.Text = "Tesseract OCR Region Test"
+$title.Text = "Poker Board Vision Tester"
 $title.ForeColor = [System.Drawing.Color]::White
 $title.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 16, [System.Drawing.FontStyle]::Bold)
 $title.Location = New-Object System.Drawing.Point(18, 12)
@@ -933,7 +933,7 @@ $regionLabel.AutoSize = $true
 $form.Controls.Add($regionLabel)
 
 $cardStatusLabel = New-Object System.Windows.Forms.Label
-$cardStatusLabel.Text = "Mode: local vision (llava) - single community-card rectangle."
+$cardStatusLabel.Text = "Step 1: choose mode. Step 2: pick ROI(s). Step 3: run OCR."
 $cardStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $cardStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $cardStatusLabel.Location = New-Object System.Drawing.Point(20, 94)
@@ -941,7 +941,7 @@ $cardStatusLabel.AutoSize = $true
 $form.Controls.Add($cardStatusLabel)
 
 $btnPick = New-Object System.Windows.Forms.Button
-$btnPick.Text = "Pick OCR Rectangle"
+$btnPick.Text = "Pick ROI"
 $btnPick.Location = New-Object System.Drawing.Point(20, 118)
 $btnPick.Size = New-Object System.Drawing.Size(190, 34)
 $btnPick.FlatStyle = "Flat"
@@ -994,11 +994,20 @@ $btnAutoStop.BackColor = [System.Drawing.Color]::FromArgb(110, 30, 30)
 $btnAutoStop.Enabled = $false
 $form.Controls.Add($btnAutoStop)
 
+$btnRestart = New-Object System.Windows.Forms.Button
+$btnRestart.Text = "Restart App"
+$btnRestart.Location = New-Object System.Drawing.Point(870, 118)
+$btnRestart.Size = New-Object System.Drawing.Size(90, 34)
+$btnRestart.FlatStyle = "Flat"
+$btnRestart.ForeColor = [System.Drawing.Color]::White
+$btnRestart.BackColor = [System.Drawing.Color]::FromArgb(52, 64, 92)
+$form.Controls.Add($btnRestart)
+
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "Pick one ROI covering all community cards. Local vision will return flop1/flop2/flop3/turn/river."
+$hint.Text = "1) Choose mode  2) Pick ROI(s)  3) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$hint.Location = New-Object System.Drawing.Point(20, 162)
+$hint.Location = New-Object System.Drawing.Point(20, 186)
 $hint.AutoSize = $true
 $form.Controls.Add($hint)
 
@@ -1006,14 +1015,14 @@ $lblCaptureMode = New-Object System.Windows.Forms.Label
 $lblCaptureMode.Text = "Capture Mode"
 $lblCaptureMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblCaptureMode.Location = New-Object System.Drawing.Point(780, 92)
+$lblCaptureMode.Location = New-Object System.Drawing.Point(20, 160)
 $lblCaptureMode.AutoSize = $true
 $form.Controls.Add($lblCaptureMode)
 
 $cmbCaptureMode = New-Object System.Windows.Forms.ComboBox
 $cmbCaptureMode.DropDownStyle = "DropDownList"
-$cmbCaptureMode.Location = New-Object System.Drawing.Point(780, 110)
-$cmbCaptureMode.Size = New-Object System.Drawing.Size(180, 24)
+$cmbCaptureMode.Location = New-Object System.Drawing.Point(110, 157)
+$cmbCaptureMode.Size = New-Object System.Drawing.Size(190, 24)
 $cmbCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbCaptureMode.Items.Add("Full Board ROI")
 [void]$cmbCaptureMode.Items.Add("Individual Card ROIs")
@@ -1024,14 +1033,14 @@ $lblTarget = New-Object System.Windows.Forms.Label
 $lblTarget.Text = "ROI Target (Individual)"
 $lblTarget.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblTarget.Location = New-Object System.Drawing.Point(780, 138)
+$lblTarget.Location = New-Object System.Drawing.Point(320, 160)
 $lblTarget.AutoSize = $true
 $form.Controls.Add($lblTarget)
 
 $cmbTarget = New-Object System.Windows.Forms.ComboBox
 $cmbTarget.DropDownStyle = "DropDownList"
-$cmbTarget.Location = New-Object System.Drawing.Point(780, 156)
-$cmbTarget.Size = New-Object System.Drawing.Size(180, 24)
+$cmbTarget.Location = New-Object System.Drawing.Point(455, 157)
+$cmbTarget.Size = New-Object System.Drawing.Size(140, 24)
 $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("flop1")
 [void]$cmbTarget.Items.Add("flop2")
@@ -1047,13 +1056,13 @@ $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
 $latestLabel.ForeColor = [System.Drawing.Color]::White
 $latestLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$latestLabel.Location = New-Object System.Drawing.Point(20, 180)
+$latestLabel.Location = New-Object System.Drawing.Point(20, 210)
 $latestLabel.AutoSize = $true
 $form.Controls.Add($latestLabel)
 
 $txtLatest = New-Object System.Windows.Forms.TextBox
-$txtLatest.Location = New-Object System.Drawing.Point(20, 204)
-$txtLatest.Size = New-Object System.Drawing.Size(936, 190)
+$txtLatest.Location = New-Object System.Drawing.Point(20, 234)
+$txtLatest.Size = New-Object System.Drawing.Size(936, 160)
 $txtLatest.Multiline = $true
 $txtLatest.ScrollBars = "Vertical"
 $txtLatest.ReadOnly = $true
@@ -1066,13 +1075,13 @@ $logLabel = New-Object System.Windows.Forms.Label
 $logLabel.Text = "Log"
 $logLabel.ForeColor = [System.Drawing.Color]::White
 $logLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$logLabel.Location = New-Object System.Drawing.Point(20, 404)
+$logLabel.Location = New-Object System.Drawing.Point(20, 402)
 $logLabel.AutoSize = $true
 $form.Controls.Add($logLabel)
 
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(20, 428)
-$logBox.Size = New-Object System.Drawing.Size(936, 220)
+$logBox.Location = New-Object System.Drawing.Point(20, 426)
+$logBox.Size = New-Object System.Drawing.Size(936, 222)
 $logBox.Multiline = $true
 $logBox.ScrollBars = "Vertical"
 $logBox.ReadOnly = $true
@@ -1324,26 +1333,46 @@ $btnAutoStop.Add_Click({
   Write-Log "Auto OCR stopped."
 })
 
+$btnRestart.Add_Click({
+  if (-not $PSCommandPath) {
+    Write-Log "Restart unavailable: script path not found."
+    return
+  }
+  $script:autoEnabled = $false
+  $timer.Stop()
+  $hostExe = "powershell.exe"
+  if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+    $hostExe = "pwsh"
+  }
+  Start-Process -FilePath $hostExe -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-STA",
+    "-File", "`"$PSCommandPath`""
+  ) | Out-Null
+  $form.Close()
+})
+
 $cmbCaptureMode.Add_SelectedIndexChanged({
   $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
   $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
   $cmbTarget.Enabled = $isIndividualMode
   $lblTarget.Enabled = $isIndividualMode
   if ($isIndividualMode) {
-    $hint.Text = "Mode: Individual Card ROIs. Pick each target (flop1..river) and draw its own box."
+    $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
     $cardStatusLabel.Text = Format-CardSlotStatus
   }
   else {
-    $hint.Text = "Mode: Full Board ROI. Pick one box covering all community cards."
+    $hint.Text = "Full-board mode: pick one rectangle that covers all community cards."
     $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
   }
 })
 
 $form.Add_Shown({
   $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-  $hint.Text = "Mode: Full Board ROI. Pick one box covering all community cards."
+  $hint.Text = "Full-board mode: pick one rectangle that covers all community cards."
   $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
-  Write-Log "Ready. Choose mode, pick ROI(s), then run OCR."
+  Write-Log "Ready. 1) Choose mode 2) Pick ROI(s) 3) Run OCR."
   $timer.Start()
 })
 
