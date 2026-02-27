@@ -3023,14 +3023,16 @@ function New-ManualCardSuitMenuItem {
   $capturedSlot = [string]$SlotKey
   $capturedSuit = ([string]$SuitToken).ToUpperInvariant()
   $capturedToken = ("{0}{1}" -f [string]$RankToken, $capturedSuit).ToUpperInvariant()
-  $item = New-Object System.Windows.Forms.ToolStripMenuItem
-  $item.Text = switch ($capturedSuit) {
-    "S" { "♠" }
-    "H" { "♥" }
-    "D" { "♦" }
-    "C" { "♣" }
+  $displaySuit = switch ($capturedSuit) {
+    "S" { [string][char]0x2660 }
+    "H" { [string][char]0x2665 }
+    "D" { [string][char]0x2666 }
+    "C" { [string][char]0x2663 }
     default { $capturedSuit }
   }
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem
+  $item.Text = $displaySuit
+  $item.Font = New-Object System.Drawing.Font("Segoe UI Symbol", 9)
   $item.Add_Click({
     Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token $capturedToken
   })
