@@ -382,6 +382,14 @@ This summarizes queue lifecycle events from `session_*.jsonl`:
 - replaced / skip_nochange (hash + logical) / skip_priority
 - success rate and skip/replace rates
 
+Headless rapid-stage backend stress helper:
+
+```powershell
+.\scripts\test_rapid_stage_sequence.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
+```
+
+This queues a synthetic rapid sequence (`flop` -> `turn` -> `river`) against the bridge with a short stagger and writes a timing report under `4_LLM_Bridge/examples/synthetic_hands/`.
+
 ## Quick Start (WSL / Linux)
 
 ```bash
