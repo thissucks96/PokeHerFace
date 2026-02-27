@@ -346,6 +346,51 @@ function Extract-CardTokenFromText {
   return ""
 }
 
+function Get-StrictCardTokenFromVisionText {
+  param([string]$Text)
+  $raw = ([string]$Text).Trim()
+  if (-not $raw) {
+    return ""
+  }
+
+  $direct = Extract-CardTokenFromText -Text $raw
+  if ($direct -match "^[AKQJT98765432][SHDC]$") {
+    return $direct
+  }
+
+  try {
+    $candidateJson = $raw
+    if ($raw.Contains("{") -and $raw.Contains("}")) {
+      $start = $raw.IndexOf("{")
+      $end = $raw.LastIndexOf("}")
+      if ($end -gt $start) {
+        $candidateJson = $raw.Substring($start, $end - $start + 1)
+      }
+    }
+    $obj = $candidateJson | ConvertFrom-Json -ErrorAction Stop
+    $fieldCandidates = @($obj.card, $obj.token, $obj.value)
+    foreach ($value in $fieldCandidates) {
+      if ($null -eq $value) { continue }
+      $token = Extract-CardTokenFromText -Text ([string]$value)
+      if ($token -match "^[AKQJT98765432][SHDC]$") {
+        return $token
+      }
+    }
+    if ($null -ne $obj.rank -and $null -ne $obj.suit) {
+      $rank = Convert-RankFragmentToToken -RankFragment ([string]$obj.rank)
+      $suit = Convert-SuitFragmentToToken -SuitFragment ([string]$obj.suit)
+      if ($rank -and $suit) {
+        return ("{0}{1}" -f $rank, $suit)
+      }
+    }
+  }
+  catch {
+    # Non-JSON or malformed payload; leave empty.
+  }
+
+  return ""
+}
+
 function Get-OcrProfileSpec {
   param([string]$ProfileName)
   $name = [string]$ProfileName
@@ -832,16 +877,17 @@ function Invoke-OllamaVisionCard {
   )
   $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
   $b64 = [Convert]::ToBase64String($bytes)
-  $prompt = "Read exactly one poker community card from this image crop. Output exactly one token only: rank+suit using AKQJT98765432 and shdc (examples: As, Td, 7h). If uncertain return ??. No other words."
+  $prompt = 'Read exactly one poker community card from this image crop. Return JSON only with key card: {"card":"As"}. Valid values are rank+suit using AKQJT98765432 and shdc (examples: As, Td, 7h). If uncertain return {"card":"??"}. No prose.'
   $payload = @{
     model = $ollamaVisionModel
     prompt = $prompt
     images = @($b64)
     stream = $false
+    format = "json"
     options = @{
       temperature = 0
       top_p = 0.1
-      num_predict = 6
+      num_predict = 32
     }
   }
   $jsonBody = ConvertTo-Json $payload -Depth 8 -Compress
@@ -887,6 +933,19 @@ function Get-CardTokenFromVisionRegion {
       tag = "rankcrop1"
       rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
     })
+    [void]$regions.Add([pscustomobject]@{
+      tag = "rankcrop2"
+      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
+    })
+    [void]$regions.Add([pscustomobject]@{
+      tag = "rankcrop3"
+      rect = New-Object System.Drawing.Rectangle(
+        $x + [Math]::Max(0, [int]($w * 0.03)),
+        $y + [Math]::Max(0, [int]($h * 0.05)),
+        [Math]::Max(8, [int]($w * 0.55)),
+        [Math]::Max(8, [int]($h * 0.65))
+      )
+    })
   }
 
   $bestToken = ""
@@ -922,7 +981,7 @@ function Get-CardTokenFromVisionRegion {
       if (-not $rawText) {
         continue
       }
-      $token = Extract-CardTokenFromText -Text $rawText
+      $token = Get-StrictCardTokenFromVisionText -Text $rawText
       if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
         # Ignore prose/malformed responses; only accept strict rank+suit.
         continue
@@ -1517,6 +1576,13 @@ function Run-Ocr {
     foreach ($slot in $cardSlotOrder) {
       $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
       $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
+      if (-not $bestCard -and $tesseractExe) {
+        $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
+        if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
+          $bestCard = $fallbackCard
+          Write-Log ("OCR info [{0}] vision miss; recovered with tesseract fallback." -f $slot)
+        }
+      }
       if (-not $bestCard) {
         $cards[$slot] = "??"
         $cardScores[$slot] = -100000
