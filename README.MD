@@ -221,10 +221,22 @@ Clickable OCR watcher test utility:
 .\tesseract_test.ps1
 ```
 
-- Click `Pick OCR Rectangle` and drag-select an on-screen area.
-- Use:
-  - `Run OCR Once` for manual check, or
-  - `Start Auto` for interval OCR (default every 5 seconds).
+- Click `Pick ROI` and drag-select per-card ROIs (`flop1`, `flop2`, `flop3`, `turn`, `river`).
+- Fast testing controls:
+  - `Run flop1` ... `Run river` for single-slot OCR checks.
+  - `Run Flop (1-3)` for atomic flop capture.
+- Engine handoff from tester:
+  - `Run Flop (1-3)` now validates all 3 flop cards as strict rank+suit (`[AKQJT98765432][shdc]`),
+  - builds a spot payload from `4_LLM_Bridge/examples/spot.sample.json` (board replaced by flop),
+  - sends one request to `POST /solve`,
+  - writes payload/response artifacts under `5_Vision_Extraction/out/flop_engine/`.
+- Optional env overrides for tester handoff:
+  - `BRIDGE_SOLVE_ENDPOINT` (default `http://127.0.0.1:8000/solve`)
+  - `ENGINE_SPOT_TEMPLATE_PATH` (default `4_LLM_Bridge/examples/spot.sample.json`)
+  - `ENGINE_OCR_OUT_DIR` (default `5_Vision_Extraction/out/flop_engine`)
+  - `ENGINE_LLM_PRESET` (default `local_qwen3_coder_30b`)
+  - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
+  - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
 
 ## Quick Start (WSL / Linux)
 

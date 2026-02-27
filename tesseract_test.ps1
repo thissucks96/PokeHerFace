@@ -76,6 +76,18 @@ catch {
 $tesseractExe = Resolve-TesseractExecutable
 $ollamaHost = if ($env:OLLAMA_HOST) { [string]$env:OLLAMA_HOST } else { "http://127.0.0.1:11434" }
 $ollamaVisionModel = if ($env:OLLAMA_VISION_MODEL) { [string]$env:OLLAMA_VISION_MODEL } else { "llava:13b" }
+$bridgeSolveEndpoint = if ($env:BRIDGE_SOLVE_ENDPOINT) { [string]$env:BRIDGE_SOLVE_ENDPOINT } else { "http://127.0.0.1:8000/solve" }
+$engineSpotTemplatePath = if ($env:ENGINE_SPOT_TEMPLATE_PATH) { [string]$env:ENGINE_SPOT_TEMPLATE_PATH } else { (Join-Path $PSScriptRoot "4_LLM_Bridge\examples\spot.sample.json") }
+$engineOutputDir = if ($env:ENGINE_OCR_OUT_DIR) { [string]$env:ENGINE_OCR_OUT_DIR } else { (Join-Path $PSScriptRoot "5_Vision_Extraction\out\flop_engine") }
+$engineLlmPreset = if ($env:ENGINE_LLM_PRESET) { [string]$env:ENGINE_LLM_PRESET } else { "local_qwen3_coder_30b" }
+$engineEnableMultiNode = $false
+if ($env:ENGINE_ENABLE_MULTI_NODE -and ([string]$env:ENGINE_ENABLE_MULTI_NODE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $engineEnableMultiNode = $true
+}
+$engineSolverTimeoutSec = 180
+if ($env:ENGINE_SOLVER_TIMEOUT_SEC -and [int]::TryParse([string]$env:ENGINE_SOLVER_TIMEOUT_SEC, [ref]$engineSolverTimeoutSec)) {
+  if ($engineSolverTimeoutSec -lt 30) { $engineSolverTimeoutSec = 30 }
+}
 $roiStatePath = Join-Path (Join-Path $env:APPDATA "PokeHerFace") "vision_tester_rois.json"
 $roiAutoScale = $false
 if ($env:POKE_ROI_AUTOSCALE -and ([string]$env:POKE_ROI_AUTOSCALE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
@@ -651,6 +663,104 @@ function Capture-RegionImage {
   $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
   $graphics.Dispose()
   $bmp.Dispose()
+}
+
+function Test-CardTokenStrict {
+  param([string]$Token)
+  return (([string]$Token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$")
+}
+
+function Resolve-EngineTemplatePath {
+  $p = [string]$engineSpotTemplatePath
+  if (-not [System.IO.Path]::IsPathRooted($p)) {
+    $p = Join-Path $PSScriptRoot $p
+  }
+  return [System.IO.Path]::GetFullPath($p)
+}
+
+function Build-FlopEngineSpotPayload {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$FlopCards
+  )
+  if ($FlopCards.Count -ne 3) {
+    throw "Build-FlopEngineSpotPayload requires exactly 3 flop cards."
+  }
+  foreach ($card in $FlopCards) {
+    if (-not (Test-CardTokenStrict -Token $card)) {
+      throw ("Invalid flop card token for engine payload: {0}" -f $card)
+    }
+  }
+
+  $templatePath = Resolve-EngineTemplatePath
+  if (-not (Test-Path $templatePath)) {
+    throw ("Engine spot template not found: {0}" -f $templatePath)
+  }
+  $templateRaw = Get-Content -Path $templatePath -Raw -Encoding UTF8
+  $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
+  $spot.board = @(
+    ([string]$FlopCards[0]).Trim()
+    ([string]$FlopCards[1]).Trim()
+    ([string]$FlopCards[2]).Trim()
+  )
+  return $spot
+}
+
+function Invoke-FlopEngineSolve {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$FlopCards
+  )
+  $spot = Build-FlopEngineSpotPayload -FlopCards $FlopCards
+  $requestPayload = @{
+    spot = $spot
+    timeout_sec = [int]$engineSolverTimeoutSec
+    quiet = $true
+    llm = @{
+      preset = [string]$engineLlmPreset
+    }
+  }
+  if ($engineEnableMultiNode) {
+    $requestPayload.enable_multi_node_locks = $true
+  }
+
+  if (-not (Test-Path $engineOutputDir)) {
+    New-Item -Path $engineOutputDir -ItemType Directory -Force | Out-Null
+  }
+  $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+  $payloadPath = Join-Path $engineOutputDir ("flop_payload_{0}.json" -f $stamp)
+  $responsePath = Join-Path $engineOutputDir ("flop_response_{0}.json" -f $stamp)
+
+  $requestPayload | ConvertTo-Json -Depth 16 | Set-Content -Path $payloadPath -Encoding UTF8
+  $start = Get-Date
+  $resp = Invoke-RestMethod -Uri $bridgeSolveEndpoint -Method Post -ContentType "application/json" -Body ($requestPayload | ConvertTo-Json -Depth 16) -TimeoutSec ([Math]::Max(60, $engineSolverTimeoutSec + 30))
+  $elapsed = ((Get-Date) - $start).TotalSeconds
+  $resp | ConvertTo-Json -Depth 20 | Set-Content -Path $responsePath -Encoding UTF8
+
+  $selected = ""
+  if ($resp.PSObject.Properties.Name -contains "selected_strategy") {
+    $selected = [string]$resp.selected_strategy
+  }
+  $exploitability = $null
+  if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "exploitability")) {
+    $exploitability = $resp.result.exploitability
+  }
+  $kept = $null
+  if ($resp.PSObject.Properties.Name -contains "node_lock_kept") {
+    $kept = [bool]$resp.node_lock_kept
+  }
+  $llmErr = ""
+  if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
+    $llmErr = [string]$resp.llm_error
+  }
+
+  return [pscustomobject]@{
+    elapsed_sec = [double]$elapsed
+    payload_path = [string]$payloadPath
+    response_path = [string]$responsePath
+    selected_strategy = $selected
+    exploitability = $exploitability
+    node_lock_kept = $kept
+    llm_error = $llmErr
+  }
 }
 
 function Get-CardPresenceSignalFromRegion {
@@ -1748,7 +1858,7 @@ $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
-$status.Text = ("Local Vision: {0} @ {1} | card mode: {2}" -f $ollamaVisionModel, $ollamaHost, $modeLabel)
+$status.Text = ("Local Vision: {0} @ {1} | card mode: {2} | bridge: {3}" -f $ollamaVisionModel, $ollamaHost, $modeLabel, $bridgeSolveEndpoint)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
@@ -2424,18 +2534,55 @@ function Run-OcrFlopSet {
       Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $bestCard.variant, $bestCard.source, $token, $preview)
     }
 
+    $flopTokens = @(
+      if ($cards.ContainsKey("flop1")) { [string]$cards["flop1"] } else { "??" }
+      if ($cards.ContainsKey("flop2")) { [string]$cards["flop2"] } else { "??" }
+      if ($cards.ContainsKey("flop3")) { [string]$cards["flop3"] } else { "??" }
+    )
+    $flopReady = $true
+    foreach ($tk in $flopTokens) {
+      if (-not (Test-CardTokenStrict -Token $tk)) {
+        $flopReady = $false
+        break
+      }
+    }
+
     $out = @(
       "run:   flop_only"
-      ("flop1: {0}" -f (if ($cards.ContainsKey("flop1")) { $cards["flop1"] } else { "??" }))
-      ("flop2: {0}" -f (if ($cards.ContainsKey("flop2")) { $cards["flop2"] } else { "??" }))
-      ("flop3: {0}" -f (if ($cards.ContainsKey("flop3")) { $cards["flop3"] } else { "??" }))
+      ("flop1: {0}" -f $flopTokens[0])
+      ("flop2: {0}" -f $flopTokens[1])
+      ("flop3: {0}" -f $flopTokens[2])
       ("flop:  {0} {1} {2}" -f
-        (if ($cards.ContainsKey("flop1")) { $cards["flop1"] } else { "??" }),
-        (if ($cards.ContainsKey("flop2")) { $cards["flop2"] } else { "??" }),
-        (if ($cards.ContainsKey("flop3")) { $cards["flop3"] } else { "??" }))
+        $flopTokens[0], $flopTokens[1], $flopTokens[2])
+      ("flop_ready: {0}" -f $flopReady)
     ) -join "`r`n"
     $txtLatest.Text = $out
     Write-Log ("Flop OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
+
+    if (-not $flopReady) {
+      Write-Log "Engine handoff skipped: flop not ready (requires 3 valid rank+suit cards)."
+      return
+    }
+
+    Write-Log ("Engine handoff: sending flop {0} {1} {2} to {3}" -f $flopTokens[0], $flopTokens[1], $flopTokens[2], $bridgeSolveEndpoint)
+    try {
+      $engineResult = Invoke-FlopEngineSolve -FlopCards $flopTokens
+      Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
+        $engineResult.selected_strategy,
+        $engineResult.exploitability,
+        $engineResult.node_lock_kept,
+        [double]$engineResult.elapsed_sec)
+      if ($engineResult.llm_error) {
+        Write-Log ("Engine llm_error: {0}" -f $engineResult.llm_error)
+      }
+      Write-Log ("Engine artifacts: payload={0}, response={1}" -f $engineResult.payload_path, $engineResult.response_path)
+    }
+    catch {
+      Write-Log ("Engine handoff error: {0}" -f $_.Exception.Message)
+      if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+        Write-Log ("Engine handoff error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+      }
+    }
   }
   catch {
     Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
