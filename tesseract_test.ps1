@@ -59,11 +59,28 @@ function Resolve-TesseractExecutable {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+try {
+  Add-Type -TypeDefinition @"
+using System.Runtime.InteropServices;
+public static class NativeDpi {
+  [DllImport("user32.dll")]
+  public static extern bool SetProcessDPIAware();
+}
+"@ -ErrorAction SilentlyContinue | Out-Null
+  [void][NativeDpi]::SetProcessDPIAware()
+}
+catch {
+  # Non-fatal if DPI API is unavailable.
+}
 
 $tesseractExe = Resolve-TesseractExecutable
 $ollamaHost = if ($env:OLLAMA_HOST) { [string]$env:OLLAMA_HOST } else { "http://127.0.0.1:11434" }
 $ollamaVisionModel = if ($env:OLLAMA_VISION_MODEL) { [string]$env:OLLAMA_VISION_MODEL } else { "llava:13b" }
 $roiStatePath = Join-Path (Join-Path $env:APPDATA "PokeHerFace") "vision_tester_rois.json"
+$roiAutoScale = $false
+if ($env:POKE_ROI_AUTOSCALE -and ([string]$env:POKE_ROI_AUTOSCALE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $roiAutoScale = $true
+}
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $autoEnabled = $false
@@ -164,16 +181,18 @@ function Load-RoiState {
     $obj = $json | ConvertFrom-Json -ErrorAction Stop
     $scaleX = 1.0
     $scaleY = 1.0
-    $meta = $obj._meta
-    if ($null -ne $meta) {
-      $savedW = [double]$meta.virtual_w
-      $savedH = [double]$meta.virtual_h
-      if ($savedW -gt 0 -and $savedH -gt 0) {
-        $currentVirtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
-        $scaleX = [double]$currentVirtual.Width / $savedW
-        $scaleY = [double]$currentVirtual.Height / $savedH
-        if ([Math]::Abs($scaleX - 1.0) -lt 0.02) { $scaleX = 1.0 }
-        if ([Math]::Abs($scaleY - 1.0) -lt 0.02) { $scaleY = 1.0 }
+    if ($roiAutoScale) {
+      $meta = $obj._meta
+      if ($null -ne $meta) {
+        $savedW = [double]$meta.virtual_w
+        $savedH = [double]$meta.virtual_h
+        if ($savedW -gt 0 -and $savedH -gt 0) {
+          $currentVirtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $scaleX = [double]$currentVirtual.Width / $savedW
+          $scaleY = [double]$currentVirtual.Height / $savedH
+          if ([Math]::Abs($scaleX - 1.0) -lt 0.02) { $scaleX = 1.0 }
+          if ([Math]::Abs($scaleY - 1.0) -lt 0.02) { $scaleY = 1.0 }
+        }
       }
     }
     foreach ($key in (Get-RoiTargets)) {
