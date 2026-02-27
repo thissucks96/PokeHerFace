@@ -330,6 +330,8 @@ Clickable OCR watcher test utility:
   - state fingerprint dedupe skips no-change re-queues,
   - one active state version is enforced,
   - obsolete in-flight jobs are canceled/replaced when a newer state arrives.
+  - queue status line now exposes lifecycle counters (`repl`, `skip`, `done`) and state context (`v`, short `hash`).
+  - logical state delta gate prevents re-queue when hero/board/street state has not changed.
 - Hero auto-send:
   - define `hero` ROI once (tester auto-clones to `hero2`),
   - once both hero cards are identified and board cards are valid, tester auto-queues engine solve.

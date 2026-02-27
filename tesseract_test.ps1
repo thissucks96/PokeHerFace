@@ -135,7 +135,12 @@ $engineHandoffBusy = $false
 $enginePendingJobs = @{}
 $engineLastQueuedStateHash = ""
 $engineLastCompletedStateHash = ""
+$engineLastQueuedLogicalKey = ""
+$engineLastCompletedLogicalKey = ""
 $engineStateVersion = 0
+$engineQueueReplaceCount = 0
+$engineQueueSkipNoChangeCount = 0
+$engineQueueCompletedCount = 0
 $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
@@ -252,9 +257,39 @@ function Stop-AllEngineJobs {
       reason = [string]$Reason
     }
   }
+  if ($enginePendingJobs.Count -gt 0) {
+    $script:engineQueueReplaceCount = [int]$engineQueueReplaceCount + 1
+  }
   $enginePendingJobs.Clear()
   $script:engineHandoffBusy = $false
   Update-EngineButtonState
+}
+
+function Get-ShortHash {
+  param([string]$HashValue)
+  $v = ([string]$HashValue).Trim().ToLowerInvariant()
+  if (-not $v) { return "" }
+  if ($v.Length -le 10) { return $v }
+  return $v.Substring(0, 10)
+}
+
+function Get-EngineLogicalStateKey {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$BoardTokens,
+    [Parameter(Mandatory = $true)][string[]]$HeroTokens,
+    [Parameter(Mandatory = $true)][string]$StageLabel
+  )
+  $boardNorm = @($BoardTokens | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
+  $heroNorm = @($HeroTokens | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
+  $stageNorm = ([string]$StageLabel).Trim().ToLowerInvariant()
+  $streetNorm = "flop"
+  if ($boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count -ge 5) {
+    $streetNorm = "river"
+  }
+  elseif ($boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count -eq 4) {
+    $streetNorm = "turn"
+  }
+  return ("street={0}|board={1}|hero={2}|stage={3}" -f $streetNorm, $boardNorm, $heroNorm, $stageNorm)
 }
 
 function Should-OfferFlopClonePrompt {
@@ -2661,6 +2696,8 @@ function Update-EngineButtonState {
   $oldestJobId = $null
   $oldestStage = ""
   $oldestElapsedSec = 0.0
+  $oldestStateVersion = 0
+  $oldestStateHashShort = ""
   if ($hasJobs) {
     $oldestTime = $null
     foreach ($jid in @($enginePendingJobs.Keys)) {
@@ -2677,6 +2714,12 @@ function Update-EngineButtonState {
         $oldestTime = $queuedUtc
         $oldestJobId = [int]$jid
         $oldestStage = [string]$meta.stage
+        if ($meta.ContainsKey("state_version") -and $meta.state_version) {
+          try { $oldestStateVersion = [int]$meta.state_version } catch { $oldestStateVersion = 0 }
+        }
+        if ($meta.ContainsKey("state_hash") -and $meta.state_hash) {
+          $oldestStateHashShort = Get-ShortHash -HashValue ([string]$meta.state_hash)
+        }
       }
     }
     if ($null -ne $oldestTime) {
@@ -2693,10 +2736,11 @@ function Update-EngineButtonState {
     $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 220, 120)
     if ($null -ne $engineStatusLine) {
       if ($null -ne $oldestJobId) {
-        $engineStatusLine.Text = ("Engine queue: job={0} stage={1} elapsed={2:N1}s (max={3}s)" -f $oldestJobId, $oldestStage, [double]$oldestElapsedSec, [int]$engineJobMaxAgeSec)
+        $engineStatusLine.Text = ("Engine queue: job={0} v={1} hash={2} stage={3} elapsed={4:N1}s (max={5}s) | repl={6} skip={7} done={8}" -f `
+          $oldestJobId, [int]$oldestStateVersion, $oldestStateHashShort, $oldestStage, [double]$oldestElapsedSec, [int]$engineJobMaxAgeSec, [int]$engineQueueReplaceCount, [int]$engineQueueSkipNoChangeCount, [int]$engineQueueCompletedCount)
       }
       else {
-        $engineStatusLine.Text = ("Engine queue: busy ({0} pending)." -f [int]$enginePendingJobs.Count)
+        $engineStatusLine.Text = ("Engine queue: busy ({0} pending) | repl={1} skip={2} done={3}" -f [int]$enginePendingJobs.Count, [int]$engineQueueReplaceCount, [int]$engineQueueSkipNoChangeCount, [int]$engineQueueCompletedCount)
       }
       $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(255, 208, 135)
     }
@@ -2708,7 +2752,7 @@ function Update-EngineButtonState {
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
     $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
     if ($null -ne $engineStatusLine) {
-      $engineStatusLine.Text = "Engine queue: idle"
+      $engineStatusLine.Text = ("Engine queue: idle | last_v={0} last_hash={1} | repl={2} skip={3} done={4}" -f [int]$engineStateVersion, (Get-ShortHash -HashValue $engineLastCompletedStateHash), [int]$engineQueueReplaceCount, [int]$engineQueueSkipNoChangeCount, [int]$engineQueueCompletedCount)
       $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(165, 190, 210)
     }
   }
@@ -3199,6 +3243,17 @@ function Queue-EngineSolveForBoard {
   if ($heroReady) {
     $heroTokens = @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
   }
+  $logicalStateKey = Get-EngineLogicalStateKey -BoardTokens $BoardTokens -HeroTokens $heroTokens -StageLabel $StageLabel
+  if ($logicalStateKey -and (($logicalStateKey -eq $engineLastQueuedLogicalKey) -or ($logicalStateKey -eq $engineLastCompletedLogicalKey))) {
+    $script:engineQueueSkipNoChangeCount = [int]$engineQueueSkipNoChangeCount + 1
+    Write-Log ("Engine handoff skipped ({0}): no logical state change." -f $StageLabel) -Type "engine_skip_nochange_logical" -Data @{
+      stage = $StageLabel
+      logical_state = $logicalStateKey
+      skip_count = [int]$engineQueueSkipNoChangeCount
+    }
+    Update-EngineButtonState
+    return $false
+  }
 
   $boardText = ($BoardTokens -join " ")
   Write-Log ("Engine handoff queued ({0}): board {1} -> {2}" -f $StageLabel, $boardText, $bridgeSolveEndpoint) -Type "engine_queue" -Data @{
@@ -3233,10 +3288,13 @@ function Queue-EngineSolveForBoard {
     $requestJson = $requestPayload | ConvertTo-Json -Depth 16
     $stateHash = Get-EngineStateFingerprintFromJson -JsonText $requestJson
     if ($stateHash -and (($stateHash -eq $engineLastQueuedStateHash) -or ($stateHash -eq $engineLastCompletedStateHash))) {
+      $script:engineQueueSkipNoChangeCount = [int]$engineQueueSkipNoChangeCount + 1
       Write-Log ("Engine handoff skipped ({0}): no state change (hash={1})." -f $StageLabel, $stateHash.Substring(0, 10)) -Type "engine_skip_nochange" -Data @{
         stage = $StageLabel
         state_hash = $stateHash
+        skip_count = [int]$engineQueueSkipNoChangeCount
       }
+      Update-EngineButtonState
       return $false
     }
     if ($engineHandoffBusy -and $enginePendingJobs.Count -gt 0) {
@@ -3304,12 +3362,16 @@ function Queue-EngineSolveForBoard {
       stage = $StageLabel
       board = $BoardTokens
       state_hash = $stateHash
+      logical_key = $logicalStateKey
       state_version = [int]$stateVersion
       queued_utc = (Get-Date).ToUniversalTime()
       max_age_sec = [int]$engineJobMaxAgeSec
     }
     if ($stateHash) {
       $script:engineLastQueuedStateHash = $stateHash
+    }
+    if ($logicalStateKey) {
+      $script:engineLastQueuedLogicalKey = $logicalStateKey
     }
     $script:engineHandoffBusy = $true
     Update-EngineButtonState
@@ -3514,6 +3576,10 @@ function Reset-NewHandState {
   # Reset solver/engine-relevant hand state only. Keep ROI overlays and UI layout untouched.
   $script:lastBoardTokens = @()
   $script:lastHeroAutoSendKey = ""
+  $script:engineLastQueuedStateHash = ""
+  $script:engineLastCompletedStateHash = ""
+  $script:engineLastQueuedLogicalKey = ""
+  $script:engineLastCompletedLogicalKey = ""
   $heroCards["hero1"] = "??"
   $heroCards["hero2"] = "??"
   Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
@@ -3726,8 +3792,12 @@ function Poll-EngineJobs {
     }
 
     if ($null -ne $result -and ($result.PSObject.Properties.Name -contains "ok") -and [bool]$result.ok) {
+      $script:engineQueueCompletedCount = [int]$engineQueueCompletedCount + 1
       if ($meta.ContainsKey("state_hash") -and $meta.state_hash) {
         $script:engineLastCompletedStateHash = [string]$meta.state_hash
+      }
+      if ($meta.ContainsKey("logical_key") -and $meta.logical_key) {
+        $script:engineLastCompletedLogicalKey = [string]$meta.logical_key
       }
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
