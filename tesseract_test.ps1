@@ -744,6 +744,118 @@ function Get-CardTokenScore {
   return 0
 }
 
+function Get-CardSuitHintFromRegionColor {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region
+  )
+
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    return $null
+  }
+
+  if ($Region.Width -lt 12 -or $Region.Height -lt 16) {
+    return $null
+  }
+
+  $bmp = $null
+  $gfx = $null
+  try {
+    $bmp = New-Object System.Drawing.Bitmap($Region.Width, $Region.Height)
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $gfx.CopyFromScreen($Region.X, $Region.Y, 0, 0, $bmp.Size)
+
+    [int]$sampleW = [Math]::Max(8, [Math]::Min($Region.Width, [int]($Region.Width * 0.40)))
+    [int]$sampleH = [Math]::Max(12, [Math]::Min($Region.Height, [int]($Region.Height * 0.48)))
+
+    $scores = @{
+      H = 0.0
+      D = 0.0
+      C = 0.0
+      S = 0.0
+    }
+
+    for ($y = 0; $y -lt $sampleH; $y += 1) {
+      for ($x = 0; $x -lt $sampleW; $x += 1) {
+        $px = $bmp.GetPixel($x, $y)
+        [int]$r = $px.R
+        [int]$g = $px.G
+        [int]$b = $px.B
+
+        [int]$max = [Math]::Max($r, [Math]::Max($g, $b))
+        [int]$min = [Math]::Min($r, [Math]::Min($g, $b))
+        [int]$sat = $max - $min
+        [int]$lum = [int](($r + $g + $b) / 3)
+
+        # Ignore white card background.
+        if ($lum -ge 238 -and $sat -le 20) {
+          continue
+        }
+
+        # Suit-like dark pixels (spades) tend to be low-sat dark.
+        if ($sat -le 24 -and $lum -le 115) {
+          $scores["S"] += 1.4
+          continue
+        }
+
+        # Four-color deck heuristics used by many poker clients:
+        # hearts=red, diamonds=blue, clubs=green, spades=black/dark.
+        if ($r -ge ($g + 18) -and $r -ge ($b + 18)) {
+          $scores["H"] += 2.0
+        }
+        if ($g -ge ($r + 12) -and $g -ge ($b + 10)) {
+          $scores["C"] += 2.0
+        }
+        if ($b -ge ($r + 14) -and $b -ge ($g + 8)) {
+          $scores["D"] += 2.0
+        }
+
+        if ($lum -le 90) {
+          $scores["S"] += 0.8
+        }
+      }
+    }
+
+    $ordered = @(
+      [pscustomobject]@{ suit = "H"; score = [double]$scores["H"] }
+      [pscustomobject]@{ suit = "D"; score = [double]$scores["D"] }
+      [pscustomobject]@{ suit = "C"; score = [double]$scores["C"] }
+      [pscustomobject]@{ suit = "S"; score = [double]$scores["S"] }
+    ) | Sort-Object -Property score -Descending
+
+    if ($ordered.Count -lt 1) {
+      return $null
+    }
+    $top = $ordered[0]
+    $secondScore = if ($ordered.Count -ge 2) { [double]$ordered[1].score } else { 0.0 }
+    if ($top.score -lt 10.0) {
+      return $null
+    }
+
+    $confidence = if ($secondScore -gt 0) { [double]($top.score / $secondScore) } else { 9.99 }
+    if ($confidence -lt 1.15) {
+      return $null
+    }
+
+    return [pscustomobject]@{
+      suit = [string]$top.suit
+      score = [double]$top.score
+      confidence = [double]$confidence
+    }
+  }
+  catch {
+    return $null
+  }
+  finally {
+    if ($null -ne $gfx) {
+      $gfx.Dispose()
+    }
+    if ($null -ne $bmp) {
+      $bmp.Dispose()
+    }
+  }
+}
+
 function Resolve-BoardCardCollisions {
   param(
     [hashtable]$Cards,
@@ -768,21 +880,55 @@ function Resolve-BoardCardCollisions {
     if ($slots.Count -le 1) {
       continue
     }
-    $keepSlot = $slots[0]
-    $keepScore = if ($CardScores.ContainsKey($keepSlot)) { [int]$CardScores[$keepSlot] } else { -100000 }
+
+    # Try to recover duplicate exact-token collisions by re-inferring suit from ROI colors.
+    # This helps when vision gets rank correct but confuses suit on nearby duplicate ranks.
+    $rank = [string]$token.Substring(0, 1)
     foreach ($slot in $slots) {
+      $slotRect = Get-RoiRectByKey -Key $slot
+      if (-not (Test-RegionSelected -Rect $slotRect)) {
+        continue
+      }
+      $hint = Get-CardSuitHintFromRegionColor -Region $slotRect
+      if ($null -eq $hint -or -not $hint.suit) {
+        continue
+      }
+      $candidateToken = ("{0}{1}" -f $rank, ([string]$hint.suit).ToUpperInvariant())
+      if ($candidateToken -match "^[AKQJT98765432][SHDC]$" -and $candidateToken -ne $Cards[$slot]) {
+        $Cards[$slot] = $candidateToken
+        $baseScore = if ($CardScores.ContainsKey($slot)) { [int]$CardScores[$slot] } else { 0 }
+        $CardScores[$slot] = [Math]::Max($baseScore, 95)
+        [void]$warnings.Add(("Suit recovery adjusted {0}: {1} -> {2} (color confidence {3:N2})." -f $slot, $token, $candidateToken, [double]$hint.confidence))
+      }
+    }
+
+    # Recompute duplicates after suit recovery. If collision remains, keep strongest and clear rest.
+    $freshSlots = New-Object System.Collections.Generic.List[string]
+    foreach ($slot in $slots) {
+      $currentToken = ([string]$Cards[$slot]).Trim().ToUpperInvariant()
+      if ($currentToken -eq $token) {
+        [void]$freshSlots.Add($slot)
+      }
+    }
+    if ($freshSlots.Count -le 1) {
+      continue
+    }
+
+    $keepSlot = $freshSlots[0]
+    $keepScore = if ($CardScores.ContainsKey($keepSlot)) { [int]$CardScores[$keepSlot] } else { -100000 }
+    foreach ($slot in $freshSlots) {
       $score = if ($CardScores.ContainsKey($slot)) { [int]$CardScores[$slot] } else { -100000 }
       if ($score -gt $keepScore) {
         $keepScore = $score
         $keepSlot = $slot
       }
     }
-    foreach ($slot in $slots) {
+    foreach ($slot in $freshSlots) {
       if ($slot -ne $keepSlot) {
         $Cards[$slot] = "??"
       }
     }
-    [void]$warnings.Add(("Duplicate card token {0} detected in {1}; kept {2}, cleared others to ??." -f $token, ($slots -join ","), $keepSlot))
+    [void]$warnings.Add(("Duplicate card token {0} detected in {1}; kept {2}, cleared others to ??." -f $token, ($freshSlots -join ","), $keepSlot))
   }
 
   return [pscustomobject]@{
