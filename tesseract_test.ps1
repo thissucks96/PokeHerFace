@@ -754,6 +754,153 @@ function Get-CardTokenFromVisionRegion {
   }
 }
 
+function Get-BoardTokenScore {
+  param([string]$Token)
+  $t = ([string]$Token).Trim().ToUpperInvariant()
+  if ($t -match "^[AKQJT98765432][SHDC]$") { return 100 }
+  if ($t -match "^[AKQJT98765432]\?$") { return 60 }
+  if ($t -eq "??") { return 0 }
+  return -20
+}
+
+function Parse-BoardTokensFromText {
+  param([string]$Text)
+  $slots = @("flop1", "flop2", "flop3", "turn", "river")
+  $cards = @{}
+  foreach ($s in $slots) { $cards[$s] = "??" }
+  $raw = ([string]$Text).Trim()
+  if (-not $raw) {
+    return $cards
+  }
+
+  # Prefer strict JSON contract if model follows prompt.
+  try {
+    $candidateJson = $raw
+    if ($raw.Contains("{") -and $raw.Contains("}")) {
+      $start = $raw.IndexOf("{")
+      $end = $raw.LastIndexOf("}")
+      if ($end -gt $start) {
+        $candidateJson = $raw.Substring($start, $end - $start + 1)
+      }
+    }
+    $obj = $candidateJson | ConvertFrom-Json -ErrorAction Stop
+    foreach ($s in $slots) {
+      if ($null -ne $obj.$s) {
+        $token = Normalize-CardToken -Text ([string]$obj.$s)
+        if ($token) { $cards[$s] = $token }
+      }
+    }
+    return $cards
+  }
+  catch {
+    # fall through to regex extraction
+  }
+
+  # Fallback: extract up to 5 cards from free text.
+  $pattern = "(?i)(10|[2-9TJQKA])\s*(?:OF\s*)?(SPADES?|HEARTS?|DIAMONDS?|CLUBS?|[SHDC♠♥♦♣])"
+  $matches = [regex]::Matches($raw, $pattern)
+  $tokens = New-Object System.Collections.Generic.List[string]
+  foreach ($m in $matches) {
+    $rank = [string]$m.Groups[1].Value
+    $suit = [string]$m.Groups[2].Value
+    $token = Normalize-CardToken -Text ("{0}{1}" -f $rank, $suit)
+    if ($token) { [void]$tokens.Add($token) }
+  }
+  if ($tokens.Count -eq 0) {
+    # Try compact tokens like "As Kd 7h"
+    $m2 = [regex]::Matches($raw, "(?i)\b(10|[2-9TJQKA])\s*([SHDC])\b")
+    foreach ($m in $m2) {
+      $token = Normalize-CardToken -Text ("{0}{1}" -f [string]$m.Groups[1].Value, [string]$m.Groups[2].Value)
+      if ($token) { [void]$tokens.Add($token) }
+    }
+  }
+  for ($i = 0; $i -lt [Math]::Min(5, $tokens.Count); $i++) {
+    $cards[$slots[$i]] = $tokens[$i]
+  }
+  return $cards
+}
+
+function Invoke-OllamaVisionBoard {
+  param([Parameter(Mandatory = $true)][string]$ImagePath)
+  $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
+  $b64 = [Convert]::ToBase64String($bytes)
+  $prompt = "Read only the community cards shown in this poker table image from left to right. Return JSON only with exact keys: {""flop1"":""??"",""flop2"":""??"",""flop3"":""??"",""turn"":""??"",""river"":""??""}. Use rank+suit with ranks AKQJT98765432 and suits s h d c (example As, Td, 7h). Use ?? for missing/hidden cards. No prose."
+  $payload = @{
+    model = $ollamaVisionModel
+    prompt = $prompt
+    images = @($b64)
+    stream = $false
+    options = @{
+      temperature = 0
+      top_p = 0.1
+      num_predict = 200
+    }
+  }
+  $jsonBody = ConvertTo-Json $payload -Depth 8 -Compress
+  $resp = Invoke-RestMethod -Uri ("{0}/api/generate" -f $ollamaHost.TrimEnd("/")) -Method Post -ContentType "application/json" -Body $jsonBody -TimeoutSec 120
+  if ($null -eq $resp) { return "" }
+  if ($resp.response -is [System.Array]) {
+    return [string]::Join(" ", ($resp.response | ForEach-Object { [string]$_ }))
+  }
+  return [string]$resp.response
+}
+
+function Get-BoardTokensFromVisionRegion {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
+    [Parameter(Mandatory = $true)][string]$TmpDir
+  )
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    return $null
+  }
+  $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+  $imgPath = Join-Path $TmpDir ("board_{0}.png" -f $stamp)
+  Capture-RegionImage -Region $Region -Path $imgPath
+  $variants = New-Object System.Collections.Generic.List[string]
+  [void]$variants.Add($imgPath)
+  $contrast = Join-Path $TmpDir ("board_{0}.contrast.png" -f $stamp)
+  try {
+    New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrast
+    [void]$variants.Add($contrast)
+  }
+  catch {
+    Write-Log ("Vision preprocess warning (board): {0}" -f $_.Exception.Message)
+  }
+
+  $bestCards = $null
+  $bestRaw = ""
+  $bestVariant = ""
+  $bestScore = -100000
+  foreach ($variant in $variants) {
+    try {
+      $raw = Invoke-OllamaVisionBoard -ImagePath $variant
+    }
+    catch {
+      Write-Log ("Vision call warning (board): {0}" -f $_.Exception.Message)
+      continue
+    }
+    $cards = Parse-BoardTokensFromText -Text $raw
+    $score = 0
+    foreach ($slot in $cardSlotOrder) {
+      $score += Get-BoardTokenScore -Token $cards[$slot]
+    }
+    if ($score -gt $bestScore) {
+      $bestScore = $score
+      $bestCards = $cards
+      $bestRaw = [string]$raw
+      $bestVariant = [System.IO.Path]::GetFileName($variant)
+    }
+  }
+  if ($null -eq $bestCards) { return $null }
+  return [pscustomobject]@{
+    cards = $bestCards
+    raw_text = $bestRaw
+    variant = $bestVariant
+    score = $bestScore
+  }
+}
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Tesseract Region Test"
 $form.StartPosition = "CenterScreen"
@@ -773,14 +920,8 @@ $status = New-Object System.Windows.Forms.Label
 $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
-if ($tesseractExe) {
-  $status.Text = "Tesseract: $tesseractExe"
-  $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
-}
-else {
-  $status.Text = "Tesseract: NOT FOUND (set TESSERACT_PATH or add to PATH)"
-  $status.ForeColor = [System.Drawing.Color]::FromArgb(255, 180, 120)
-}
+$status.Text = ("Local Vision: {0} @ {1}" -f $ollamaVisionModel, $ollamaHost)
+$status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
 $regionLabel = New-Object System.Windows.Forms.Label
@@ -792,7 +933,7 @@ $regionLabel.AutoSize = $true
 $form.Controls.Add($regionLabel)
 
 $cardStatusLabel = New-Object System.Windows.Forms.Label
-$cardStatusLabel.Text = Format-CardSlotStatus
+$cardStatusLabel.Text = "Mode: local vision (llava) - single community-card rectangle."
 $cardStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $cardStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $cardStatusLabel.Location = New-Object System.Drawing.Point(20, 94)
@@ -854,54 +995,53 @@ $btnAutoStop.Enabled = $false
 $form.Controls.Add($btnAutoStop)
 
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "Pick ROI with left-drag (or right-click 2 corners). In Cards profile, set all 5 boxes (flop1/2/3, turn, river)."
+$hint.Text = "Pick one ROI covering all community cards. Local vision will return flop1/flop2/flop3/turn/river."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $hint.Location = New-Object System.Drawing.Point(20, 162)
 $hint.AutoSize = $true
 $form.Controls.Add($hint)
 
+$lblCaptureMode = New-Object System.Windows.Forms.Label
+$lblCaptureMode.Text = "Capture Mode"
+$lblCaptureMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblCaptureMode.Location = New-Object System.Drawing.Point(780, 92)
+$lblCaptureMode.AutoSize = $true
+$form.Controls.Add($lblCaptureMode)
+
+$cmbCaptureMode = New-Object System.Windows.Forms.ComboBox
+$cmbCaptureMode.DropDownStyle = "DropDownList"
+$cmbCaptureMode.Location = New-Object System.Drawing.Point(780, 110)
+$cmbCaptureMode.Size = New-Object System.Drawing.Size(180, 24)
+$cmbCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+[void]$cmbCaptureMode.Items.Add("Full Board ROI")
+[void]$cmbCaptureMode.Items.Add("Individual Card ROIs")
+$cmbCaptureMode.SelectedIndex = 0
+$form.Controls.Add($cmbCaptureMode)
+
 $lblTarget = New-Object System.Windows.Forms.Label
-$lblTarget.Text = "ROI Target"
+$lblTarget.Text = "ROI Target (Individual)"
 $lblTarget.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblTarget.Location = New-Object System.Drawing.Point(876, 90)
+$lblTarget.Location = New-Object System.Drawing.Point(780, 138)
 $lblTarget.AutoSize = $true
 $form.Controls.Add($lblTarget)
 
 $cmbTarget = New-Object System.Windows.Forms.ComboBox
 $cmbTarget.DropDownStyle = "DropDownList"
-$cmbTarget.Location = New-Object System.Drawing.Point(876, 108)
-$cmbTarget.Size = New-Object System.Drawing.Size(90, 24)
+$cmbTarget.Location = New-Object System.Drawing.Point(780, 156)
+$cmbTarget.Size = New-Object System.Drawing.Size(180, 24)
 $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-[void]$cmbTarget.Items.Add("General ROI")
 [void]$cmbTarget.Items.Add("flop1")
 [void]$cmbTarget.Items.Add("flop2")
 [void]$cmbTarget.Items.Add("flop3")
 [void]$cmbTarget.Items.Add("turn")
 [void]$cmbTarget.Items.Add("river")
-$cmbTarget.SelectedIndex = 1
+$cmbTarget.SelectedIndex = 0
+$cmbTarget.Enabled = $false
 $form.Controls.Add($cmbTarget)
-
-$lblProfile = New-Object System.Windows.Forms.Label
-$lblProfile.Text = "OCR Profile"
-$lblProfile.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
-$lblProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblProfile.Location = New-Object System.Drawing.Point(876, 136)
-$lblProfile.AutoSize = $true
-$form.Controls.Add($lblProfile)
-
-$cmbProfile = New-Object System.Windows.Forms.ComboBox
-$cmbProfile.DropDownStyle = "DropDownList"
-$cmbProfile.Location = New-Object System.Drawing.Point(876, 154)
-$cmbProfile.Size = New-Object System.Drawing.Size(90, 24)
-$cmbProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-[void]$cmbProfile.Items.Add("General")
-[void]$cmbProfile.Items.Add("Cards (ranks/suits)")
-[void]$cmbProfile.Items.Add("Cards (local vision llava)")
-[void]$cmbProfile.Items.Add("Numeric (pot/stack)")
-$cmbProfile.SelectedIndex = 1
-$form.Controls.Add($cmbProfile)
+$lblTarget.Enabled = $false
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -956,26 +1096,17 @@ function Format-RegionText {
 }
 
 function Run-Ocr {
-  $profileName = [string]$cmbProfile.SelectedItem
-  if (-not $profileName) {
-    $profileName = "General"
-  }
-  $isVisionCards = ($profileName -eq "Cards (local vision llava)")
-  $isCardsProfile = ($profileName -eq "Cards (ranks/suits)" -or $isVisionCards)
+  $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
+  $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
 
   if ($isBusy) {
     return
   }
-  if ((-not $isVisionCards) -and (-not $tesseractExe)) {
-    Write-Log "OCR skipped: tesseract not found."
-    return
-  }
-  if ($isVisionCards -and (-not (Test-OllamaEndpoint))) {
+  if (-not (Test-OllamaEndpoint)) {
     Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
     return
   }
-
-  if ($isCardsProfile) {
+  if ($isIndividualMode) {
     $missing = New-Object System.Collections.Generic.List[string]
     foreach ($slot in $cardSlotOrder) {
       $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
@@ -984,57 +1115,50 @@ function Run-Ocr {
       }
     }
     if ($missing.Count -gt 0) {
-      Write-Log ("OCR skipped: set all card ROIs first ({0})." -f ($missing -join ", "))
+      Write-Log ("OCR skipped: set all individual card ROIs first ({0})." -f ($missing -join ", "))
       return
     }
   }
-  elseif (-not (Test-RegionSelected -Rect $selectedRegion)) {
-    Write-Log "OCR skipped: select a region first."
-    return
+  else {
+    if (-not (Test-RegionSelected -Rect $selectedRegion)) {
+      Write-Log "OCR skipped: select a community-card rectangle first."
+      return
+    }
   }
 
   $script:isBusy = $true
   try {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    if ($isCardsProfile) {
-      $cardModeLabel = if ($isVisionCards) { "Cards (local vision llava)" } else { "Cards (ranks/suits)" }
+    if ($isIndividualMode) {
       $cards = @{}
       $cardScores = @{}
       foreach ($slot in $cardSlotOrder) {
-        $cards[$slot] = "--"
-        $cardScores[$slot] = -100000
-      }
-      foreach ($slot in $cardSlotOrder) {
         $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-        $bestCard = if ($isVisionCards) {
-          Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
-        }
-        else {
-          Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
-        }
+        $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
         if (-not $bestCard) {
           $cards[$slot] = "??"
-          Write-Log ("OCR warning [{0}] {1}: no readable output." -f $cardModeLabel, $slot)
+          $cardScores[$slot] = -100000
+          Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
           continue
         }
         $cards[$slot] = $bestCard.token
         $cardScores[$slot] = if ($null -ne $bestCard.score) { [int]$bestCard.score } else { -100000 }
         $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
-        if ($preview.Length -gt 64) {
-          $preview = $preview.Substring(0, 64) + "..."
+        if ($preview.Length -gt 96) {
+          $preview = $preview.Substring(0, 96) + "..."
         }
-        Write-Log ("OCR OK [{0}] {1} {2} via {3}/{4}: {5}" -f $cardModeLabel, $slot, $bestCard.label, $bestCard.variant, $bestCard.source, $preview)
+        Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
       }
 
       $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
       $cards = $collisionResult.cards
       foreach ($warn in $collisionResult.warnings) {
-        Write-Log ("OCR warning [{0}] {1}" -f $cardModeLabel, $warn)
+        Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
       }
 
       $out = @(
-        "run:   all_cards"
+        "run:   individual_rois"
         ("flop1: {0}" -f $cards["flop1"])
         ("flop2: {0}" -f $cards["flop2"])
         ("flop3: {0}" -f $cards["flop3"])
@@ -1046,25 +1170,40 @@ function Run-Ocr {
       Write-Log ("Board OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
     }
     else {
-      $best = Get-BestOcrForRegion -Region $selectedRegion -ProfileName $profileName -TmpDir $tmpDir -Tag "region"
-      if ($best) {
-        $bestText = if ($best.text -is [System.Array]) {
-          [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
-        }
-        else {
-          [string]$best.text
-        }
-        $bestText = $bestText.Trim()
-        $txtLatest.Text = $bestText
-        $preview = (($bestText -replace "\r?\n", " ") -as [string]).Trim()
-        if ($preview.Length -gt 120) {
-          $preview = $preview.Substring(0, 120) + "..."
-        }
-        Write-Log ("OCR OK [{0}] {1} via {2}: {3}" -f $profileName, $best.label, $best.variant, $preview)
+      $board = Get-BoardTokensFromVisionRegion -Region $selectedRegion -TmpDir $tmpDir
+      if (-not $board) {
+        Write-Log "Vision OCR finished but no readable board output was produced."
+        return
       }
-      else {
-        Write-Log ("OCR finished but no readable output was produced for profile: {0}" -f $profileName)
+
+      $cards = $board.cards
+      $cardScores = @{}
+      foreach ($slot in $cardSlotOrder) {
+        $cardScores[$slot] = Get-BoardTokenScore -Token $cards[$slot]
       }
+      $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
+      $cards = $collisionResult.cards
+      foreach ($warn in $collisionResult.warnings) {
+        Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
+      }
+
+      $rawPreview = (($board.raw_text -replace "\r?\n", " ") -as [string]).Trim()
+      if ($rawPreview.Length -gt 180) {
+        $rawPreview = $rawPreview.Substring(0, 180) + "..."
+      }
+      Write-Log ("OCR OK [Cards (local vision llava)] board via {0}: {1}" -f $board.variant, $rawPreview)
+
+      $out = @(
+        "run:   full_board_roi"
+        ("flop1: {0}" -f $cards["flop1"])
+        ("flop2: {0}" -f $cards["flop2"])
+        ("flop3: {0}" -f $cards["flop3"])
+        ("turn:  {0}" -f $cards["turn"])
+        ("river: {0}" -f $cards["river"])
+        ("flop:  {0} {1} {2}" -f $cards["flop1"], $cards["flop2"], $cards["flop3"])
+      ) -join "`r`n"
+      $txtLatest.Text = $out
+      Write-Log ("Board OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
     }
   }
   catch {
@@ -1094,16 +1233,18 @@ $btnPick.Add_Click({
   $form.Show()
   $form.Activate()
   if ($rect -ne [System.Drawing.Rectangle]::Empty) {
-    $target = [string]$cmbTarget.SelectedItem
-    if (-not $target) {
-      $target = "General ROI"
-    }
-    if ($target -eq "General ROI") {
+    $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
+    $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
+    if (-not $isIndividualMode) {
       $script:selectedRegion = $rect
       $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-      Write-Log ("General ROI updated. {0}" -f $regionLabel.Text)
+      Write-Log ("Board ROI updated. {0}" -f $regionLabel.Text)
     }
     else {
+      $target = [string]$cmbTarget.SelectedItem
+      if (-not $target) {
+        $target = "flop1"
+      }
       if ($cardRegions.ContainsKey($target)) {
         $cardRegions[$target] = $rect
         Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
@@ -1124,23 +1265,10 @@ $btnOnce.Add_Click({
 })
 
 $btnAutoStart.Add_Click({
-  $profileName = [string]$cmbProfile.SelectedItem
-  if (-not $profileName) {
-    $profileName = "General"
-  }
-  $isVisionCards = ($profileName -eq "Cards (local vision llava)")
-  $isCardsProfile = ($profileName -eq "Cards (ranks/suits)" -or $isVisionCards)
+  $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
+  $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
 
-  if ((-not $isVisionCards) -and (-not $tesseractExe)) {
-    [void][System.Windows.Forms.MessageBox]::Show(
-      "Tesseract not found. Set TESSERACT_PATH or add tesseract to PATH first.",
-      "Missing Tesseract",
-      [System.Windows.Forms.MessageBoxButtons]::OK,
-      [System.Windows.Forms.MessageBoxIcon]::Warning
-    )
-    return
-  }
-  if ($isVisionCards -and (-not (Test-OllamaEndpoint))) {
+  if (-not (Test-OllamaEndpoint)) {
     [void][System.Windows.Forms.MessageBox]::Show(
       ("Ollama endpoint not reachable at {0}. Start ollama serve first." -f $ollamaHost),
       "Missing Ollama",
@@ -1150,7 +1278,7 @@ $btnAutoStart.Add_Click({
     return
   }
 
-  if ($isCardsProfile) {
+  if ($isIndividualMode) {
     $missing = New-Object System.Collections.Generic.List[string]
     foreach ($slot in $cardSlotOrder) {
       $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
@@ -1160,7 +1288,7 @@ $btnAutoStart.Add_Click({
     }
     if ($missing.Count -gt 0) {
       [void][System.Windows.Forms.MessageBox]::Show(
-        ("Set all five card ROIs before auto mode. Missing: {0}" -f ($missing -join ", ")),
+        ("Set all five individual card ROIs before auto mode. Missing: {0}" -f ($missing -join ", ")),
         "Missing Card ROIs",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1170,7 +1298,7 @@ $btnAutoStart.Add_Click({
   }
   elseif (-not (Test-RegionSelected -Rect $selectedRegion)) {
     [void][System.Windows.Forms.MessageBox]::Show(
-      "Pick an OCR rectangle first.",
+      "Pick a full-board OCR rectangle first.",
       "No Region",
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1181,11 +1309,11 @@ $btnAutoStart.Add_Click({
   $script:autoEnabled = $true
   $btnAutoStart.Enabled = $false
   $btnAutoStop.Enabled = $true
-  if ($isCardsProfile) {
-    Write-Log ("Auto OCR started (every {0}s, all five card boxes)." -f [int]$numInterval.Value)
+  if ($isIndividualMode) {
+    Write-Log ("Auto OCR started (every {0}s, mode: Individual Card ROIs)." -f [int]$numInterval.Value)
   }
   else {
-    Write-Log ("Auto OCR started (every {0}s)." -f [int]$numInterval.Value)
+    Write-Log ("Auto OCR started (every {0}s, mode: Full Board ROI)." -f [int]$numInterval.Value)
   }
 })
 
@@ -1196,10 +1324,26 @@ $btnAutoStop.Add_Click({
   Write-Log "Auto OCR stopped."
 })
 
+$cmbCaptureMode.Add_SelectedIndexChanged({
+  $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
+  $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
+  $cmbTarget.Enabled = $isIndividualMode
+  $lblTarget.Enabled = $isIndividualMode
+  if ($isIndividualMode) {
+    $hint.Text = "Mode: Individual Card ROIs. Pick each target (flop1..river) and draw its own box."
+    $cardStatusLabel.Text = Format-CardSlotStatus
+  }
+  else {
+    $hint.Text = "Mode: Full Board ROI. Pick one box covering all community cards."
+    $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
+  }
+})
+
 $form.Add_Shown({
   $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-  $cardStatusLabel.Text = Format-CardSlotStatus
-  Write-Log "Ready. In Cards profile, set ROI target and pick all five card boxes."
+  $hint.Text = "Mode: Full Board ROI. Pick one box covering all community cards."
+  $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
+  Write-Log "Ready. Choose mode, pick ROI(s), then run OCR."
   $timer.Start()
 })
 
