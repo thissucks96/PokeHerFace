@@ -61,6 +61,50 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 try {
   Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public class RoiOverlayForm : Form
+{
+    private const int WM_GETMINMAXINFO = 0x0024;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int x;
+        public int y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+        public POINT ptMaxPosition;
+        public POINT ptMinTrackSize;
+        public POINT ptMaxTrackSize;
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_GETMINMAXINFO && m.LParam != IntPtr.Zero)
+        {
+            var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
+            mmi.ptMinTrackSize.x = 1;
+            mmi.ptMinTrackSize.y = 1;
+            Marshal.StructureToPtr(mmi, m.LParam, false);
+        }
+        base.WndProc(ref m);
+    }
+}
+"@ -ErrorAction SilentlyContinue | Out-Null
+}
+catch {
+  # Non-fatal.
+}
+try {
+  Add-Type -TypeDefinition @"
 using System.Runtime.InteropServices;
 public static class NativeDpi {
   [DllImport("user32.dll")]
@@ -1444,15 +1488,17 @@ function New-RoiOverlayForm {
     [System.Drawing.Rectangle]$Rect,
     [System.Drawing.Color]$Color
   )
-  $overlay = New-Object System.Windows.Forms.Form
+  $overlay = New-Object RoiOverlayForm
   $overlay.FormBorderStyle = "None"
   $overlay.StartPosition = "Manual"
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+  $overlay.AutoSize = $false
+  $overlay.MinimumSize = New-Object System.Drawing.Size(1, 1)
   $overlay.ShowInTaskbar = $false
   $overlay.TopMost = $true
   $overlay.BackColor = $Color
   $overlay.Opacity = 0.28
-  $overlay.Bounds = $Rect
+  $overlay.Bounds = New-Object System.Drawing.Rectangle([int]$Rect.X, [int]$Rect.Y, [Math]::Max(1, [int]$Rect.Width), [Math]::Max(1, [int]$Rect.Height))
   $overlay.Tag = [pscustomobject]@{
     key = $Key
     down = $false
@@ -1465,7 +1511,8 @@ function New-RoiOverlayForm {
   $tagLabel.ForeColor = [System.Drawing.Color]::White
   $tagLabel.BackColor = [System.Drawing.Color]::Transparent
   $tagLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-  $tagLabel.AutoSize = $true
+  $tagLabel.AutoSize = $false
+  $tagLabel.Size = New-Object System.Drawing.Size(64, 16)
   $tagLabel.Location = New-Object System.Drawing.Point(4, 2)
   $tagLabel.Tag = $overlay
   $overlay.Controls.Add($tagLabel)
@@ -1561,6 +1608,9 @@ function Refresh-RoiOverlays {
     $overlay.Bounds = $rect
     if (-not $overlay.Visible) {
       $overlay.Show()
+    }
+    if ($overlay.Width -ne $rect.Width -or $overlay.Height -ne $rect.Height) {
+      $overlay.Bounds = $rect
     }
     $overlay.BringToFront()
   }
