@@ -81,6 +81,10 @@ $roiAutoScale = $false
 if ($env:POKE_ROI_AUTOSCALE -and ([string]$env:POKE_ROI_AUTOSCALE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $roiAutoScale = $true
 }
+$rankOnlyMode = $true
+if ($env:POKE_RANK_ONLY -and ([string]$env:POKE_RANK_ONLY).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
+  $rankOnlyMode = $false
+}
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $autoEnabled = $false
@@ -744,6 +748,21 @@ function Get-CardTokenScore {
   return 0
 }
 
+function Convert-ToRankOnlyToken {
+  param([string]$Token)
+  $t = ([string]$Token).Trim().ToUpperInvariant()
+  if ($t -match "^[AKQJT98765432][SHDC]$") {
+    return ("{0}?" -f $t.Substring(0, 1))
+  }
+  if ($t -match "^[AKQJT98765432]\?$") {
+    return $t
+  }
+  if ($t -match "^[AKQJT98765432]$") {
+    return ("{0}?" -f $t)
+  }
+  return "??"
+}
+
 function Get-VisionSourceBonus {
   param([string]$SourceTag)
   switch (([string]$SourceTag).Trim().ToLowerInvariant()) {
@@ -794,8 +813,49 @@ function Get-CardSuitHintFromRegionColor {
     $gfx = [System.Drawing.Graphics]::FromImage($bmp)
     $gfx.CopyFromScreen($Region.X, $Region.Y, 0, 0, $bmp.Size)
 
-    [int]$sampleW = [Math]::Max(8, [Math]::Min($Region.Width, [int]($Region.Width * 0.40)))
-    [int]$sampleH = [Math]::Max(12, [Math]::Min($Region.Height, [int]($Region.Height * 0.48)))
+    # Detect likely card face via near-white pixels first. This reduces table-color bleed.
+    [int]$w = [int]$Region.Width
+    [int]$h = [int]$Region.Height
+    [int]$minX = $w
+    [int]$minY = $h
+    [int]$maxX = -1
+    [int]$maxY = -1
+    [int]$lightCount = 0
+    for ($y = 0; $y -lt $h; $y += 2) {
+      for ($x = 0; $x -lt $w; $x += 2) {
+        $px = $bmp.GetPixel($x, $y)
+        if ($px.R -ge 175 -and $px.G -ge 175 -and $px.B -ge 175) {
+          if ($x -lt $minX) { $minX = $x }
+          if ($y -lt $minY) { $minY = $y }
+          if ($x -gt $maxX) { $maxX = $x }
+          if ($y -gt $maxY) { $maxY = $y }
+          $lightCount += 1
+        }
+      }
+    }
+
+    [int]$cardX = 0
+    [int]$cardY = 0
+    [int]$cardW = $w
+    [int]$cardH = $h
+    if ($lightCount -ge 18 -and $maxX -gt $minX -and $maxY -gt $minY) {
+      $cardX = [int][Math]::Max(0, $minX - 2)
+      $cardY = [int][Math]::Max(0, $minY - 2)
+      $cardW = [int][Math]::Min($w - $cardX, ($maxX - $minX + 5))
+      $cardH = [int][Math]::Min($h - $cardY, ($maxY - $minY + 5))
+    }
+
+    # Focus on top-left card quadrant where rank+suit glyphs are located.
+    [int]$sampleX = [int][Math]::Max(0, $cardX + [int]($cardW * 0.02))
+    [int]$sampleY = [int][Math]::Max(0, $cardY + [int]($cardH * 0.04))
+    [int]$sampleW = [int][Math]::Max(8, [int]($cardW * 0.34))
+    [int]$sampleH = [int][Math]::Max(10, [int]($cardH * 0.44))
+    if (($sampleX + $sampleW) -gt $w) {
+      $sampleW = [int][Math]::Max(1, $w - $sampleX)
+    }
+    if (($sampleY + $sampleH) -gt $h) {
+      $sampleH = [int][Math]::Max(1, $h - $sampleY)
+    }
 
     $scores = @{
       H = 0.0
@@ -803,9 +863,10 @@ function Get-CardSuitHintFromRegionColor {
       C = 0.0
       S = 0.0
     }
+    $classified = 0
 
-    for ($y = 0; $y -lt $sampleH; $y += 1) {
-      for ($x = 0; $x -lt $sampleW; $x += 1) {
+    for ($y = $sampleY; $y -lt ($sampleY + $sampleH); $y += 1) {
+      for ($x = $sampleX; $x -lt ($sampleX + $sampleW); $x += 1) {
         $px = $bmp.GetPixel($x, $y)
         [int]$r = $px.R
         [int]$g = $px.G
@@ -821,28 +882,40 @@ function Get-CardSuitHintFromRegionColor {
           continue
         }
 
-        # Suit-like dark pixels (spades) tend to be low-sat dark.
-        if ($sat -le 24 -and $lum -le 115) {
-          $scores["S"] += 1.4
+        # Spades/black suit symbols.
+        if ($lum -le 95 -and $sat -le 58) {
+          $scores["S"] += 2.6
+          $classified += 1
+          continue
+        }
+        if ($lum -le 78) {
+          $scores["S"] += 1.2
+          $classified += 1
           continue
         }
 
         # Four-color deck heuristics used by many poker clients:
         # hearts=red, diamonds=blue, clubs=green, spades=black/dark.
-        if ($r -ge ($g + 18) -and $r -ge ($b + 18)) {
-          $scores["H"] += 2.0
+        if ($r -ge 140 -and $r -ge ($g + 26) -and $r -ge ($b + 26)) {
+          $scores["H"] += 3.0
+          $classified += 1
+          continue
         }
-        if ($g -ge ($r + 12) -and $g -ge ($b + 10)) {
-          $scores["C"] += 2.0
+        if ($b -ge 120 -and $b -ge ($r + 20) -and $b -ge ($g + 14)) {
+          $scores["D"] += 3.0
+          $classified += 1
+          continue
         }
-        if ($b -ge ($r + 14) -and $b -ge ($g + 8)) {
-          $scores["D"] += 2.0
-        }
-
-        if ($lum -le 90) {
-          $scores["S"] += 0.8
+        if ($g -ge 120 -and $g -ge ($r + 18) -and $g -ge ($b + 10)) {
+          $scores["C"] += 2.6
+          $classified += 1
+          continue
         }
       }
+    }
+
+    if ($classified -lt 6) {
+      return $null
     }
 
     $ordered = @(
@@ -857,12 +930,12 @@ function Get-CardSuitHintFromRegionColor {
     }
     $top = $ordered[0]
     $secondScore = if ($ordered.Count -ge 2) { [double]$ordered[1].score } else { 0.0 }
-    if ($top.score -lt 10.0) {
+    if ($top.score -lt 8.0) {
       return $null
     }
 
     $confidence = if ($secondScore -gt 0) { [double]($top.score / $secondScore) } else { 9.99 }
-    if ($confidence -lt 1.15) {
+    if ($confidence -lt 1.20) {
       return $null
     }
 
@@ -1533,7 +1606,8 @@ $status = New-Object System.Windows.Forms.Label
 $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
-$status.Text = ("Local Vision: {0} @ {1}" -f $ollamaVisionModel, $ollamaHost)
+$modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
+$status.Text = ("Local Vision: {0} @ {1} | card mode: {2}" -f $ollamaVisionModel, $ollamaHost, $modeLabel)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
@@ -2077,6 +2151,9 @@ function Run-OcrSingleSlot {
     }
     Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $Slot, $bestCard.variant, $bestCard.source, $preview)
     $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
+    if ($rankOnlyMode) {
+      $token = Convert-ToRankOnlyToken -Token $token
+    }
     $txtLatest.Text = @(
       "run:   single_slot"
       ("slot:  {0}" -f $Slot)
@@ -2152,6 +2229,9 @@ function Run-Ocr {
         continue
       }
       $cards[$slot] = $bestCard.token
+      if ($rankOnlyMode) {
+        $cards[$slot] = Convert-ToRankOnlyToken -Token ([string]$cards[$slot])
+      }
       $cardScores[$slot] = if ($null -ne $bestCard.score) { [int]$bestCard.score } else { -100000 }
       $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
       if ($preview.Length -gt 96) {
@@ -2179,7 +2259,11 @@ function Run-Ocr {
           $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
           $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("rescue_{0}" -f $slot)
           if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
-            $cards[$slot] = ([string]$fallbackCard.token).Trim().ToUpperInvariant()
+            $rescueToken = ([string]$fallbackCard.token).Trim().ToUpperInvariant()
+            if ($rankOnlyMode) {
+              $rescueToken = Convert-ToRankOnlyToken -Token $rescueToken
+            }
+            $cards[$slot] = $rescueToken
             $cardScores[$slot] = if ($null -ne $fallbackCard.score) { [int]$fallbackCard.score } else { -100000 }
           }
         }
@@ -2203,6 +2287,9 @@ function Run-Ocr {
           foreach ($slot in $cardSlotOrder) {
             $tk = ([string]$boardGuess.cards[$slot]).Trim().ToUpperInvariant()
             if ($tk -match "^[AKQJT98765432][SHDC]$") {
+              if ($rankOnlyMode) {
+                $tk = Convert-ToRankOnlyToken -Token $tk
+              }
               $cards[$slot] = $tk
               $cardScores[$slot] = 80
               $rescued += 1
@@ -2215,10 +2302,12 @@ function Run-Ocr {
       }
     }
 
-    $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
-    $cards = $collisionResult.cards
-    foreach ($warn in $collisionResult.warnings) {
-      Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
+    if (-not $rankOnlyMode) {
+      $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
+      $cards = $collisionResult.cards
+      foreach ($warn in $collisionResult.warnings) {
+        Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
+      }
     }
 
     $out = @(
