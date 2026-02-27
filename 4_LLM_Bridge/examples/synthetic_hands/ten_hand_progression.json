@@ -1,0 +1,624 @@
+{
+  "schema_version": "synthetic_hand_pack.v1",
+  "description": "Ten synthetic 9-seat NLHE hand progressions for dry-run testing of decision flow and solver latency.",
+  "notes": [
+    "Each decision_point contains a solver-ready engine_spot payload.",
+    "all stacks and pot values are in chip units with BB=2.",
+    "recommended_options are guidance labels for manual testing, not hard constraints."
+  ],
+  "hands": [
+    {
+      "hand_id": "H01_BTN_vs_BB_top_pair",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 6, "position": "BTN", "hole_cards": ["Ah", "Qh"], "stack_chips": 200},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": [
+          "UTG fold, HJ fold, CO fold",
+          "Hero(BTN) raise to 5",
+          "SB fold, BB call"
+        ]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["Qs", "7h", "2c"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "BB check",
+          "recommended_options": ["check", "bet:6", "bet:10"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
+            "board": ["Qs", "7h", "2c"],
+            "in_position_player": 1,
+            "starting_stack": 200,
+            "starting_pot": 12,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.5, 1.0], "raise_sizes": [1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["Qs", "7h", "2c", "Td"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "BB call flop bet, BB check turn",
+          "recommended_options": ["check", "bet:8", "bet:14"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
+            "board": ["Qs", "7h", "2c", "Td"],
+            "in_position_player": 1,
+            "starting_stack": 194,
+            "starting_pot": 24,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.5, 1.0], "raise_sizes": [1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H02_CO_3bet_pot_overpair",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 4, "position": "CO", "hole_cards": ["Jd", "Jh"], "stack_chips": 240},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": [
+          "HJ open 5",
+          "Hero(CO) 3bet 16",
+          "HJ call"
+        ]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["9s", "5d", "2h"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "HJ check",
+          "recommended_options": ["bet:10", "bet:18", "check"],
+          "engine_spot": {
+            "hero_range": "88+,AJs+,KQs,AQo+",
+            "villain_range": "66+,ATs+,KJs+,QJs,JTs,AJo+,KQo",
+            "board": ["9s", "5d", "2h"],
+            "in_position_player": 1,
+            "starting_stack": 224,
+            "starting_pot": 34,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66], "raise_sizes": [1.0]}, "turn": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["9s", "5d", "2h", "Kd"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "Hero bet flop, HJ call, HJ leads 14 on turn",
+          "recommended_options": ["fold", "call", "raise:40"],
+          "engine_spot": {
+            "hero_range": "88+,AJs+,KQs,AQo+",
+            "villain_range": "66+,ATs+,KJs+,QJs,JTs,AJo+,KQo",
+            "board": ["9s", "5d", "2h", "Kd"],
+            "in_position_player": 1,
+            "starting_stack": 214,
+            "starting_pot": 54,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66], "raise_sizes": [1.0]}, "turn": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H03_UTG_multiway_top_set",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 1, "position": "UTG", "hole_cards": ["Qd", "Qc"], "stack_chips": 220},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 6,
+        "players_to_flop": 3,
+        "action_log": ["Hero(UTG) raise 6", "MP call", "BTN call", "blinds fold"]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["Qs", "Td", "6c"],
+          "players_in_hand": 3,
+          "hero_to_act": true,
+          "last_action": "Hero first to act",
+          "recommended_options": ["bet:8", "bet:16", "check"],
+          "engine_spot": {
+            "hero_range": "55+,AJs+,KQs,AQo+",
+            "villain_range": "22+,A2s+,K9s+,Q9s+,JTs,ATo+,KJo+",
+            "board": ["Qs", "Td", "6c"],
+            "in_position_player": 2,
+            "starting_stack": 214,
+            "starting_pot": 21,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["Qs", "Td", "6c", "9h"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "MP folded flop, BTN called flop bet and bets 18 on turn",
+          "recommended_options": ["call", "raise:54", "all_in"],
+          "engine_spot": {
+            "hero_range": "55+,AJs+,KQs,AQo+",
+            "villain_range": "22+,A2s+,K9s+,Q9s+,JTs,ATo+,KJo+",
+            "board": ["Qs", "Td", "6c", "9h"],
+            "in_position_player": 2,
+            "starting_stack": 206,
+            "starting_pot": 49,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.5, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H04_SB_vs_BB_limped_flushdraw",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 8, "position": "SB", "hole_cards": ["As", "5s"], "stack_chips": 180},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": ["fold to SB", "Hero limp", "BB check"]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["Ks", "8s", "3d"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "Hero first to act",
+          "recommended_options": ["check", "bet:2", "bet:4"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K2s+,Q8s+,J8s+,T8s+,97s+,A8o+,KTo+,QTo+",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,A5o+,K9o+",
+            "board": ["Ks", "8s", "3d"],
+            "in_position_player": 2,
+            "starting_stack": 179,
+            "starting_pot": 4,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.5, 1.0], "raise_sizes": [1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["Ks", "8s", "3d", "Jh"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "BB called flop",
+          "recommended_options": ["check", "bet:4", "bet:8"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K2s+,Q8s+,J8s+,T8s+,97s+,A8o+,KTo+,QTo+",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,A5o+,K9o+",
+            "board": ["Ks", "8s", "3d", "Jh"],
+            "in_position_player": 2,
+            "starting_stack": 177,
+            "starting_pot": 8,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.5, 1.0], "raise_sizes": [1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H05_BTN_bluffcatch_river",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 6, "position": "BTN", "hole_cards": ["Ac", "Jh"], "stack_chips": 260},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": ["Hero(BTN) raise 5", "BB call"]
+      },
+      "decision_points": [
+        {
+          "street": "turn",
+          "board": ["Kd", "9h", "4c", "2s"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "Hero c-bet flop, BB call, BB checks turn",
+          "recommended_options": ["check", "bet:10", "bet:18"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,A9o+,KTo+,QJo",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,A5o+,K9o+",
+            "board": ["Kd", "9h", "4c", "2s"],
+            "in_position_player": 1,
+            "starting_stack": 254,
+            "starting_pot": 24,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "river",
+          "board": ["Kd", "9h", "4c", "2s", "7d"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "Hero checks back turn, BB shoves river",
+          "recommended_options": ["fold", "call"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,A9o+,KTo+,QJo",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,A5o+,K9o+",
+            "board": ["Kd", "9h", "4c", "2s", "7d"],
+            "in_position_player": 1,
+            "starting_stack": 236,
+            "starting_pot": 24,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H06_MP_vs_CO_draw_heavy",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 3, "position": "MP", "hole_cards": ["Th", "Tc"], "stack_chips": 210},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": ["Hero(MP) raise 6", "CO call"]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["9h", "8h", "2d"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "Hero first to act",
+          "recommended_options": ["bet:6", "bet:12", "check"],
+          "engine_spot": {
+            "hero_range": "55+,AJs+,KQs,AQo+",
+            "villain_range": "22+,A2s+,K9s+,Q9s+,J9s+,T9s,98s,ATo+,KJo+",
+            "board": ["9h", "8h", "2d"],
+            "in_position_player": 2,
+            "starting_stack": 204,
+            "starting_pot": 15,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["9h", "8h", "2d", "Kc"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "Hero bet flop, CO call, Hero checks turn, CO bets 14",
+          "recommended_options": ["fold", "call", "raise:42"],
+          "engine_spot": {
+            "hero_range": "55+,AJs+,KQs,AQo+",
+            "villain_range": "22+,A2s+,K9s+,Q9s+,J9s+,T9s,98s,ATo+,KJo+",
+            "board": ["9h", "8h", "2d", "Kc"],
+            "in_position_player": 2,
+            "starting_stack": 192,
+            "starting_pot": 39,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H07_4bet_pot_Ahigh",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 5, "position": "BTN", "hole_cards": ["Ad", "Kd"], "stack_chips": 300},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": ["CO open 5", "Hero(BTN) 3bet 16", "CO 4bet 38", "Hero call"]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["As", "7c", "3h"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "CO bets 22",
+          "recommended_options": ["call", "raise:66", "fold"],
+          "engine_spot": {
+            "hero_range": "QQ+,AKs,AKo",
+            "villain_range": "JJ+,AQs+,AKo",
+            "board": ["As", "7c", "3h"],
+            "in_position_player": 1,
+            "starting_stack": 262,
+            "starting_pot": 77,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 2,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.5], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["As", "7c", "3h", "9d"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "Hero called flop, CO checks turn",
+          "recommended_options": ["check", "bet:28", "bet:52"],
+          "engine_spot": {
+            "hero_range": "QQ+,AKs,AKo",
+            "villain_range": "JJ+,AQs+,AKo",
+            "board": ["As", "7c", "3h", "9d"],
+            "in_position_player": 1,
+            "starting_stack": 240,
+            "starting_pot": 121,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": true,
+            "raise_cap": 2,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.5], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H08_turn_jam_decision",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 2, "position": "BB", "hole_cards": ["Kh", "Qs"], "stack_chips": 90},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 6,
+        "players_to_flop": 3,
+        "action_log": ["HJ raise 5", "BTN call", "Hero(BB) call"]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["Qd", "Jh", "4s"],
+          "players_in_hand": 3,
+          "hero_to_act": false,
+          "last_action": "Hero checks, HJ bets 8, BTN folds",
+          "recommended_options": ["fold", "call", "raise:24"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K8s+,Q8s+,J8s+,T8s+,97s+,A9o+,KTo+,QJo",
+            "villain_range": "55+,A5s+,KTs+,QTs+,JTs,AJo+,KQo",
+            "board": ["Qd", "Jh", "4s"],
+            "in_position_player": 2,
+            "starting_stack": 85,
+            "starting_pot": 17,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["Qd", "Jh", "4s", "Tc"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "Hero called flop, HJ jams turn",
+          "recommended_options": ["fold", "call"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K8s+,Q8s+,J8s+,T8s+,97s+,A9o+,KTo+,QJo",
+            "villain_range": "55+,A5s+,KTs+,QTs+,JTs,AJo+,KQo",
+            "board": ["Qd", "Jh", "4s", "Tc"],
+            "in_position_player": 2,
+            "starting_stack": 77,
+            "starting_pot": 33,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H09_river_value_raise_spot",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 7, "position": "CO", "hole_cards": ["9c", "9d"], "stack_chips": 230},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": ["Hero(CO) raise 5", "BB call"]
+      },
+      "decision_points": [
+        {
+          "street": "river",
+          "board": ["9h", "6s", "3d", "Ks", "3c"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "BB donk bets 10",
+          "recommended_options": ["call", "raise:34", "raise:52"],
+          "engine_spot": {
+            "hero_range": "22+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,A9o+,KTo+,QJo",
+            "villain_range": "22+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,A5o+,K9o+",
+            "board": ["9h", "6s", "3d", "Ks", "3c"],
+            "in_position_player": 1,
+            "starting_stack": 225,
+            "starting_pot": 34,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 5,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    },
+    {
+      "hand_id": "H10_monotone_pressure_board",
+      "table": {"max_seats": 9, "small_blind": 1, "big_blind": 2, "ante": 0},
+      "hero": {"seat": 9, "position": "HJ", "hole_cards": ["Ad", "Kc"], "stack_chips": 250},
+      "preflop_summary": {
+        "players_dealt": 9,
+        "folded_before_flop": 7,
+        "players_to_flop": 2,
+        "action_log": ["Hero(HJ) raise 6", "BTN call"]
+      },
+      "decision_points": [
+        {
+          "street": "flop",
+          "board": ["Qh", "8h", "2h"],
+          "players_in_hand": 2,
+          "hero_to_act": true,
+          "last_action": "Hero first to act",
+          "recommended_options": ["check", "bet:5", "bet:10"],
+          "engine_spot": {
+            "hero_range": "55+,AJs+,KQs,AQo+",
+            "villain_range": "22+,A2s+,K9s+,Q9s+,J9s+,T9s,ATo+,KJo+",
+            "board": ["Qh", "8h", "2h"],
+            "in_position_player": 2,
+            "starting_stack": 244,
+            "starting_pot": 15,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        },
+        {
+          "street": "turn",
+          "board": ["Qh", "8h", "2h", "Tc"],
+          "players_in_hand": 2,
+          "hero_to_act": false,
+          "last_action": "Hero check, BTN bets flop, Hero calls, Hero checks turn BTN bets",
+          "recommended_options": ["fold", "call", "raise:48"],
+          "engine_spot": {
+            "hero_range": "55+,AJs+,KQs,AQo+",
+            "villain_range": "22+,A2s+,K9s+,Q9s+,J9s+,T9s,ATo+,KJo+",
+            "board": ["Qh", "8h", "2h", "Tc"],
+            "in_position_player": 2,
+            "starting_stack": 234,
+            "starting_pot": 35,
+            "minimum_bet": 2,
+            "all_in_threshold": 0.67,
+            "iterations": 6,
+            "min_exploitability": -1.0,
+            "thread_count": 14,
+            "remove_donk_bets": false,
+            "raise_cap": 3,
+            "compress_strategy": true,
+            "bet_sizing": {"flop": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}, "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]}}
+          }
+        }
+      ]
+    }
+  ]
+}

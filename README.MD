@@ -226,6 +226,22 @@ Run a cloned fast-edge profile sweep (same acceptance + A/B/C flow, tuned for lo
 .\scripts\test_fast_profile.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast -ProfileName fast_edge_v1 -RestartServices
 ```
 
+Run synthetic end-to-end process timing (full `/solve` flow on the 10-hand synthetic pack, with bottleneck JSON report):
+
+```powershell
+.\scripts\test_synthetic_pack.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
+```
+
+Direct python runner (same report, custom output path):
+
+```powershell
+python .\4_LLM_Bridge\run_synthetic_hand_pack.py `
+  --pack .\4_LLM_Bridge\examples\synthetic_hands\ten_hand_progression.json `
+  --preset local_qwen3_coder_30b `
+  --runtime-profile fast `
+  --output .\4_LLM_Bridge\examples\synthetic_hands\timing_report.json
+```
+
 `test_fast_profile.ps1` writes a single run folder under `4_LLM_Bridge/examples/fast_profile_runs/` with:
 - profile env snapshot,
 - turn/river acceptance summaries + details,

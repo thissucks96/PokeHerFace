@@ -72,6 +72,7 @@ libs/*.zip
 4_LLM_Bridge/examples/**/multinode_*_spots.*
 4_LLM_Bridge/examples/**/multinode_*.tagged_manifest.json
 4_LLM_Bridge/examples/**/profile_input_manifest*.json
+4_LLM_Bridge/examples/synthetic_hands/timing_report*.json
 
 # Vision extraction runtime artifacts
 5_Vision_Extraction/incoming/*

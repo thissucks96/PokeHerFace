@@ -24,6 +24,7 @@ Production local policy defaults to `qwen3-coder:30b` only; challenger local mod
 - `run_acceptance_gate.py`: CI-style acceptance gate with preflight filtering and pass/fail thresholds.
 - `tag_spot_classes.py`: rollout class tagger for controlled multi-node experiments.
 - `run_true_backtest.py`: A/B/C routing comparison runner with bb/100 proxy, EV delta, fallback/keep, and p50/p95 latency.
+- `run_synthetic_hand_pack.py`: runs synthetic multi-street hand packs through `/solve` and emits per-stage timing + bottleneck JSON.
 - `analyze_shadow_dumps.py`: compares shadow vs challenger backtest records and surfaces per-spot River failure patterns.
 - `node_lock_schema.json`: schema reference.
 - `examples/`: sample payloads.
@@ -415,6 +416,27 @@ Key outputs:
 - `challenger_worse_count` / `challenger_worse_rate`
 - `top_worse_spots` with delta and bb/100 gaps
 - `texture_summary` to identify board classes where challenger leaks EV
+
+## Synthetic End-to-End Timing Report
+
+Run the synthetic 10-hand progression pack and get a JSON report showing:
+- full pass/fail coverage across all decision points,
+- total/request/stage timing distributions,
+- slowest stage (bottleneck) and top slowest decision points.
+
+```powershell
+python .\4_LLM_Bridge\run_synthetic_hand_pack.py `
+  --pack .\4_LLM_Bridge\examples\synthetic_hands\ten_hand_progression.json `
+  --preset local_qwen3_coder_30b `
+  --runtime-profile fast `
+  --output .\4_LLM_Bridge\examples\synthetic_hands\timing_report.json
+```
+
+One-click wrapper (auto-starts local services if needed):
+
+```powershell
+.\scripts\test_synthetic_pack.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
+```
 
 Gate criteria defaults:
 
