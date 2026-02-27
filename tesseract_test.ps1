@@ -1558,7 +1558,8 @@ function Get-CardTokenFromVisionRegion {
   param(
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
     [Parameter(Mandatory = $true)][string]$TmpDir,
-    [Parameter(Mandatory = $true)][string]$SlotTag
+    [Parameter(Mandatory = $true)][string]$SlotTag,
+    [switch]$FastMode
   )
   try {
     $Region = Convert-ToRectangleSafe -Value $Region
@@ -1572,23 +1573,31 @@ function Get-CardTokenFromVisionRegion {
       [int]$y = [int](@($Region.Y)[0])
       [int]$w = [int](@($Region.Width)[0])
       [int]$h = [int](@($Region.Height)[0])
-      [void]$regions.Add([pscustomobject]@{
-        tag = "rankcrop1"
-        rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
-      })
-      [void]$regions.Add([pscustomobject]@{
-        tag = "rankcrop2"
-        rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
-      })
-      [void]$regions.Add([pscustomobject]@{
-        tag = "rankcrop3"
-        rect = New-Object System.Drawing.Rectangle(
-          [int]($x + [Math]::Max(0, [int]($w * 0.03))),
-          [int]($y + [Math]::Max(0, [int]($h * 0.05))),
-          [Math]::Max(8, [int]($w * 0.55)),
-          [Math]::Max(8, [int]($h * 0.65))
-        )
-      })
+      if ($FastMode) {
+        [void]$regions.Add([pscustomobject]@{
+          tag = "rankcrop2"
+          rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
+        })
+      }
+      else {
+        [void]$regions.Add([pscustomobject]@{
+          tag = "rankcrop1"
+          rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
+        })
+        [void]$regions.Add([pscustomobject]@{
+          tag = "rankcrop2"
+          rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
+        })
+        [void]$regions.Add([pscustomobject]@{
+          tag = "rankcrop3"
+          rect = New-Object System.Drawing.Rectangle(
+            [int]($x + [Math]::Max(0, [int]($w * 0.03))),
+            [int]($y + [Math]::Max(0, [int]($h * 0.05))),
+            [Math]::Max(8, [int]($w * 0.55)),
+            [Math]::Max(8, [int]($h * 0.65))
+          )
+        })
+      }
     }
     # Evaluate full card last. Rank-corner crops are generally more reliable.
     [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
@@ -1611,13 +1620,15 @@ function Get-CardTokenFromVisionRegion {
       Capture-RegionImage -Region $entryRect -Path $imgPath
       $imagePaths = New-Object System.Collections.Generic.List[string]
       [void]$imagePaths.Add([string]$imgPath)
-      $contrastPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.contrast.png" -f $SlotTag, $entryTag, $stamp)
-      try {
-        New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
-        [void]$imagePaths.Add([string]$contrastPath)
-      }
-      catch {
-        Write-Log ("Vision preprocess warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+      if (-not $FastMode) {
+        $contrastPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.contrast.png" -f $SlotTag, $entryTag, $stamp)
+        try {
+          New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
+          [void]$imagePaths.Add([string]$contrastPath)
+        }
+        catch {
+          Write-Log ("Vision preprocess warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+        }
       }
 
       foreach ($candidatePath in $imagePaths) {
@@ -1633,7 +1644,7 @@ function Get-CardTokenFromVisionRegion {
       if ($rawText) {
         $token = Get-StrictCardTokenFromVisionText -Text $rawText
       }
-      if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
+      if (-not $FastMode -and $token -notmatch "^[AKQJT98765432][SHDC]$") {
         try {
           $rawRelaxed = Invoke-OllamaVisionCardRelaxed -ImagePath $candidatePath
           $rawRelaxedText = ([string]$rawRelaxed).Trim()
@@ -2794,7 +2805,8 @@ function Resolve-CardTokenForSlot {
   param(
     [Parameter(Mandatory = $true)][string]$Slot,
     [Parameter(Mandatory = $true)][string]$TmpDir,
-    [Parameter(Mandatory = $true)][string]$SlotTagPrefix
+    [Parameter(Mandatory = $true)][string]$SlotTagPrefix,
+    [switch]$FastMode
   )
 
   if (-not ($allSlotOrder -contains $Slot)) {
@@ -2841,7 +2853,7 @@ function Resolve-CardTokenForSlot {
     }
   }
 
-  $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $TmpDir -SlotTag ("{0}_{1}" -f $SlotTagPrefix, $Slot)
+  $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $TmpDir -SlotTag ("{0}_{1}" -f $SlotTagPrefix, $Slot) -FastMode:$FastMode
   if (-not $bestCard -and $tesseractExe) {
     $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $TmpDir -SlotTag ("{0}_{1}" -f $SlotTagPrefix, $Slot)
     if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
@@ -2892,7 +2904,8 @@ function Resolve-CardTokenForSlot {
 
 function Run-OcrSingleSlot {
   param(
-    [Parameter(Mandatory = $true)][string]$Slot
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [switch]$FastMode
   )
 
   if ($isBusy) {
@@ -2925,7 +2938,7 @@ function Run-OcrSingleSlot {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
-    $resolved = Resolve-CardTokenForSlot -Slot $Slot -TmpDir $tmpDir -SlotTagPrefix "single"
+    $resolved = Resolve-CardTokenForSlot -Slot $Slot -TmpDir $tmpDir -SlotTagPrefix "single" -FastMode:$FastMode
     if ($resolved.status -ne "ok") {
       Write-Log ("OCR ERROR [{0}]: {1}" -f $Slot, $resolved.message)
       return
@@ -3264,9 +3277,34 @@ function Run-OcrHeroSet {
   if ($isBusy) {
     return
   }
+  $started = Get-Date
   Reset-NewHandState
-  Run-OcrSingleSlot -Slot "hero1"
-  Run-OcrSingleSlot -Slot "hero2"
+  Run-OcrSingleSlot -Slot "hero1" -FastMode
+  Run-OcrSingleSlot -Slot "hero2" -FastMode
+
+  $heroReady = Get-HeroCardsReady
+  $boardReady = Get-BoardReadyFromTokens -Tokens $lastBoardTokens
+  $elapsed = ((Get-Date) - $started).TotalSeconds
+  $txtLatest.Text = @(
+    "run:   hero_set"
+    ("hero1: {0}" -f [string]$heroCards["hero1"])
+    ("hero2: {0}" -f [string]$heroCards["hero2"])
+    ("hero_ready: {0}" -f $heroReady)
+    ("board_ready: {0}" -f $boardReady)
+    ("elapsed_sec: {0:N2}" -f [double]$elapsed)
+  ) -join "`r`n"
+  Write-Log ("Hero OCR summary: hero1={0}, hero2={1}, hero_ready={2}, board_ready={3}, elapsed={4:N2}s" -f
+    [string]$heroCards["hero1"],
+    [string]$heroCards["hero2"],
+    [bool]$heroReady,
+    [bool]$boardReady,
+    [double]$elapsed) -Type "hero_summary" -Data @{
+      hero1 = [string]$heroCards["hero1"]
+      hero2 = [string]$heroCards["hero2"]
+      hero_ready = [bool]$heroReady
+      board_ready = [bool]$boardReady
+      elapsed_sec = [double]$elapsed
+    }
 }
 
 function Run-OcrTurnSet {
