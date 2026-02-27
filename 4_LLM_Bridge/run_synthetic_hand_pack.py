@@ -287,7 +287,13 @@ def main() -> int:
         stage_stats[label] = _summarize_stage_distribution(success_rows, key)
 
     stage_totals = {label: float(stats.get("total_sec") or 0.0) for label, stats in stage_stats.items()}
-    nonzero_stage_totals = {k: v for k, v in stage_totals.items() if v > 0.0}
+    # Bottleneck should reflect internal stage spend, not duplicated envelope timings.
+    bottleneck_stage_keys = ["llm", "baseline_solver", "locked_solver_total", "bridge_overhead"]
+    nonzero_stage_totals = {
+        k: stage_totals.get(k, 0.0)
+        for k in bottleneck_stage_keys
+        if stage_totals.get(k, 0.0) > 0.0
+    }
 
     bottleneck_by_total: Optional[Dict[str, Any]] = None
     if nonzero_stage_totals:
@@ -302,9 +308,10 @@ def main() -> int:
 
     bottleneck_by_avg: Optional[Dict[str, Any]] = None
     avg_candidates = {
-        label: float(stats["avg_sec"])
-        for label, stats in stage_stats.items()
-        if isinstance(stats.get("avg_sec"), (int, float)) and float(stats["avg_sec"]) > 0.0
+        label: float(stage_stats[label]["avg_sec"])
+        for label in bottleneck_stage_keys
+        if isinstance(stage_stats.get(label, {}).get("avg_sec"), (int, float))
+        and float(stage_stats[label]["avg_sec"]) > 0.0
     }
     if avg_candidates:
         avg_stage = max(avg_candidates, key=avg_candidates.get)
