@@ -81,9 +81,9 @@ $roiAutoScale = $false
 if ($env:POKE_ROI_AUTOSCALE -and ([string]$env:POKE_ROI_AUTOSCALE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $roiAutoScale = $true
 }
-$rankOnlyMode = $true
-if ($env:POKE_RANK_ONLY -and ([string]$env:POKE_RANK_ONLY).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
-  $rankOnlyMode = $false
+$rankOnlyMode = $false
+if ($env:POKE_RANK_ONLY -and ([string]$env:POKE_RANK_ONLY).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $rankOnlyMode = $true
 }
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
@@ -845,11 +845,11 @@ function Get-CardSuitHintFromRegionColor {
       $cardH = [int][Math]::Min($h - $cardY, ($maxY - $minY + 5))
     }
 
-    # Focus on top-left card quadrant where rank+suit glyphs are located.
-    [int]$sampleX = [int][Math]::Max(0, $cardX + [int]($cardW * 0.02))
+    # Focus on most of card face (exclude bottom where chips often overlap).
+    [int]$sampleX = [int][Math]::Max(0, $cardX + [int]($cardW * 0.04))
     [int]$sampleY = [int][Math]::Max(0, $cardY + [int]($cardH * 0.04))
-    [int]$sampleW = [int][Math]::Max(8, [int]($cardW * 0.34))
-    [int]$sampleH = [int][Math]::Max(10, [int]($cardH * 0.44))
+    [int]$sampleW = [int][Math]::Max(10, [int]($cardW * 0.90))
+    [int]$sampleH = [int][Math]::Max(12, [int]($cardH * 0.74))
     if (($sampleX + $sampleW) -gt $w) {
       $sampleW = [int][Math]::Max(1, $w - $sampleX)
     }
@@ -858,10 +858,10 @@ function Get-CardSuitHintFromRegionColor {
     }
 
     $scores = @{
-      H = 0.0
-      D = 0.0
-      C = 0.0
-      S = 0.0
+      H = 0.0  # red hearts
+      D = 0.0  # blue diamonds
+      C = 0.0  # green clubs
+      S = 0.0  # black spades
     }
     $classified = 0
 
@@ -883,7 +883,7 @@ function Get-CardSuitHintFromRegionColor {
         }
 
         # Spades/black suit symbols.
-        if ($lum -le 95 -and $sat -le 58) {
+        if ($lum -le 95 -and $sat -le 65) {
           $scores["S"] += 2.6
           $classified += 1
           continue
@@ -896,17 +896,17 @@ function Get-CardSuitHintFromRegionColor {
 
         # Four-color deck heuristics used by many poker clients:
         # hearts=red, diamonds=blue, clubs=green, spades=black/dark.
-        if ($r -ge 140 -and $r -ge ($g + 26) -and $r -ge ($b + 26)) {
+        if ($r -ge 120 -and $r -ge ($g + 22) -and $r -ge ($b + 22)) {
           $scores["H"] += 3.0
           $classified += 1
           continue
         }
-        if ($b -ge 120 -and $b -ge ($r + 20) -and $b -ge ($g + 14)) {
+        if ($b -ge 105 -and $b -ge ($r + 16) -and $b -ge ($g + 10)) {
           $scores["D"] += 3.0
           $classified += 1
           continue
         }
-        if ($g -ge 120 -and $g -ge ($r + 18) -and $g -ge ($b + 10)) {
+        if ($g -ge 105 -and $g -ge ($r + 16) -and $g -ge ($b + 9)) {
           $scores["C"] += 2.6
           $classified += 1
           continue
@@ -914,7 +914,7 @@ function Get-CardSuitHintFromRegionColor {
       }
     }
 
-    if ($classified -lt 6) {
+    if ($classified -lt 8) {
       return $null
     }
 
@@ -930,12 +930,12 @@ function Get-CardSuitHintFromRegionColor {
     }
     $top = $ordered[0]
     $secondScore = if ($ordered.Count -ge 2) { [double]$ordered[1].score } else { 0.0 }
-    if ($top.score -lt 8.0) {
+    if ($top.score -lt 10.0) {
       return $null
     }
 
     $confidence = if ($secondScore -gt 0) { [double]($top.score / $secondScore) } else { 9.99 }
-    if ($confidence -lt 1.20) {
+    if ($confidence -lt 1.14) {
       return $null
     }
 
@@ -1404,13 +1404,13 @@ function Get-CardTokenFromVisionRegion {
       }
     }
 
-    # Strong per-slot suit correction from ROI color (not only duplicate collisions).
+    # Strong per-slot suit correction from ROI color (suits are mandatory for engine input).
     if ($bestToken -match "^[AKQJT98765432][SHDC]$") {
       $hint = Get-CardSuitHintFromRegionColor -Region $Region
       if ($null -ne $hint -and $hint.suit) {
         $hintSuit = ([string]$hint.suit).ToUpperInvariant()
         $tokenSuit = $bestToken.Substring(1, 1).ToUpperInvariant()
-        if ($hint.score -ge 12.0 -and $hint.confidence -ge 1.22 -and $hintSuit -ne $tokenSuit) {
+        if ($hint.score -ge 10.0 -and $hint.confidence -ge 1.12 -and $hintSuit -ne $tokenSuit) {
           $bestToken = ("{0}{1}" -f $bestToken.Substring(0, 1), $hintSuit)
         }
       }
