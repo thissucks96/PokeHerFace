@@ -917,100 +917,114 @@ function Get-CardTokenFromVisionRegion {
     [Parameter(Mandatory = $true)][string]$TmpDir,
     [Parameter(Mandatory = $true)][string]$SlotTag
   )
-  $Region = Convert-ToRectangleSafe -Value $Region
-  if ($Region.Width -le 0 -or $Region.Height -le 0) {
-    return $null
-  }
-
-  $regions = New-Object System.Collections.Generic.List[object]
-  [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
-  if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
-    [int]$x = [int]$Region.X
-    [int]$y = [int]$Region.Y
-    [int]$w = [int]$Region.Width
-    [int]$h = [int]$Region.Height
-    [void]$regions.Add([pscustomobject]@{
-      tag = "rankcrop1"
-      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
-    })
-    [void]$regions.Add([pscustomobject]@{
-      tag = "rankcrop2"
-      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
-    })
-    [void]$regions.Add([pscustomobject]@{
-      tag = "rankcrop3"
-      rect = New-Object System.Drawing.Rectangle(
-        $x + [Math]::Max(0, [int]($w * 0.03)),
-        $y + [Math]::Max(0, [int]($h * 0.05)),
-        [Math]::Max(8, [int]($w * 0.55)),
-        [Math]::Max(8, [int]($h * 0.65))
-      )
-    })
-  }
-
-  $bestToken = ""
-  $bestRaw = ""
-  $bestSource = ""
-  $bestVariant = ""
-  $bestScore = -100000
-
-  foreach ($entry in $regions) {
-    $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
-    $imgPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.png" -f $SlotTag, $entry.tag, $stamp)
-    Capture-RegionImage -Region $entry.rect -Path $imgPath
-    $imagePaths = New-Object System.Collections.Generic.List[string]
-    [void]$imagePaths.Add([string]$imgPath)
-    $contrastPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.contrast.png" -f $SlotTag, $entry.tag, $stamp)
-    try {
-      New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
-      [void]$imagePaths.Add([string]$contrastPath)
-    }
-    catch {
-      Write-Log ("Vision preprocess warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+  try {
+    $Region = Convert-ToRectangleSafe -Value $Region
+    if ($Region.Width -le 0 -or $Region.Height -le 0) {
+      return $null
     }
 
-    foreach ($candidatePath in $imagePaths) {
+    $regions = New-Object System.Collections.Generic.List[object]
+    [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
+    if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
+      [int]$x = [int](@($Region.X)[0])
+      [int]$y = [int](@($Region.Y)[0])
+      [int]$w = [int](@($Region.Width)[0])
+      [int]$h = [int](@($Region.Height)[0])
+      [void]$regions.Add([pscustomobject]@{
+        tag = "rankcrop1"
+        rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
+      })
+      [void]$regions.Add([pscustomobject]@{
+        tag = "rankcrop2"
+        rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
+      })
+      [void]$regions.Add([pscustomobject]@{
+        tag = "rankcrop3"
+        rect = New-Object System.Drawing.Rectangle(
+          [int]($x + [Math]::Max(0, [int]($w * 0.03))),
+          [int]($y + [Math]::Max(0, [int]($h * 0.05))),
+          [Math]::Max(8, [int]($w * 0.55)),
+          [Math]::Max(8, [int]($h * 0.65))
+        )
+      })
+    }
+
+    $bestToken = ""
+    $bestRaw = ""
+    $bestSource = ""
+    $bestVariant = ""
+    $bestScore = -100000
+
+    foreach ($entry in $regions) {
+      $entryRect = Convert-ToRectangleSafe -Value $entry.rect
+      if ($entryRect.Width -le 0 -or $entryRect.Height -le 0) {
+        continue
+      }
+      $entryTag = [string](@($entry.tag)[0])
+      $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+      $imgPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.png" -f $SlotTag, $entryTag, $stamp)
+      Capture-RegionImage -Region $entryRect -Path $imgPath
+      $imagePaths = New-Object System.Collections.Generic.List[string]
+      [void]$imagePaths.Add([string]$imgPath)
+      $contrastPath = Join-Path $TmpDir ("vision_{0}_{1}_{2}.contrast.png" -f $SlotTag, $entryTag, $stamp)
       try {
-        $raw = Invoke-OllamaVisionCard -ImagePath $candidatePath
+        New-HighContrastVariant -SourcePath $imgPath -TargetPath $contrastPath
+        [void]$imagePaths.Add([string]$contrastPath)
       }
       catch {
-        Write-Log ("Vision call warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
-        continue
+        Write-Log ("Vision preprocess warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
       }
-      $rawText = ([string]$raw).Trim()
-      if (-not $rawText) {
-        continue
-      }
-      $token = Get-StrictCardTokenFromVisionText -Text $rawText
-      if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
-        # Ignore prose/malformed responses; only accept strict rank+suit.
-        continue
-      }
-      $tokenScore = Get-CardTokenScore -Token $token
-      if ($tokenScore -gt $bestScore) {
-        $bestScore = $tokenScore
-        $bestToken = $token
-        $bestRaw = $rawText
-        $bestSource = [string]$entry.tag
-        $bestVariant = [System.IO.Path]::GetFileName($candidatePath)
-      }
-      if ($bestToken -match "^[AKQJT98765432][SHDC]$") {
-        break
+
+      foreach ($candidatePath in $imagePaths) {
+        try {
+          $raw = Invoke-OllamaVisionCard -ImagePath $candidatePath
+        }
+        catch {
+          Write-Log ("Vision call warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+          continue
+        }
+        $rawText = ([string]$raw).Trim()
+        if (-not $rawText) {
+          continue
+        }
+        $token = Get-StrictCardTokenFromVisionText -Text $rawText
+        if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
+          # Ignore prose/malformed responses; only accept strict rank+suit.
+          continue
+        }
+        $tokenScore = Get-CardTokenScore -Token $token
+        if ($tokenScore -gt $bestScore) {
+          $bestScore = $tokenScore
+          $bestToken = $token
+          $bestRaw = $rawText
+          $bestSource = $entryTag
+          $bestVariant = [System.IO.Path]::GetFileName($candidatePath)
+        }
+        if ($bestToken -match "^[AKQJT98765432][SHDC]$") {
+          break
+        }
       }
     }
-  }
 
-  if (-not $bestRaw) {
+    if (-not $bestRaw) {
+      return $null
+    }
+
+    return [pscustomobject]@{
+      token = $bestToken
+      raw_text = $bestRaw
+      label = "vision_llava"
+      variant = $bestVariant
+      source = $bestSource
+      score = $bestScore
+    }
+  }
+  catch {
+    Write-Log ("Card vision internal error ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("Card vision internal error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
     return $null
-  }
-
-  return [pscustomobject]@{
-    token = $bestToken
-    raw_text = $bestRaw
-    label = "vision_llava"
-    variant = $bestVariant
-    source = $bestSource
-    score = $bestScore
   }
 }
 
@@ -1165,6 +1179,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = "Poker Board Vision Tester"
 $form.StartPosition = "CenterScreen"
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+$form.KeyPreview = $true
 $form.Size = New-Object System.Drawing.Size(980, 700)
 $form.MinimumSize = New-Object System.Drawing.Size(980, 700)
 $form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
@@ -1265,7 +1280,7 @@ $btnRestart.BackColor = [System.Drawing.Color]::FromArgb(52, 64, 92)
 $form.Controls.Add($btnRestart)
 
 $btnTargets = New-Object System.Windows.Forms.Button
-$btnTargets.Text = "Targets: On"
+$btnTargets.Text = "Targets: On (F8)"
 $btnTargets.Location = New-Object System.Drawing.Point(610, 156)
 $btnTargets.Size = New-Object System.Drawing.Size(120, 26)
 $btnTargets.FlatStyle = "Flat"
@@ -1547,6 +1562,13 @@ function Close-RoiOverlays {
   $overlayForms.Clear()
 }
 
+function Toggle-RoiOverlays {
+  $script:overlayVisible = -not $overlayVisible
+  $btnTargets.Text = if ($overlayVisible) { "Targets: On (F8)" } else { "Targets: Off (F8)" }
+  Refresh-RoiOverlays
+  Write-Log ("Target overlays {0}." -f (if ($overlayVisible) { "enabled" } else { "hidden" }))
+}
+
 function Run-Ocr {
   if ($isBusy) {
     return
@@ -1761,10 +1783,7 @@ $btnRestart.Add_Click({
 })
 
 $btnTargets.Add_Click({
-  $script:overlayVisible = -not $overlayVisible
-  $btnTargets.Text = if ($overlayVisible) { "Targets: On" } else { "Targets: Off" }
-  Refresh-RoiOverlays
-  Write-Log ("Target overlays {0}." -f (if ($overlayVisible) { "enabled" } else { "hidden" }))
+  Toggle-RoiOverlays
 })
 
 $btnResetRois.Add_Click({
@@ -1790,10 +1809,19 @@ $form.Add_Shown({
   $regionLabel.Text = "Selected: none"
   $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
   $cardStatusLabel.Text = Format-CardSlotStatus
-  $btnTargets.Text = if ($overlayVisible) { "Targets: On" } else { "Targets: Off" }
+  $btnTargets.Text = if ($overlayVisible) { "Targets: On (F8)" } else { "Targets: Off (F8)" }
   Refresh-RoiOverlays
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
+})
+
+$form.Add_KeyDown({
+  param($sender, $e)
+  if ($e.KeyCode -eq [System.Windows.Forms.Keys]::F8) {
+    Toggle-RoiOverlays
+    $e.Handled = $true
+    $e.SuppressKeyPress = $true
+  }
 })
 
 $form.Add_FormClosing({
