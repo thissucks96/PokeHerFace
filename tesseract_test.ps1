@@ -106,6 +106,20 @@ function Set-RoiRectByKey {
   }
 }
 
+function Clone-Flop1ToAllCardRois {
+  $flop1Rect = Get-RoiRectByKey -Key "flop1"
+  if (-not (Test-RegionSelected -Rect $flop1Rect)) {
+    return $false
+  }
+  foreach ($slot in $cardSlotOrder) {
+    Set-RoiRectByKey -Key $slot -Rect $flop1Rect
+  }
+  Save-RoiState -ForceWriteEmpty
+  Close-RoiOverlays
+  Refresh-RoiOverlays
+  return $true
+}
+
 function Save-RoiState {
   param(
     [switch]$ForceWriteEmpty
@@ -1576,7 +1590,7 @@ $btnPick.Add_Click({
       $target = "flop1"
     }
     if ($cardRegions.ContainsKey($target)) {
-      $cardRegions[$target] = $rect
+      Set-RoiRectByKey -Key $target -Rect $rect
       $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
       Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
       if ($target -eq "flop1") {
@@ -1587,11 +1601,13 @@ $btnPick.Add_Click({
           [System.Windows.Forms.MessageBoxIcon]::Question
         )
         if ($cloneChoice -eq [System.Windows.Forms.DialogResult]::Yes) {
-          foreach ($cloneSlot in @("flop2", "flop3", "turn", "river")) {
-            $cardRegions[$cloneSlot] = New-Object System.Drawing.Rectangle($rect.X, $rect.Y, $rect.Width, $rect.Height)
+          $didClone = Clone-Flop1ToAllCardRois
+          if ($didClone) {
+            Write-Log "Cloned flop1 ROI to flop2/flop3/turn/river. Drag each overlay into final position."
           }
-          $didClone = $true
-          Write-Log "Cloned flop1 ROI to flop2/flop3/turn/river. Drag each overlay into final position."
+          else {
+            Write-Log "Clone skipped: flop1 ROI is empty."
+          }
         }
       }
       $cardStatusLabel.Text = Format-CardSlotStatus
@@ -1599,9 +1615,8 @@ $btnPick.Add_Click({
     else {
       Write-Log ("Unknown ROI target: {0}" -f $target)
     }
-    Save-RoiState
-    if ($didClone) {
-      Close-RoiOverlays
+    if (-not $didClone) {
+      Save-RoiState
     }
     Refresh-RoiOverlays
   }
