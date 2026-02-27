@@ -124,6 +124,7 @@ $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $engineHandoffBusy = $false
 $enginePendingJobs = @{}
+$suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
   hero2 = "??"
@@ -2135,7 +2136,7 @@ $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
 $form.Controls.Add($btnRunFlopSet)
 
 $btnRunHero = New-Object System.Windows.Forms.Button
-$btnRunHero.Text = "Run Hero (New)"
+$btnRunHero.Text = "Run Hero"
 $btnRunHero.Location = New-Object System.Drawing.Point(796, 182)
 $btnRunHero.Size = New-Object System.Drawing.Size(160, 28)
 $btnRunHero.FlatStyle = "Flat"
@@ -2959,7 +2960,7 @@ function Run-OcrSingleSlot {
         ("slot:  {0}" -f $Slot)
         "card:  NO_CARD"
       ) -join "`r`n"
-      if ($Slot -in $playerSlotOrder) {
+      if (($Slot -in $playerSlotOrder) -and (-not $suppressHeroAutoSend)) {
         Try-AutoSendHeroCardsToEngine
       }
       return
@@ -2974,7 +2975,7 @@ function Run-OcrSingleSlot {
         ("slot:  {0}" -f $Slot)
         "card:  ??"
       ) -join "`r`n"
-      if ($Slot -in $playerSlotOrder) {
+      if (($Slot -in $playerSlotOrder) -and (-not $suppressHeroAutoSend)) {
         Try-AutoSendHeroCardsToEngine
       }
       return
@@ -2990,7 +2991,9 @@ function Run-OcrSingleSlot {
     }
     if ($Slot -in $playerSlotOrder) {
       $heroCards[$Slot] = $token
-      Try-AutoSendHeroCardsToEngine
+      if (-not $suppressHeroAutoSend) {
+        Try-AutoSendHeroCardsToEngine
+      }
     }
     $txtLatest.Text = @(
       "run:   single_slot"
@@ -3316,45 +3319,33 @@ function Run-OcrHeroSet {
     return
   }
   $started = Get-Date
-  Reset-NewHandState
-  Run-OcrSingleSlot -Slot "hero1" -FastMode
-  Run-OcrSingleSlot -Slot "hero2" -FastMode
-
-  $retrySlots = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in $playerSlotOrder) {
-    $token = [string]$heroCards[$slot]
-    if (-not (Test-CardTokenStrict -Token $token)) {
-      [void]$retrySlots.Add([string]$slot)
-    }
+  Write-Log "Run Hero: scanning hero1 and hero2 only."
+  $script:suppressHeroAutoSend = $true
+  try {
+    Run-OcrSingleSlot -Slot "hero1"
+    Run-OcrSingleSlot -Slot "hero2"
   }
-  if ($retrySlots.Count -gt 0) {
-    Write-Log ("Hero fast-pass incomplete; retrying full OCR for: {0}" -f ($retrySlots -join ", "))
-    foreach ($slot in $retrySlots) {
-      Run-OcrSingleSlot -Slot $slot
-    }
+  finally {
+    $script:suppressHeroAutoSend = $false
   }
 
   $heroReady = Get-HeroCardsReady
-  $boardReady = Get-BoardReadyFromTokens -Tokens $lastBoardTokens
   $elapsed = ((Get-Date) - $started).TotalSeconds
   $txtLatest.Text = @(
-    "run:   hero_set"
+    "run:   hero_only"
     ("hero1: {0}" -f [string]$heroCards["hero1"])
     ("hero2: {0}" -f [string]$heroCards["hero2"])
     ("hero_ready: {0}" -f $heroReady)
-    ("board_ready: {0}" -f $boardReady)
     ("elapsed_sec: {0:N2}" -f [double]$elapsed)
   ) -join "`r`n"
-  Write-Log ("Hero OCR summary: hero1={0}, hero2={1}, hero_ready={2}, board_ready={3}, elapsed={4:N2}s" -f
+  Write-Log ("Hero OCR summary: hero1={0}, hero2={1}, hero_ready={2}, elapsed={3:N2}s" -f
     [string]$heroCards["hero1"],
     [string]$heroCards["hero2"],
     [bool]$heroReady,
-    [bool]$boardReady,
     [double]$elapsed) -Type "hero_summary" -Data @{
       hero1 = [string]$heroCards["hero1"]
       hero2 = [string]$heroCards["hero2"]
       hero_ready = [bool]$heroReady
-      board_ready = [bool]$boardReady
       elapsed_sec = [double]$elapsed
     }
 }
