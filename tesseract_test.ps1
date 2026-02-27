@@ -77,10 +77,35 @@ function Test-RegionSelected {
   return ($Rect.Width -gt 0 -and $Rect.Height -gt 0)
 }
 
+function Convert-ToRectangleSafe {
+  param([object]$Value)
+  if ($null -eq $Value) {
+    return [System.Drawing.Rectangle]::Empty
+  }
+  if ($Value -is [System.Drawing.Rectangle]) {
+    return $Value
+  }
+  if ($Value -is [System.Array]) {
+    foreach ($item in $Value) {
+      if ($item -is [System.Drawing.Rectangle]) {
+        return $item
+      }
+    }
+    return [System.Drawing.Rectangle]::Empty
+  }
+  try {
+    return [System.Drawing.Rectangle]$Value
+  }
+  catch {
+    return [System.Drawing.Rectangle]::Empty
+  }
+}
+
 function Format-CardSlotStatus {
   $missing = New-Object System.Collections.Generic.List[string]
   foreach ($slot in $cardSlotOrder) {
-    if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
       [void]$missing.Add([string]$slot)
     }
   }
@@ -117,9 +142,9 @@ function Normalize-CardToken {
   }
   $suitMatch = [regex]::Match($v, "[SHDC]")
   if (-not $suitMatch.Success) {
-    return ($rankMatch.Value + "?")
+    return ("{0}?" -f [string]$rankMatch.Value)
   }
-  return ($rankMatch.Value + $suitMatch.Value)
+  return ("{0}{1}" -f [string]$rankMatch.Value, [string]$suitMatch.Value)
 }
 
 function Get-OcrProfileSpec {
@@ -350,6 +375,10 @@ function Capture-RegionImage {
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
     [Parameter(Mandatory = $true)][string]$Path
   )
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    throw "Capture-RegionImage received an empty/invalid region."
+  }
   $bmp = New-Object System.Drawing.Bitmap($Region.Width, $Region.Height)
   $graphics = [System.Drawing.Graphics]::FromImage($bmp)
   $graphics.CopyFromScreen($Region.X, $Region.Y, 0, 0, $bmp.Size)
@@ -365,6 +394,10 @@ function Get-BestOcrForRegion {
     [Parameter(Mandatory = $true)][string]$TmpDir,
     [Parameter(Mandatory = $true)][string]$Tag
   )
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    return $null
+  }
   $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
   $imgPath = Join-Path $TmpDir ("capture_{0}_{1}.png" -f $Tag, $stamp)
   Capture-RegionImage -Region $Region -Path $imgPath
@@ -455,15 +488,19 @@ function Get-CardTokenFromRegion {
     [Parameter(Mandatory = $true)][string]$TmpDir,
     [Parameter(Mandatory = $true)][string]$SlotTag
   )
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    return $null
+  }
 
   $regions = New-Object System.Collections.Generic.List[object]
   [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
 
   if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
-    $x = $Region.X
-    $y = $Region.Y
-    $w = $Region.Width
-    $h = $Region.Height
+    [int]$x = [int]$Region.X
+    [int]$y = [int]$Region.Y
+    [int]$w = [int]$Region.Width
+    [int]$h = [int]$Region.Height
     [void]$regions.Add([pscustomobject]@{
       tag = "rankcrop1"
       rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
@@ -578,14 +615,18 @@ function Get-CardTokenFromVisionRegion {
     [Parameter(Mandatory = $true)][string]$TmpDir,
     [Parameter(Mandatory = $true)][string]$SlotTag
   )
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    return $null
+  }
 
   $regions = New-Object System.Collections.Generic.List[object]
   [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
   if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
-    $x = $Region.X
-    $y = $Region.Y
-    $w = $Region.Width
-    $h = $Region.Height
+    [int]$x = [int]$Region.X
+    [int]$y = [int]$Region.Y
+    [int]$w = [int]$Region.Width
+    [int]$h = [int]$Region.Height
     [void]$regions.Add([pscustomobject]@{
       tag = "rankcrop1"
       rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
@@ -881,7 +922,8 @@ function Run-Ocr {
   if ($isCardsProfile) {
     $missing = New-Object System.Collections.Generic.List[string]
     foreach ($slot in $cardSlotOrder) {
-      if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
+      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+      if (-not (Test-RegionSelected -Rect $slotRect)) {
         [void]$missing.Add([string]$slot)
       }
     }
@@ -906,11 +948,12 @@ function Run-Ocr {
         $cards[$slot] = "--"
       }
       foreach ($slot in $cardSlotOrder) {
+        $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
         $bestCard = if ($isVisionCards) {
-          Get-CardTokenFromVisionRegion -Region $cardRegions[$slot] -TmpDir $tmpDir -SlotTag $slot
+          Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
         }
         else {
-          Get-CardTokenFromRegion -Region $cardRegions[$slot] -TmpDir $tmpDir -SlotTag $slot
+          Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
         }
         if (-not $bestCard) {
           $cards[$slot] = "??"
@@ -1045,7 +1088,8 @@ $btnAutoStart.Add_Click({
   if ($isCardsProfile) {
     $missing = New-Object System.Collections.Generic.List[string]
     foreach ($slot in $cardSlotOrder) {
-      if (-not (Test-RegionSelected -Rect $cardRegions[$slot])) {
+      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+      if (-not (Test-RegionSelected -Rect $slotRect)) {
         [void]$missing.Add([string]$slot)
       }
     }
