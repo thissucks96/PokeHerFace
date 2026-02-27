@@ -922,6 +922,35 @@ function Invoke-OllamaVisionCard {
   return [string]$resp.response
 }
 
+function Invoke-OllamaVisionCardRelaxed {
+  param(
+    [Parameter(Mandatory = $true)][string]$ImagePath
+  )
+  $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
+  $b64 = [Convert]::ToBase64String($bytes)
+  $prompt = "Read exactly one poker community card from this image crop. Output one token only in rank+suit form using AKQJT98765432 and shdc (examples: Qd, Tc, 7h). No prose."
+  $payload = @{
+    model = $ollamaVisionModel
+    prompt = $prompt
+    images = @($b64)
+    stream = $false
+    options = @{
+      temperature = 0
+      top_p = 0.2
+      num_predict = 12
+    }
+  }
+  $jsonBody = ConvertTo-Json $payload -Depth 8 -Compress
+  $resp = Invoke-RestMethod -Uri ("{0}/api/generate" -f $ollamaHost.TrimEnd("/")) -Method Post -ContentType "application/json" -Body $jsonBody -TimeoutSec 90
+  if ($null -eq $resp) {
+    return ""
+  }
+  if ($resp.response -is [System.Array]) {
+    return [string]::Join(" ", ($resp.response | ForEach-Object { [string]$_ }))
+  }
+  return [string]$resp.response
+}
+
 function Test-OllamaEndpoint {
   try {
     $null = Invoke-RestMethod -Uri ("{0}/api/tags" -f $ollamaHost.TrimEnd("/")) -Method Get -TimeoutSec 5
@@ -1004,15 +1033,31 @@ function Get-CardTokenFromVisionRegion {
           Write-Log ("Vision call warning ({0}): {1}" -f $SlotTag, $_.Exception.Message)
           continue
         }
-        $rawText = ([string]$raw).Trim()
-        if (-not $rawText) {
-          continue
-        }
+      $rawText = ([string]$raw).Trim()
+      $token = ""
+      if ($rawText) {
         $token = Get-StrictCardTokenFromVisionText -Text $rawText
-        if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
-          # Ignore prose/malformed responses; only accept strict rank+suit.
-          continue
+      }
+      if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
+        try {
+          $rawRelaxed = Invoke-OllamaVisionCardRelaxed -ImagePath $candidatePath
+          $rawRelaxedText = ([string]$rawRelaxed).Trim()
+          if ($rawRelaxedText) {
+            $candidateToken = Get-StrictCardTokenFromVisionText -Text $rawRelaxedText
+            if ($candidateToken -match "^[AKQJT98765432][SHDC]$") {
+              $rawText = $rawRelaxedText
+              $token = $candidateToken
+            }
+          }
         }
+        catch {
+          # Best-effort relaxed pass.
+        }
+      }
+      if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
+        # Ignore prose/malformed responses; only accept strict rank+suit.
+        continue
+      }
         $tokenScore = Get-CardTokenScore -Token $token
         if ($tokenScore -gt $bestScore) {
           $bestScore = $tokenScore
@@ -1583,6 +1628,36 @@ function Toggle-RoiOverlays {
   Write-Log ("Target overlays {0}." -f $stateText)
 }
 
+function Get-UnionCardRoiBounds {
+  param(
+    [int]$PadX = 0,
+    [int]$PadY = 0
+  )
+  $selected = New-Object System.Collections.Generic.List[System.Drawing.Rectangle]
+  foreach ($slot in $cardSlotOrder) {
+    $r = Get-RoiRectByKey -Key $slot
+    if (Test-RegionSelected -Rect $r) {
+      [void]$selected.Add($r)
+    }
+  }
+  if ($selected.Count -eq 0) {
+    return [System.Drawing.Rectangle]::Empty
+  }
+  $minX = ($selected | ForEach-Object { $_.X } | Measure-Object -Minimum).Minimum
+  $minY = ($selected | ForEach-Object { $_.Y } | Measure-Object -Minimum).Minimum
+  $maxR = ($selected | ForEach-Object { $_.X + $_.Width } | Measure-Object -Maximum).Maximum
+  $maxB = ($selected | ForEach-Object { $_.Y + $_.Height } | Measure-Object -Maximum).Maximum
+
+  $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $x = [Math]::Max($virtual.X, [int]$minX - [int]$PadX)
+  $y = [Math]::Max($virtual.Y, [int]$minY - [int]$PadY)
+  $r = [Math]::Min(($virtual.X + $virtual.Width), [int]$maxR + [int]$PadX)
+  $b = [Math]::Min(($virtual.Y + $virtual.Height), [int]$maxB + [int]$PadY)
+  $w = [Math]::Max(1, $r - $x)
+  $h = [Math]::Max(1, $b - $y)
+  return New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+}
+
 function Get-RoiOverlapWarnings {
   $warnings = New-Object System.Collections.Generic.List[string]
   for ($i = 0; $i -lt $cardSlotOrder.Count; $i++) {
@@ -1687,6 +1762,35 @@ function Run-Ocr {
           if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
             $cards[$slot] = ([string]$fallbackCard.token).Trim().ToUpperInvariant()
             $cardScores[$slot] = if ($null -ne $fallbackCard.score) { [int]$fallbackCard.score } else { -100000 }
+          }
+        }
+      }
+    }
+
+    # If everything is unreadable, attempt one union-board rescue pass.
+    $anyValid = $false
+    foreach ($slot in $cardSlotOrder) {
+      if (([string]$cards[$slot]).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
+        $anyValid = $true
+        break
+      }
+    }
+    if (-not $anyValid) {
+      $unionRect = Get-UnionCardRoiBounds -PadX 8 -PadY 8
+      if (Test-RegionSelected -Rect $unionRect) {
+        $boardGuess = Get-BoardTokensFromVisionRegion -Region $unionRect -TmpDir $tmpDir
+        if ($boardGuess -and $boardGuess.cards) {
+          $rescued = 0
+          foreach ($slot in $cardSlotOrder) {
+            $tk = ([string]$boardGuess.cards[$slot]).Trim().ToUpperInvariant()
+            if ($tk -match "^[AKQJT98765432][SHDC]$") {
+              $cards[$slot] = $tk
+              $cardScores[$slot] = 80
+              $rescued += 1
+            }
+          }
+          if ($rescued -gt 0) {
+            Write-Log ("OCR info: union-board rescue recovered {0} card(s)." -f $rescued)
           }
         }
       }
