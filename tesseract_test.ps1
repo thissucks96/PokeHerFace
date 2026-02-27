@@ -133,6 +133,9 @@ $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $engineHandoffBusy = $false
 $enginePendingJobs = @{}
+$engineLastQueuedStateHash = ""
+$engineLastCompletedStateHash = ""
+$engineStateVersion = 0
 $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
@@ -215,6 +218,43 @@ function Clone-Hero1ToHero2Roi {
   Save-RoiState -ForceWriteEmpty
   Refresh-RoiOverlays
   return $true
+}
+
+function Get-EngineStateFingerprintFromJson {
+  param(
+    [Parameter(Mandatory = $true)][string]$JsonText
+  )
+  try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$JsonText)
+      $hash = $sha.ComputeHash($bytes)
+      return ([System.BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant()
+    }
+    finally {
+      $sha.Dispose()
+    }
+  }
+  catch {
+    return ""
+  }
+}
+
+function Stop-AllEngineJobs {
+  param(
+    [string]$Reason = "replace_obsolete"
+  )
+  foreach ($jobId in @($enginePendingJobs.Keys)) {
+    try { Stop-Job -Id ([int]$jobId) -ErrorAction SilentlyContinue } catch {}
+    try { Remove-Job -Id ([int]$jobId) -Force -ErrorAction SilentlyContinue } catch {}
+    Write-Log ("Engine job {0} canceled ({1})." -f [int]$jobId, $Reason) -Type "engine_job_replaced" -Data @{
+      job_id = [int]$jobId
+      reason = [string]$Reason
+    }
+  }
+  $enginePendingJobs.Clear()
+  $script:engineHandoffBusy = $false
+  Update-EngineButtonState
 }
 
 function Should-OfferFlopClonePrompt {
@@ -3154,11 +3194,6 @@ function Queue-EngineSolveForBoard {
     [Parameter(Mandatory = $true)][string]$StageLabel
   )
 
-  if ($engineHandoffBusy) {
-    Write-Log ("Engine handoff skipped: previous solve still running ({0})." -f $StageLabel)
-    return $false
-  }
-
   $heroReady = Get-HeroCardsReady
   $heroTokens = @()
   if ($heroReady) {
@@ -3177,11 +3212,11 @@ function Queue-EngineSolveForBoard {
 
   try {
     $spot = Build-EngineSpotPayload -BoardCards $BoardTokens -Label $StageLabel -HeroCards $heroTokens
-    $requestPayload = @{
+    $requestPayload = [ordered]@{
       spot = $spot
       timeout_sec = [int]$engineSolverTimeoutSec
       quiet = $true
-      llm = @{
+      llm = [ordered]@{
         preset = [string]$engineLlmPreset
       }
     }
@@ -3196,8 +3231,25 @@ function Queue-EngineSolveForBoard {
     $payloadPath = Join-Path $engineOutputDir ("{0}_payload_{1}.json" -f $StageLabel, $stamp)
     $responsePath = Join-Path $engineOutputDir ("{0}_response_{1}.json" -f $StageLabel, $stamp)
     $requestJson = $requestPayload | ConvertTo-Json -Depth 16
+    $stateHash = Get-EngineStateFingerprintFromJson -JsonText $requestJson
+    if ($stateHash -and (($stateHash -eq $engineLastQueuedStateHash) -or ($stateHash -eq $engineLastCompletedStateHash))) {
+      Write-Log ("Engine handoff skipped ({0}): no state change (hash={1})." -f $StageLabel, $stateHash.Substring(0, 10)) -Type "engine_skip_nochange" -Data @{
+        stage = $StageLabel
+        state_hash = $stateHash
+      }
+      return $false
+    }
+    if ($engineHandoffBusy -and $enginePendingJobs.Count -gt 0) {
+      Stop-AllEngineJobs -Reason "newer_state_arrived"
+      Write-Log ("Engine handoff replacing obsolete in-flight state ({0})." -f $StageLabel) -Type "engine_queue_replace" -Data @{
+        stage = $StageLabel
+        new_state_hash = $stateHash
+      }
+    }
     Set-Content -Path $payloadPath -Value $requestJson -Encoding UTF8
 
+    $script:engineStateVersion = [int]$engineStateVersion + 1
+    $stateVersion = [int]$engineStateVersion
     $job = Start-Job -Name ("engine_{0}_{1}" -f $StageLabel, $stamp) -ArgumentList @(
       $bridgeSolveEndpoint,
       $requestJson,
@@ -3251,13 +3303,20 @@ function Queue-EngineSolveForBoard {
       response_path = $responsePath
       stage = $StageLabel
       board = $BoardTokens
+      state_hash = $stateHash
+      state_version = [int]$stateVersion
       queued_utc = (Get-Date).ToUniversalTime()
       max_age_sec = [int]$engineJobMaxAgeSec
     }
+    if ($stateHash) {
+      $script:engineLastQueuedStateHash = $stateHash
+    }
     $script:engineHandoffBusy = $true
     Update-EngineButtonState
-    Write-Log ("Engine job started (id={0}). UI remains responsive." -f $job.Id) -Type "engine_job_started" -Data @{
+    Write-Log ("Engine job started (id={0}, v={1}). UI remains responsive." -f $job.Id, [int]$stateVersion) -Type "engine_job_started" -Data @{
       job_id = [int]$job.Id
+      state_version = [int]$stateVersion
+      state_hash = $stateHash
       stage = $StageLabel
       board = $BoardTokens
       max_age_sec = [int]$engineJobMaxAgeSec
@@ -3667,12 +3726,17 @@ function Poll-EngineJobs {
     }
 
     if ($null -ne $result -and ($result.PSObject.Properties.Name -contains "ok") -and [bool]$result.ok) {
+      if ($meta.ContainsKey("state_hash") -and $meta.state_hash) {
+        $script:engineLastCompletedStateHash = [string]$meta.state_hash
+      }
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
         $result.exploitability,
         $result.node_lock_kept,
         [double]$result.elapsed_sec) -Type "engine_job_completed" -Data @{
         job_id = [int]$jobId
+        state_version = if ($meta.ContainsKey("state_version")) { [int]$meta.state_version } else { 0 }
+        state_hash = if ($meta.ContainsKey("state_hash")) { [string]$meta.state_hash } else { "" }
         strategy = [string]$result.selected_strategy
         exploitability = $result.exploitability
         kept = $result.node_lock_kept

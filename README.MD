@@ -326,6 +326,10 @@ Clickable OCR watcher test utility:
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
 - Engine status is shown in the top header text (`Engine: idle|busy`) instead of changing button labels.
 - Engine queue line now shows active job metadata in real time (`job id`, `stage`, `elapsed`, `max age`), and stale jobs are auto-cleaned on timeout.
+- Engine queue control hardening:
+  - state fingerprint dedupe skips no-change re-queues,
+  - one active state version is enforced,
+  - obsolete in-flight jobs are canceled/replaced when a newer state arrives.
 - Hero auto-send:
   - define `hero` ROI once (tester auto-clones to `hero2`),
   - once both hero cards are identified and board cards are valid, tester auto-queues engine solve.
