@@ -61,6 +61,18 @@ try:
 except ValueError:
     FAST_BASELINE_TIMEOUT_SEC = 60
 try:
+    FAST_BASELINE_TIMEOUT_FLOP_SEC = int(os.environ.get("FAST_BASELINE_TIMEOUT_FLOP_SEC", "12"))
+except ValueError:
+    FAST_BASELINE_TIMEOUT_FLOP_SEC = 12
+try:
+    FAST_BASELINE_TIMEOUT_TURN_SEC = int(os.environ.get("FAST_BASELINE_TIMEOUT_TURN_SEC", "25"))
+except ValueError:
+    FAST_BASELINE_TIMEOUT_TURN_SEC = 25
+try:
+    FAST_BASELINE_TIMEOUT_RIVER_SEC = int(os.environ.get("FAST_BASELINE_TIMEOUT_RIVER_SEC", "25"))
+except ValueError:
+    FAST_BASELINE_TIMEOUT_RIVER_SEC = 25
+try:
     FAST_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LLM_TIMEOUT_SEC", "25"))
 except ValueError:
     FAST_LLM_TIMEOUT_SEC = 25
@@ -731,7 +743,7 @@ def _stage_budget_value(request_timeout: int, cap: int) -> int:
     return max(10, min(timeout, cap_val))
 
 
-def _resolve_stage_budgets(runtime_profile: str, request_timeout: int) -> Dict[str, int]:
+def _resolve_stage_budgets(runtime_profile: str, request_timeout: int, spot: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
     if runtime_profile == "fast":
         baseline_cap = FAST_BASELINE_TIMEOUT_SEC
         llm_cap = FAST_LLM_TIMEOUT_SEC
@@ -744,6 +756,17 @@ def _resolve_stage_budgets(runtime_profile: str, request_timeout: int) -> Dict[s
         locked_total_cap = NORMAL_LOCKED_STAGE_TOTAL_SEC
 
     baseline_timeout = _stage_budget_value(request_timeout, baseline_cap)
+    if runtime_profile == "fast" and isinstance(spot, dict):
+        spot_street = _detect_spot_street(spot)
+        street_cap = None
+        if spot_street == "flop":
+            street_cap = FAST_BASELINE_TIMEOUT_FLOP_SEC
+        elif spot_street == "turn":
+            street_cap = FAST_BASELINE_TIMEOUT_TURN_SEC
+        elif spot_street == "river":
+            street_cap = FAST_BASELINE_TIMEOUT_RIVER_SEC
+        if isinstance(street_cap, int):
+            baseline_timeout = _stage_budget_value(baseline_timeout, street_cap)
     llm_timeout = _stage_budget_value(request_timeout, llm_cap)
     locked_timeout = _stage_budget_value(request_timeout, locked_cap)
     locked_total_timeout = _stage_budget_value(request_timeout, locked_total_cap)
@@ -1035,6 +1058,9 @@ def health() -> Dict[str, Any]:
         "river_candidate_count": RIVER_CANDIDATE_COUNT,
         "runtime_profile_default": RUNTIME_PROFILE_DEFAULT,
         "fast_baseline_timeout_sec": FAST_BASELINE_TIMEOUT_SEC,
+        "fast_baseline_timeout_flop_sec": FAST_BASELINE_TIMEOUT_FLOP_SEC,
+        "fast_baseline_timeout_turn_sec": FAST_BASELINE_TIMEOUT_TURN_SEC,
+        "fast_baseline_timeout_river_sec": FAST_BASELINE_TIMEOUT_RIVER_SEC,
         "fast_llm_timeout_sec": FAST_LLM_TIMEOUT_SEC,
         "fast_locked_timeout_sec": FAST_LOCKED_TIMEOUT_SEC,
         "fast_locked_stage_total_sec": FAST_LOCKED_STAGE_TOTAL_SEC,
@@ -1134,7 +1160,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
     llm_config = dict(request.llm or DEFAULT_LLM_CONFIG)
     runtime_profile = _normalize_runtime_profile(request.runtime_profile)
-    stage_budgets = _resolve_stage_budgets(runtime_profile, request.timeout_sec)
+    stage_budgets = _resolve_stage_budgets(runtime_profile, request.timeout_sec, request.spot)
     _enforce_local_production_policy(llm_config)
     effective_spot = dict(request.spot)
     fast_spot_profile_summary: Optional[Dict[str, Any]] = None

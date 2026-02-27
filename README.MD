@@ -251,6 +251,10 @@ python .\4_LLM_Bridge\run_synthetic_hand_pack.py `
 Bridge runtime profile budgets (`POST /solve`):
 - `runtime_profile=fast`:
   - baseline timeout cap: `FAST_BASELINE_TIMEOUT_SEC` (default `60`)
+  - street baseline caps:
+    - `FAST_BASELINE_TIMEOUT_FLOP_SEC` (default `12`)
+    - `FAST_BASELINE_TIMEOUT_TURN_SEC` (default `25`)
+    - `FAST_BASELINE_TIMEOUT_RIVER_SEC` (default `25`)
   - LLM stage timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
   - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `60`)
   - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `90`)
