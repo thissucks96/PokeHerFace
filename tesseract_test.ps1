@@ -744,6 +744,35 @@ function Get-CardTokenScore {
   return 0
 }
 
+function Get-VisionSourceBonus {
+  param([string]$SourceTag)
+  switch (([string]$SourceTag).Trim().ToLowerInvariant()) {
+    "rankcrop2" { return 30 }
+    "rankcrop3" { return 24 }
+    "rankcrop1" { return 16 }
+    "full" { return 0 }
+    default { return 0 }
+  }
+}
+
+function Get-VisionRawPenalty {
+  param([string]$RawText)
+  $raw = ([string]$RawText).Trim()
+  if (-not $raw) {
+    return -20
+  }
+
+  $penalty = 0
+  # Penalize long prose responses; they correlate with hallucinated card guesses.
+  if ($raw.Length -gt 28) {
+    $penalty -= 12
+  }
+  if ($raw -match "(?i)\b(the|card|visible|shown|image|from a|provided)\b") {
+    $penalty -= 12
+  }
+  return $penalty
+}
+
 function Get-CardSuitHintFromRegionColor {
   param(
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region
@@ -1120,7 +1149,6 @@ function Get-CardTokenFromVisionRegion {
     }
 
     $regions = New-Object System.Collections.Generic.List[object]
-    [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
     if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
       [int]$x = [int](@($Region.X)[0])
       [int]$y = [int](@($Region.Y)[0])
@@ -1144,6 +1172,8 @@ function Get-CardTokenFromVisionRegion {
         )
       })
     }
+    # Evaluate full card last. Rank-corner crops are generally more reliable.
+    [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
 
     $bestToken = ""
     $bestRaw = ""
@@ -1205,15 +1235,26 @@ function Get-CardTokenFromVisionRegion {
         continue
       }
         $tokenScore = Get-CardTokenScore -Token $token
-        if ($tokenScore -gt $bestScore) {
-          $bestScore = $tokenScore
+        $sourceBonus = Get-VisionSourceBonus -SourceTag $entryTag
+        $rawPenalty = Get-VisionRawPenalty -RawText $rawText
+        $suitScore = 0
+        $hint = Get-CardSuitHintFromRegionColor -Region $entryRect
+        if ($null -ne $hint -and $hint.suit) {
+          $tokenSuit = ([string]$token).Substring(1, 1).ToUpperInvariant()
+          if ($tokenSuit -eq ([string]$hint.suit).ToUpperInvariant()) {
+            $suitScore += 8
+          }
+          else {
+            $suitScore -= 10
+          }
+        }
+        $candidateScore = [int]$tokenScore + [int]$sourceBonus + [int]$rawPenalty + [int]$suitScore
+        if ($candidateScore -gt $bestScore) {
+          $bestScore = $candidateScore
           $bestToken = $token
           $bestRaw = $rawText
           $bestSource = $entryTag
           $bestVariant = [System.IO.Path]::GetFileName($candidatePath)
-        }
-        if ($bestToken -match "^[AKQJT98765432][SHDC]$") {
-          break
         }
       }
     }
