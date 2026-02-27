@@ -363,6 +363,17 @@ Backend lifecycle in tester:
   - tester sends vision calls with configurable Ollama `keep_alive` (default `0s`),
   - tester also sends an explicit unload request for the vision model during close/restart.
 
+Queue stress verification helper:
+
+```powershell
+.\scripts\analyze_ui_queue_log.ps1 -UseLatest
+```
+
+This summarizes queue lifecycle events from `session_*.jsonl`:
+- queued / started / completed / failed / timeout
+- replaced / skip_nochange (hash + logical)
+- success rate and skip/replace rates
+
 ## Quick Start (WSL / Linux)
 
 ```bash
