@@ -3021,9 +3021,16 @@ function New-ManualCardSuitMenuItem {
     [Parameter(Mandatory = $true)][string]$SuitToken
   )
   $capturedSlot = [string]$SlotKey
-  $capturedToken = ("{0}{1}" -f [string]$RankToken, [string]$SuitToken).ToUpperInvariant()
+  $capturedSuit = ([string]$SuitToken).ToUpperInvariant()
+  $capturedToken = ("{0}{1}" -f [string]$RankToken, $capturedSuit).ToUpperInvariant()
   $item = New-Object System.Windows.Forms.ToolStripMenuItem
-  $item.Text = [string]$SuitToken
+  $item.Text = switch ($capturedSuit) {
+    "S" { "♠" }
+    "H" { "♥" }
+    "D" { "♦" }
+    "C" { "♣" }
+    default { $capturedSuit }
+  }
   $item.Add_Click({
     Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token $capturedToken
   })
