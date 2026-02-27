@@ -653,6 +653,93 @@ function Capture-RegionImage {
   $bmp.Dispose()
 }
 
+function Get-CardPresenceSignalFromRegion {
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region
+  )
+
+  $Region = Convert-ToRectangleSafe -Value $Region
+  if ($Region.Width -le 0 -or $Region.Height -le 0) {
+    return [pscustomobject]@{
+      likely_card = $false
+      white_ratio = 0.0
+      green_ratio = 0.0
+      sampled = 0
+    }
+  }
+
+  $bmp = $null
+  $gfx = $null
+  try {
+    $bmp = New-Object System.Drawing.Bitmap($Region.Width, $Region.Height)
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $gfx.CopyFromScreen($Region.X, $Region.Y, 0, 0, $bmp.Size)
+
+    [int]$white = 0
+    [int]$green = 0
+    [int]$total = 0
+
+    # Sample every other pixel for speed.
+    for ($y = 0; $y -lt $bmp.Height; $y += 2) {
+      for ($x = 0; $x -lt $bmp.Width; $x += 2) {
+        $px = $bmp.GetPixel($x, $y)
+        [int]$r = $px.R
+        [int]$g = $px.G
+        [int]$b = $px.B
+        $total += 1
+
+        if ($r -ge 175 -and $g -ge 175 -and $b -ge 175) {
+          $white += 1
+        }
+        if ($g -ge 70 -and $g -ge ($r + 20) -and $g -ge ($b + 10)) {
+          $green += 1
+        }
+      }
+    }
+
+    if ($total -le 0) {
+      return [pscustomobject]@{
+        likely_card = $false
+        white_ratio = 0.0
+        green_ratio = 0.0
+        sampled = 0
+      }
+    }
+
+    $whiteRatio = [double]$white / [double]$total
+    $greenRatio = [double]$green / [double]$total
+
+    # Conservative "no card" rule: little white card-face signal + strong felt signal.
+    $likelyCard = $true
+    if ($whiteRatio -lt 0.10 -and $greenRatio -gt 0.60) {
+      $likelyCard = $false
+    }
+
+    return [pscustomobject]@{
+      likely_card = $likelyCard
+      white_ratio = [double]$whiteRatio
+      green_ratio = [double]$greenRatio
+      sampled = [int]$total
+    }
+  }
+  catch {
+    return [pscustomobject]@{
+      likely_card = $true
+      white_ratio = 0.0
+      green_ratio = 0.0
+      sampled = 0
+    }
+  }
+  finally {
+    if ($null -ne $gfx) {
+      $gfx.Dispose()
+    }
+    if ($null -ne $bmp) {
+      $bmp.Dispose()
+    }
+  }
+}
+
 function Get-BestOcrForRegion {
   param(
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
@@ -2180,6 +2267,17 @@ function Run-OcrSingleSlot {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
+    $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
+    if (-not $presence.likely_card) {
+      Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $Slot, [double]$presence.white_ratio, [double]$presence.green_ratio)
+      $txtLatest.Text = @(
+        "run:   single_slot"
+        ("slot:  {0}" -f $Slot)
+        "card:  NO_CARD"
+      ) -join "`r`n"
+      return
+    }
+
     $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("single_{0}" -f $Slot)
     if (-not $bestCard -and $tesseractExe) {
       $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("single_{0}" -f $Slot)
@@ -2278,6 +2376,13 @@ function Run-Ocr {
     $cardScores = @{}
     foreach ($slot in $cardSlotOrder) {
       $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+      $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
+      if (-not $presence.likely_card) {
+        $cards[$slot] = "NO_CARD"
+        $cardScores[$slot] = -100000
+        Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$presence.white_ratio, [double]$presence.green_ratio)
+        continue
+      }
       $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
       if (-not $bestCard -and $tesseractExe) {
         $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
