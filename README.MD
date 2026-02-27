@@ -353,6 +353,8 @@ Clickable OCR watcher test utility:
   - `ENGINE_JOB_MAX_AGE_SEC` (default `max(120, ENGINE_SOLVER_TIMEOUT_SEC+45)`) for stale background-job cleanup
   - `BACKEND_AUTOSTART` (`1`/`0`, default `1`)
   - `OLLAMA_VISION_KEEP_ALIVE` (default `0s`; unloads vision model after each OCR call to free VRAM for solver/LLM work)
+  - `POKE_OCR_PARALLEL` (`1`/`0`, default `1`) enables parallel slot OCR for staged board/hero passes.
+  - `POKE_OCR_PARALLEL_MAX_WORKERS` (default `3`, range `1..8`) caps parallel slot workers.
 
 Backend lifecycle in tester:
 - On launch, tester checks Ollama + bridge endpoints and auto-starts missing services (backend windows start minimized).

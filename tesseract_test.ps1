@@ -129,6 +129,19 @@ $rankOnlyMode = $false
 if ($env:POKE_RANK_ONLY -and ([string]$env:POKE_RANK_ONLY).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $rankOnlyMode = $true
 }
+$ocrParallelEnabled = $true
+if ($env:POKE_OCR_PARALLEL -and ([string]$env:POKE_OCR_PARALLEL).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
+  $ocrParallelEnabled = $false
+}
+$ocrParallelMaxWorkers = 3
+if ($env:POKE_OCR_PARALLEL_MAX_WORKERS) {
+  $parsedWorkers = 0
+  if ([int]::TryParse([string]$env:POKE_OCR_PARALLEL_MAX_WORKERS, [ref]$parsedWorkers)) {
+    if ($parsedWorkers -ge 1 -and $parsedWorkers -le 8) {
+      $ocrParallelMaxWorkers = [int]$parsedWorkers
+    }
+  }
+}
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $engineHandoffBusy = $false
@@ -2090,7 +2103,8 @@ $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
-$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | bridge: {4}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $bridgeSolveEndpoint)
+$parallelLabel = if ($ocrParallelEnabled) { ("parallel({0})" -f [int]$ocrParallelMaxWorkers) } else { "sequential" }
+$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint)
 $status.Text = ("{0} | Engine: idle" -f $statusBaseText)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
@@ -3105,6 +3119,229 @@ function Resolve-CardTokenForSlot {
   }
 }
 
+function Resolve-CardTokensBatch {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$Slots,
+    [Parameter(Mandatory = $true)][string]$TmpDir,
+    [Parameter(Mandatory = $true)][string]$SlotTagPrefix,
+    [switch]$FastMode,
+    [switch]$SkipPresenceCheck
+  )
+
+  $results = @{}
+  foreach ($slot in $Slots) {
+    $results[$slot] = $null
+  }
+  if ($Slots.Count -eq 0) {
+    return $results
+  }
+
+  $canParallel = $ocrParallelEnabled -and ($Slots.Count -gt 1) -and ($null -ne (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue))
+  if (-not $canParallel) {
+    foreach ($slot in $Slots) {
+      $results[$slot] = Resolve-CardTokenForSlot -Slot $slot -TmpDir $TmpDir -SlotTagPrefix $SlotTagPrefix -FastMode:$FastMode -SkipPresenceCheck:$SkipPresenceCheck
+    }
+    return $results
+  }
+
+  $queue = New-Object System.Collections.Generic.Queue[string]
+  foreach ($slot in $Slots) { $queue.Enqueue([string]$slot) }
+  while ($queue.Count -gt 0) {
+    $batch = New-Object System.Collections.Generic.List[string]
+    while ($queue.Count -gt 0 -and $batch.Count -lt [int]$ocrParallelMaxWorkers) {
+      [void]$batch.Add($queue.Dequeue())
+    }
+    $jobs = New-Object System.Collections.Generic.List[object]
+    foreach ($slot in $batch) {
+      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+      if (-not (Test-RegionSelected -Rect $slotRect)) {
+        $results[$slot] = [pscustomobject]@{
+          status = "error"
+          token = "??"
+          preview = ""
+          variant = ""
+          source = ""
+          message = ("ROI not set for {0}" -f $slot)
+          no_card = $false
+          white_ratio = 0.0
+          green_ratio = 0.0
+        }
+        continue
+      }
+      $job = Start-ThreadJob -ArgumentList @(
+        [string]$slot,
+        [int]$slotRect.X, [int]$slotRect.Y, [int]$slotRect.Width, [int]$slotRect.Height,
+        [string]$TmpDir,
+        [string]$SlotTagPrefix,
+        [bool]$FastMode,
+        [bool]$SkipPresenceCheck,
+        [string]$ollamaHost,
+        [string]$ollamaVisionModel,
+        [string]$ollamaVisionKeepAlive
+      ) -ScriptBlock {
+        param(
+          $slotName, $x, $y, $w, $h, $tmpDirPath, $slotPrefix,
+          $fastModeFlag, $skipPresenceFlag, $hostUrl, $visionModel, $keepAliveValue
+        )
+        Add-Type -AssemblyName System.Drawing
+        function Get-Presence {
+          param([int]$rx,[int]$ry,[int]$rw,[int]$rh)
+          $bmp = $null
+          $gfx = $null
+          try {
+            $bmp = New-Object System.Drawing.Bitmap($rw, $rh)
+            $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+            $gfx.CopyFromScreen($rx, $ry, 0, 0, $bmp.Size)
+            [int]$white = 0
+            [int]$green = 0
+            [int]$total = 0
+            for ($py = 0; $py -lt $bmp.Height; $py += 2) {
+              for ($px = 0; $px -lt $bmp.Width; $px += 2) {
+                $c = $bmp.GetPixel($px, $py)
+                $total += 1
+                if ($c.R -ge 175 -and $c.G -ge 175 -and $c.B -ge 175) { $white += 1 }
+                if ($c.G -ge 70 -and $c.G -ge ($c.R + 20) -and $c.G -ge ($c.B + 10)) { $green += 1 }
+              }
+            }
+            if ($total -le 0) {
+              return [pscustomobject]@{ likely_card = $true; white_ratio = 0.0; green_ratio = 0.0 }
+            }
+            $wr = [double]$white / [double]$total
+            $gr = [double]$green / [double]$total
+            $likely = -not ($wr -lt 0.10 -and $gr -gt 0.60)
+            return [pscustomobject]@{ likely_card = $likely; white_ratio = $wr; green_ratio = $gr }
+          }
+          catch {
+            return [pscustomobject]@{ likely_card = $true; white_ratio = 0.0; green_ratio = 0.0 }
+          }
+          finally {
+            if ($null -ne $gfx) { $gfx.Dispose() }
+            if ($null -ne $bmp) { $bmp.Dispose() }
+          }
+        }
+        function Get-TokenFromText {
+          param([string]$text)
+          $raw = ([string]$text).Trim()
+          if (-not $raw) { return "??" }
+          if ($raw -match "(?i)\b([AKQJT98765432])\s*([shdc])\b") { return ($matches[1] + $matches[2]).ToUpperInvariant() }
+          if ($raw -match "(?i)\b(10)\s*([shdc])\b") { return ("T" + $matches[2]).ToUpperInvariant() }
+          $rankMap = @{
+            "ace"="A"; "king"="K"; "queen"="Q"; "jack"="J"; "ten"="T"; "nine"="9"; "eight"="8"; "seven"="7"; "six"="6"; "five"="5"; "four"="4"; "three"="3"; "two"="2"
+          }
+          $suitMap = @{
+            "spade"="S"; "spades"="S"; "heart"="H"; "hearts"="H"; "diamond"="D"; "diamonds"="D"; "club"="C"; "clubs"="C"
+          }
+          $rank = ""
+          $suit = ""
+          foreach ($k in $rankMap.Keys) { if ($raw -match ("(?i)\b{0}\b" -f [regex]::Escape($k))) { $rank = [string]$rankMap[$k]; break } }
+          foreach ($k in $suitMap.Keys) { if ($raw -match ("(?i)\b{0}\b" -f [regex]::Escape($k))) { $suit = [string]$suitMap[$k]; break } }
+          if ($rank -and $suit) { return ($rank + $suit).ToUpperInvariant() }
+          return "??"
+        }
+        function Capture-And-Call {
+          param([int]$cx,[int]$cy,[int]$cw,[int]$ch,[string]$imgPath,[string]$host,[string]$model,[string]$keepAlive)
+          $bmp = $null
+          $gfx = $null
+          try {
+            $bmp = New-Object System.Drawing.Bitmap($cw, $ch)
+            $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+            $gfx.CopyFromScreen($cx, $cy, 0, 0, $bmp.Size)
+            $bmp.Save($imgPath, [System.Drawing.Imaging.ImageFormat]::Png)
+          }
+          finally {
+            if ($null -ne $gfx) { $gfx.Dispose() }
+            if ($null -ne $bmp) { $bmp.Dispose() }
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($imgPath)
+          $b64 = [Convert]::ToBase64String($bytes)
+          $prompt = 'Read exactly one poker community card from this image crop. Return JSON only with key: {"card":"??"}. Replace ?? with a valid rank+suit token only when clearly visible, using ranks AKQJT98765432 and suits shdc. If uncertain keep ??.'
+          $payload = @{
+            model = $model
+            prompt = $prompt
+            images = @($b64)
+            stream = $false
+            keep_alive = $keepAlive
+            format = "json"
+            options = @{ temperature = 0; top_p = 0.1; num_predict = 32 }
+          }
+          $jsonBody = ConvertTo-Json $payload -Depth 8 -Compress
+          $resp = Invoke-RestMethod -Uri ("{0}/api/generate" -f ([string]$host).TrimEnd("/")) -Method Post -ContentType "application/json" -Body $jsonBody -TimeoutSec 90
+          $respText = if ($resp.response -is [System.Array]) { [string]::Join(" ", ($resp.response | ForEach-Object { [string]$_ })) } else { [string]$resp.response }
+          return $respText
+        }
+        try {
+          if ($w -le 0 -or $h -le 0) {
+            return [pscustomobject]@{ slot=$slotName; status="error"; token="??"; preview=""; variant=""; source=""; message="invalid_region"; no_card=$false; white_ratio=0.0; green_ratio=0.0 }
+          }
+          $presence = Get-Presence -rx $x -ry $y -rw $w -rh $h
+          if ((-not $skipPresenceFlag) -and (-not $presence.likely_card)) {
+            return [pscustomobject]@{ slot=$slotName; status="ok"; token="NO_CARD"; preview=""; variant=""; source=""; message=""; no_card=$true; white_ratio=[double]$presence.white_ratio; green_ratio=[double]$presence.green_ratio }
+          }
+
+          $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+          $cropW = [Math]::Max(8, [int]($w * 0.45))
+          $cropH = [Math]::Max(8, [int]($h * 0.52))
+          $imgPath = Join-Path $tmpDirPath ("vision_{0}_{1}_{2}.png" -f $slotPrefix, $slotName, $stamp)
+          $raw = Capture-And-Call -cx $x -cy $y -cw $cropW -ch $cropH -imgPath $imgPath -host $hostUrl -model $visionModel -keepAlive $keepAliveValue
+          $token = Get-TokenFromText -text $raw
+          if ($token -eq "??" -and (-not $fastModeFlag)) {
+            $imgPath2 = Join-Path $tmpDirPath ("vision_{0}_{1}_{2}_full.png" -f $slotPrefix, $slotName, $stamp)
+            $raw2 = Capture-And-Call -cx $x -cy $y -cw $w -ch $h -imgPath $imgPath2 -host $hostUrl -model $visionModel -keepAlive $keepAliveValue
+            $token2 = Get-TokenFromText -text $raw2
+            if ($token2 -ne "??") {
+              $token = $token2
+              $raw = $raw2
+              return [pscustomobject]@{ slot=$slotName; status="ok"; token=$token; preview=[string]$raw; variant=[System.IO.Path]::GetFileName($imgPath2); source="full"; message=""; no_card=$false; white_ratio=[double]$presence.white_ratio; green_ratio=[double]$presence.green_ratio }
+            }
+          }
+          $src = if ($fastModeFlag) { "rankcrop2_fast" } else { "rankcrop2" }
+          return [pscustomobject]@{ slot=$slotName; status="ok"; token=$token; preview=[string]$raw; variant=[System.IO.Path]::GetFileName($imgPath); source=$src; message=""; no_card=$false; white_ratio=[double]$presence.white_ratio; green_ratio=[double]$presence.green_ratio }
+        }
+        catch {
+          return [pscustomobject]@{ slot=$slotName; status="error"; token="??"; preview=""; variant=""; source=""; message=$_.Exception.Message; no_card=$false; white_ratio=0.0; green_ratio=0.0 }
+        }
+      }
+      [void]$jobs.Add($job)
+    }
+    foreach ($job in $jobs) {
+      try {
+        Wait-Job -Id $job.Id -Timeout 120 | Out-Null
+      } catch {}
+      $row = $null
+      try {
+        $rows = Receive-Job -Id $job.Id -ErrorAction SilentlyContinue
+        if ($rows -is [System.Array] -and $rows.Count -gt 0) {
+          $row = $rows[$rows.Count - 1]
+        } else {
+          $row = $rows
+        }
+      } catch {}
+      try { Remove-Job -Id $job.Id -Force -ErrorAction SilentlyContinue } catch {}
+      if ($null -eq $row) { continue }
+      $slotName = [string]$row.slot
+      if (-not $slotName) { continue }
+      $results[$slotName] = [pscustomobject]@{
+        status = [string]$row.status
+        token = [string]$row.token
+        preview = [string]$row.preview
+        variant = [string]$row.variant
+        source = [string]$row.source
+        message = [string]$row.message
+        no_card = [bool]$row.no_card
+        white_ratio = [double]$row.white_ratio
+        green_ratio = [double]$row.green_ratio
+      }
+    }
+  }
+
+  foreach ($slot in $Slots) {
+    if ($null -eq $results[$slot]) {
+      $results[$slot] = Resolve-CardTokenForSlot -Slot $slot -TmpDir $TmpDir -SlotTagPrefix $SlotTagPrefix -FastMode:$FastMode -SkipPresenceCheck:$SkipPresenceCheck
+    }
+  }
+  return $results
+}
+
 function Run-OcrSingleSlot {
   param(
     [Parameter(Mandatory = $true)][string]$Slot,
@@ -3442,7 +3679,7 @@ function Run-OcrBoardSetAndQueueEngine {
   $script:isBusy = $true
   $restoreOverlaysAfter = $false
   $previousKeepAlive = [string]$ollamaVisionKeepAlive
-  $useFastPrimary = $false
+    $useFastPrimary = $true
   try {
     if ($overlayVisible) {
       $restoreOverlaysAfter = $true
@@ -3457,8 +3694,12 @@ function Run-OcrBoardSetAndQueueEngine {
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
     $cards = @{}
     $previewBySlot = @{}
+    $resolvedBatch = Resolve-CardTokensBatch -Slots $Slots -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
     foreach ($slot in $Slots) {
-      $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
+      $resolved = $resolvedBatch[$slot]
+      if ($null -eq $resolved) {
+        $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
+      }
       if ($resolved.status -ne "ok") {
         $cards[$slot] = "??"
         Write-Log ("OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
@@ -3469,7 +3710,18 @@ function Run-OcrBoardSetAndQueueEngine {
         Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
         continue
       }
-      $cards[$slot] = [string]$resolved.token
+      $token = ([string]$resolved.token).Trim().ToUpperInvariant()
+      if ($rankOnlyMode) {
+        $token = Convert-ToRankOnlyToken -Token $token
+      }
+      elseif (Test-CardTokenStrict -Token $token) {
+        $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+        $ovr = Apply-SuitHintOverride -Token $token -Region $slotRect
+        if ($ovr.changed) {
+          $token = [string]$ovr.token
+        }
+      }
+      $cards[$slot] = $token
       $previewBySlot[$slot] = [string]$resolved.preview
       if ($cards[$slot] -eq "??") {
         continue
@@ -3623,8 +3875,12 @@ function Run-OcrHeroSet {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
+    $resolvedBatch = Resolve-CardTokensBatch -Slots $playerSlotOrder -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
     foreach ($slot in $playerSlotOrder) {
-      $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
+      $resolved = $resolvedBatch[$slot]
+      if ($null -eq $resolved) {
+        $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
+      }
       $needsRetry = $false
       if ($resolved.status -ne "ok" -or $resolved.no_card) {
         $needsRetry = $true
