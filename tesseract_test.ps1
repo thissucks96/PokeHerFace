@@ -1902,6 +1902,15 @@ $btnRunRiver.ForeColor = [System.Drawing.Color]::White
 $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
 $form.Controls.Add($btnRunRiver)
 
+$btnRunFlopSet = New-Object System.Windows.Forms.Button
+$btnRunFlopSet.Text = "Run Flop (1-3)"
+$btnRunFlopSet.Location = New-Object System.Drawing.Point(650, 182)
+$btnRunFlopSet.Size = New-Object System.Drawing.Size(140, 28)
+$btnRunFlopSet.FlatStyle = "Flat"
+$btnRunFlopSet.ForeColor = [System.Drawing.Color]::White
+$btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
+$form.Controls.Add($btnRunFlopSet)
+
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = "1) Select ROI target 2) Pick ROI 3) Repeat for all 5 4) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
@@ -2337,6 +2346,111 @@ function Run-OcrSingleSlot {
   }
 }
 
+function Run-OcrFlopSet {
+  if ($isBusy) {
+    return
+  }
+  if (-not (Test-OllamaEndpoint)) {
+    Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
+    return
+  }
+
+  $flopSlots = @("flop1", "flop2", "flop3")
+  $missing = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $flopSlots) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missing.Add([string]$slot)
+    }
+  }
+  if ($missing.Count -gt 0) {
+    Write-Log ("Flop OCR skipped: set flop ROIs first ({0})." -f ($missing -join ", "))
+    return
+  }
+
+  $script:isBusy = $true
+  $restoreOverlaysAfter = $false
+  try {
+    if ($overlayVisible) {
+      $restoreOverlaysAfter = $true
+      Set-OverlayVisibilityForCapture -Enable $false
+      Start-Sleep -Milliseconds 50
+    }
+
+    $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    $cards = @{}
+    foreach ($slot in $flopSlots) {
+      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+      $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
+      if (-not $presence.likely_card) {
+        $cards[$slot] = "NO_CARD"
+        Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$presence.white_ratio, [double]$presence.green_ratio)
+        continue
+      }
+
+      $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("flopset_{0}" -f $slot)
+      if (-not $bestCard -and $tesseractExe) {
+        $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("flopset_{0}" -f $slot)
+        if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
+          $bestCard = $fallbackCard
+          Write-Log ("OCR info [{0}] vision miss; recovered with tesseract fallback." -f $slot)
+        }
+      }
+      if (-not $bestCard) {
+        $cards[$slot] = "??"
+        Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
+        continue
+      }
+
+      $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
+      if ($rankOnlyMode) {
+        $token = Convert-ToRankOnlyToken -Token $token
+      }
+      else {
+        $ovr = Apply-SuitHintOverride -Token $token -Region $slotRect
+        if ($ovr.changed) {
+          $token = [string]$ovr.token
+          Write-Log ("OCR info [{0}] suit override applied: {1}" -f $slot, [string]$ovr.reason)
+        }
+      }
+      $cards[$slot] = $token
+
+      $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
+      if ($preview.Length -gt 96) {
+        $preview = $preview.Substring(0, 96) + "..."
+      }
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $bestCard.variant, $bestCard.source, $token, $preview)
+    }
+
+    $out = @(
+      "run:   flop_only"
+      ("flop1: {0}" -f (if ($cards.ContainsKey("flop1")) { $cards["flop1"] } else { "??" }))
+      ("flop2: {0}" -f (if ($cards.ContainsKey("flop2")) { $cards["flop2"] } else { "??" }))
+      ("flop3: {0}" -f (if ($cards.ContainsKey("flop3")) { $cards["flop3"] } else { "??" }))
+      ("flop:  {0} {1} {2}" -f
+        (if ($cards.ContainsKey("flop1")) { $cards["flop1"] } else { "??" }),
+        (if ($cards.ContainsKey("flop2")) { $cards["flop2"] } else { "??" }),
+        (if ($cards.ContainsKey("flop3")) { $cards["flop3"] } else { "??" }))
+    ) -join "`r`n"
+    $txtLatest.Text = $out
+    Write-Log ("Flop OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
+  }
+  catch {
+    Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
+  }
+  finally {
+    if ($restoreOverlaysAfter) {
+      Set-OverlayVisibilityForCapture -Enable $true
+    }
+    $script:isBusy = $false
+  }
+}
+
 function Run-Ocr {
   if ($isBusy) {
     return
@@ -2596,6 +2710,9 @@ $btnRunTurn.Add_Click({
 })
 $btnRunRiver.Add_Click({
   Run-OcrSingleSlot -Slot "river"
+})
+$btnRunFlopSet.Add_Click({
+  Run-OcrFlopSet
 })
 
 $btnAutoStart.Add_Click({
