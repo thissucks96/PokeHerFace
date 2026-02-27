@@ -107,14 +107,41 @@ function Set-RoiRectByKey {
 }
 
 function Save-RoiState {
+  param(
+    [switch]$ForceWriteEmpty
+  )
   try {
     $dir = Split-Path -Parent $roiStatePath
     if (-not (Test-Path $dir)) {
       New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
+    $existingMap = @{}
+    if (Test-Path $roiStatePath) {
+      try {
+        $existingJson = Get-Content -Path $roiStatePath -Raw -ErrorAction Stop
+        $existingObj = $existingJson | ConvertFrom-Json -ErrorAction Stop
+        foreach ($k in (Get-RoiTargets)) {
+          $n = $existingObj.$k
+          if ($null -eq $n) { continue }
+          $exRect = New-Object System.Drawing.Rectangle([int]$n.x, [int]$n.y, [int]$n.w, [int]$n.h)
+          $existingMap[$k] = $exRect
+        }
+      }
+      catch {
+        # Ignore bad existing file and continue with current snapshot.
+      }
+    }
+
     $payload = @{}
     foreach ($key in (Get-RoiTargets)) {
-      $r = Get-RoiRectByKey -Key $key
+      $rCurrent = Get-RoiRectByKey -Key $key
+      $r = $rCurrent
+      if ((-not $ForceWriteEmpty) -and (-not (Test-RegionSelected -Rect $rCurrent)) -and $existingMap.ContainsKey($key)) {
+        $existingRect = Convert-ToRectangleSafe -Value $existingMap[$key]
+        if (Test-RegionSelected -Rect $existingRect) {
+          $r = $existingRect
+        }
+      }
       $payload[$key] = @{
         x = [int]$r.X
         y = [int]$r.Y
@@ -1553,6 +1580,20 @@ $btnPick.Add_Click({
       $cardRegions[$target] = $rect
       $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
       Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      if ($target -eq "flop1") {
+        $cloneChoice = [System.Windows.Forms.MessageBox]::Show(
+          "Clone flop1 ROI into flop2, flop3, turn, and river so you can drag each box into place?",
+          "Clone ROI?",
+          [System.Windows.Forms.MessageBoxButtons]::YesNo,
+          [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+        if ($cloneChoice -eq [System.Windows.Forms.DialogResult]::Yes) {
+          foreach ($cloneSlot in @("flop2", "flop3", "turn", "river")) {
+            $cardRegions[$cloneSlot] = New-Object System.Drawing.Rectangle($rect.X, $rect.Y, $rect.Width, $rect.Height)
+          }
+          Write-Log "Cloned flop1 ROI to flop2/flop3/turn/river. Drag each overlay into final position."
+        }
+      }
       $cardStatusLabel.Text = Format-CardSlotStatus
     }
     else {
@@ -1648,7 +1689,7 @@ $btnResetRois.Add_Click({
   $script:selectedRegion = [System.Drawing.Rectangle]::Empty
   $regionLabel.Text = "Selected: none"
   $cardStatusLabel.Text = Format-CardSlotStatus
-  Save-RoiState
+  Save-RoiState -ForceWriteEmpty
   Refresh-RoiOverlays
   Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river."
 })
