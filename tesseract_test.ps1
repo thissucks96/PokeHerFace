@@ -1096,6 +1096,15 @@ $btnTargets.ForeColor = [System.Drawing.Color]::White
 $btnTargets.BackColor = [System.Drawing.Color]::FromArgb(44, 72, 96)
 $form.Controls.Add($btnTargets)
 
+$btnResetRois = New-Object System.Windows.Forms.Button
+$btnResetRois.Text = "Reset ROIs"
+$btnResetRois.Location = New-Object System.Drawing.Point(740, 156)
+$btnResetRois.Size = New-Object System.Drawing.Size(120, 26)
+$btnResetRois.FlatStyle = "Flat"
+$btnResetRois.ForeColor = [System.Drawing.Color]::White
+$btnResetRois.BackColor = [System.Drawing.Color]::FromArgb(92, 58, 44)
+$form.Controls.Add($btnResetRois)
+
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = "1) Select ROI target 2) Pick ROI 3) Repeat for all 5 4) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
@@ -1278,7 +1287,7 @@ function New-RoiOverlayForm {
       return
     }
     $state.down = $false
-    Sync-OverlayToRoi -Key $Key -OverlayForm $sender
+    Sync-OverlayToRoi -Key ([string]$state.key) -OverlayForm $sender
   })
 
   # Dragging on the label moves the overlay too.
@@ -1315,7 +1324,7 @@ function New-RoiOverlayForm {
       return
     }
     $state.down = $false
-    Sync-OverlayToRoi -Key $Key -OverlayForm $owner
+    Sync-OverlayToRoi -Key ([string]$state.key) -OverlayForm $owner
   })
 
   return $overlay
@@ -1553,6 +1562,18 @@ $btnTargets.Add_Click({
   $btnTargets.Text = if ($overlayVisible) { "Targets: On" } else { "Targets: Off" }
   Refresh-RoiOverlays
   Write-Log ("Target overlays {0}." -f (if ($overlayVisible) { "enabled" } else { "hidden" }))
+})
+
+$btnResetRois.Add_Click({
+  foreach ($slot in $cardSlotOrder) {
+    $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
+  }
+  $script:selectedRegion = [System.Drawing.Rectangle]::Empty
+  $regionLabel.Text = "Selected: none"
+  $cardStatusLabel.Text = Format-CardSlotStatus
+  Save-RoiState
+  Refresh-RoiOverlays
+  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river."
 })
 
 $cmbCaptureMode.Add_SelectedIndexChanged({
