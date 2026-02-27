@@ -102,6 +102,11 @@ $backendAutoStart = $true
 if ($env:BACKEND_AUTOSTART -and ([string]$env:BACKEND_AUTOSTART).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
   $backendAutoStart = $false
 }
+$uiSessionId = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+$uiLogRoot = Join-Path $PSScriptRoot "5_Vision_Extraction\out\ui_session_logs"
+$uiLogTextPath = Join-Path $uiLogRoot ("session_{0}.log" -f $uiSessionId)
+$uiLogJsonlPath = Join-Path $uiLogRoot ("session_{0}.jsonl" -f $uiSessionId)
+$uiLogLatestPath = Join-Path $uiLogRoot "latest_session.json"
 $roiStatePath = Join-Path (Join-Path $env:APPDATA "PokeHerFace") "vision_tester_rois.json"
 $roiAutoScale = $false
 if ($env:POKE_ROI_AUTOSCALE -and ([string]$env:POKE_ROI_AUTOSCALE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
@@ -115,6 +120,12 @@ $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $engineHandoffBusy = $false
 $enginePendingJobs = @{}
+$heroCards = @{
+  hero1 = "??"
+  hero2 = "??"
+}
+$lastBoardTokens = @()
+$lastHeroAutoSendKey = ""
 $managedOllamaProcess = $null
 $managedBridgeProcess = $null
 $managedOllamaStartedByUi = $false
@@ -122,6 +133,8 @@ $managedBridgeStartedByUi = $false
 $autoEnabled = $false
 $overlayVisible = $true
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
+$playerSlotOrder = @("hero1", "hero2")
+$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2")
 $cardRegions = @{}
 $overlayForms = @{}
 $overlayColors = @{
@@ -131,13 +144,15 @@ $overlayColors = @{
   flop3 = [System.Drawing.Color]::FromArgb(80, 230, 140)
   turn  = [System.Drawing.Color]::FromArgb(255, 215, 90)
   river = [System.Drawing.Color]::FromArgb(255, 150, 80)
+  hero1 = [System.Drawing.Color]::FromArgb(150, 110, 255)
+  hero2 = [System.Drawing.Color]::FromArgb(150, 110, 255)
 }
-foreach ($slot in $cardSlotOrder) {
+foreach ($slot in $allSlotOrder) {
   $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
 }
 
 function Get-RoiTargets {
-  return @("flop1", "flop2", "flop3", "turn", "river")
+  return $allSlotOrder
 }
 
 function Get-RoiRectByKey {
@@ -280,17 +295,46 @@ function Convert-ToRectangleSafe {
 }
 
 function Format-CardSlotStatus {
-  $missing = New-Object System.Collections.Generic.List[string]
+  $missingBoard = New-Object System.Collections.Generic.List[string]
   foreach ($slot in $cardSlotOrder) {
     $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
     if (-not (Test-RegionSelected -Rect $slotRect)) {
-      [void]$missing.Add([string]$slot)
+      [void]$missingBoard.Add([string]$slot)
     }
   }
-  if ($missing.Count -eq 0) {
-    return "Card ROIs: ready (flop1, flop2, flop3, turn, river)"
+
+  $missingHero = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $playerSlotOrder) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missingHero.Add([string]$slot)
+    }
   }
-  return ("Card ROIs missing: {0}" -f ($missing -join ", "))
+
+  $boardStatus = if ($missingBoard.Count -eq 0) { "board ready" } else { ("board missing: {0}" -f ($missingBoard -join ", ")) }
+  $heroStatus = if ($missingHero.Count -eq 0) { "hero ROIs ready" } else { ("hero missing: {0}" -f ($missingHero -join ", ")) }
+  return ("Card ROIs: {0} | {1}" -f $boardStatus, $heroStatus)
+}
+
+function Get-HeroCardsReady {
+  return ((Test-CardTokenStrict -Token $heroCards["hero1"]) -and (Test-CardTokenStrict -Token $heroCards["hero2"]))
+}
+
+function Get-HeroCardsText {
+  return ("{0} {1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
+}
+
+function Get-BoardReadyFromTokens {
+  param([string[]]$Tokens)
+  if ($Tokens.Count -lt 3 -or $Tokens.Count -gt 5) {
+    return $false
+  }
+  foreach ($tk in $Tokens) {
+    if (-not (Test-CardTokenStrict -Token $tk)) {
+      return $false
+    }
+  }
+  return $true
 }
 
 function Normalize-CardToken {
@@ -698,16 +742,26 @@ function Resolve-EngineTemplatePath {
   return [System.IO.Path]::GetFullPath($p)
 }
 
-function Build-FlopEngineSpotPayload {
+function Build-EngineSpotPayload {
   param(
-    [Parameter(Mandatory = $true)][string[]]$FlopCards
+    [Parameter(Mandatory = $true)][string[]]$BoardCards,
+    [string]$Label = "board",
+    [string[]]$HeroCards = @()
   )
-  if ($FlopCards.Count -ne 3) {
-    throw "Build-FlopEngineSpotPayload requires exactly 3 flop cards."
+  if ($BoardCards.Count -lt 3 -or $BoardCards.Count -gt 5) {
+    throw "Build-EngineSpotPayload requires 3 to 5 board cards."
   }
-  foreach ($card in $FlopCards) {
+  foreach ($card in $BoardCards) {
     if (-not (Test-CardTokenStrict -Token $card)) {
-      throw ("Invalid flop card token for engine payload: {0}" -f $card)
+      throw ("Invalid {0} card token for engine payload: {1}" -f $Label, $card)
+    }
+  }
+  if ($HeroCards.Count -ne 0 -and $HeroCards.Count -ne 2) {
+    throw "HeroCards must be empty or contain exactly 2 cards."
+  }
+  foreach ($card in $HeroCards) {
+    if (-not (Test-CardTokenStrict -Token $card)) {
+      throw ("Invalid hero card token for engine payload: {0}" -f $card)
     }
   }
 
@@ -717,70 +771,21 @@ function Build-FlopEngineSpotPayload {
   }
   $templateRaw = Get-Content -Path $templatePath -Raw -Encoding UTF8
   $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
-  $spot.board = @(
-    ([string]$FlopCards[0]).Trim()
-    ([string]$FlopCards[1]).Trim()
-    ([string]$FlopCards[2]).Trim()
-  )
-  return $spot
-}
-
-function Invoke-FlopEngineSolve {
-  param(
-    [Parameter(Mandatory = $true)][string[]]$FlopCards
-  )
-  $spot = Build-FlopEngineSpotPayload -FlopCards $FlopCards
-  $requestPayload = @{
-    spot = $spot
-    timeout_sec = [int]$engineSolverTimeoutSec
-    quiet = $true
-    llm = @{
-      preset = [string]$engineLlmPreset
+  $spot.board = @()
+  foreach ($card in $BoardCards) {
+    $spot.board += ([string]$card).Trim()
+  }
+  if ($HeroCards.Count -eq 2) {
+    if (-not ($spot.PSObject.Properties.Name -contains "meta") -or $null -eq $spot.meta) {
+      $spot | Add-Member -NotePropertyName meta -NotePropertyValue @{} -Force
     }
+    $spot.meta.hero_cards = @(
+      ([string]$HeroCards[0]).Trim()
+      ([string]$HeroCards[1]).Trim()
+    )
+    $spot.meta.capture_source = "vision_tester"
   }
-  if ($engineEnableMultiNode) {
-    $requestPayload.enable_multi_node_locks = $true
-  }
-
-  if (-not (Test-Path $engineOutputDir)) {
-    New-Item -Path $engineOutputDir -ItemType Directory -Force | Out-Null
-  }
-  $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
-  $payloadPath = Join-Path $engineOutputDir ("flop_payload_{0}.json" -f $stamp)
-  $responsePath = Join-Path $engineOutputDir ("flop_response_{0}.json" -f $stamp)
-
-  $requestPayload | ConvertTo-Json -Depth 16 | Set-Content -Path $payloadPath -Encoding UTF8
-  $start = Get-Date
-  $resp = Invoke-RestMethod -Uri $bridgeSolveEndpoint -Method Post -ContentType "application/json" -Body ($requestPayload | ConvertTo-Json -Depth 16) -TimeoutSec ([Math]::Max(60, $engineSolverTimeoutSec + 30))
-  $elapsed = ((Get-Date) - $start).TotalSeconds
-  $resp | ConvertTo-Json -Depth 20 | Set-Content -Path $responsePath -Encoding UTF8
-
-  $selected = ""
-  if ($resp.PSObject.Properties.Name -contains "selected_strategy") {
-    $selected = [string]$resp.selected_strategy
-  }
-  $exploitability = $null
-  if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "exploitability")) {
-    $exploitability = $resp.result.exploitability
-  }
-  $kept = $null
-  if ($resp.PSObject.Properties.Name -contains "node_lock_kept") {
-    $kept = [bool]$resp.node_lock_kept
-  }
-  $llmErr = ""
-  if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
-    $llmErr = [string]$resp.llm_error
-  }
-
-  return [pscustomobject]@{
-    elapsed_sec = [double]$elapsed
-    payload_path = [string]$payloadPath
-    response_path = [string]$responsePath
-    selected_strategy = $selected
-    exploitability = $exploitability
-    node_lock_kept = $kept
-    llm_error = $llmErr
-  }
+  return $spot
 }
 
 function Get-CardPresenceSignalFromRegion {
@@ -2015,7 +2020,7 @@ $btnRunFlop3.BackColor = [System.Drawing.Color]::FromArgb(36, 86, 60)
 $form.Controls.Add($btnRunFlop3)
 
 $btnRunTurn = New-Object System.Windows.Forms.Button
-$btnRunTurn.Text = "Run turn"
+$btnRunTurn.Text = "Run Turn+E"
 $btnRunTurn.Location = New-Object System.Drawing.Point(458, 182)
 $btnRunTurn.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunTurn.FlatStyle = "Flat"
@@ -2024,7 +2029,7 @@ $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
 $form.Controls.Add($btnRunTurn)
 
 $btnRunRiver = New-Object System.Windows.Forms.Button
-$btnRunRiver.Text = "Run river"
+$btnRunRiver.Text = "Run River+E"
 $btnRunRiver.Location = New-Object System.Drawing.Point(554, 182)
 $btnRunRiver.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunRiver.FlatStyle = "Flat"
@@ -2041,8 +2046,26 @@ $btnRunFlopSet.ForeColor = [System.Drawing.Color]::White
 $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
 $form.Controls.Add($btnRunFlopSet)
 
+$btnRunHero1 = New-Object System.Windows.Forms.Button
+$btnRunHero1.Text = "Run hero1"
+$btnRunHero1.Location = New-Object System.Drawing.Point(796, 182)
+$btnRunHero1.Size = New-Object System.Drawing.Size(78, 28)
+$btnRunHero1.FlatStyle = "Flat"
+$btnRunHero1.ForeColor = [System.Drawing.Color]::White
+$btnRunHero1.BackColor = [System.Drawing.Color]::FromArgb(88, 66, 120)
+$form.Controls.Add($btnRunHero1)
+
+$btnRunHero2 = New-Object System.Windows.Forms.Button
+$btnRunHero2.Text = "Run hero2"
+$btnRunHero2.Location = New-Object System.Drawing.Point(878, 182)
+$btnRunHero2.Size = New-Object System.Drawing.Size(78, 28)
+$btnRunHero2.FlatStyle = "Flat"
+$btnRunHero2.ForeColor = [System.Drawing.Color]::White
+$btnRunHero2.BackColor = [System.Drawing.Color]::FromArgb(88, 66, 120)
+$form.Controls.Add($btnRunHero2)
+
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "1) Select ROI target 2) Pick ROI 3) Repeat for all 5 4) Run OCR."
+$hint.Text = "1) Select ROI target 2) Pick ROI 3) Set board+hero ROIs 4) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $hint.Location = New-Object System.Drawing.Point(20, 214)
@@ -2085,6 +2108,8 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("flop3")
 [void]$cmbTarget.Items.Add("turn")
 [void]$cmbTarget.Items.Add("river")
+[void]$cmbTarget.Items.Add("hero1")
+[void]$cmbTarget.Items.Add("hero2")
 $cmbTarget.SelectedIndex = 0
 $cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
@@ -2129,9 +2154,51 @@ $logBox.ForeColor = [System.Drawing.Color]::FromArgb(225, 235, 245)
 $form.Controls.Add($logBox)
 
 function Write-Log {
-  param([string]$Message)
+  param(
+    [string]$Message,
+    [string]$Type = "log",
+    [hashtable]$Data = $null
+  )
   $stamp = (Get-Date).ToString("HH:mm:ss")
-  $logBox.AppendText("[$stamp] $Message`r`n")
+  $line = "[$stamp] $Message"
+  $logBox.AppendText("$line`r`n")
+  try {
+    Add-Content -Path $uiLogTextPath -Value $line -Encoding UTF8
+  }
+  catch {}
+
+  try {
+    $evt = [ordered]@{
+      ts_utc = [DateTime]::UtcNow.ToString("o")
+      session_id = $uiSessionId
+      type = [string]$Type
+      message = [string]$Message
+    }
+    if ($null -ne $Data) {
+      $evt["data"] = $Data
+    }
+    $evtJson = ($evt | ConvertTo-Json -Depth 10 -Compress)
+    Add-Content -Path $uiLogJsonlPath -Value $evtJson -Encoding UTF8
+    $latest = [ordered]@{
+      session_id = $uiSessionId
+      log_text_path = $uiLogTextPath
+      log_jsonl_path = $uiLogJsonlPath
+      updated_utc = [DateTime]::UtcNow.ToString("o")
+    }
+    Set-Content -Path $uiLogLatestPath -Value ($latest | ConvertTo-Json -Depth 5) -Encoding UTF8
+  }
+  catch {}
+}
+
+function Initialize-SessionLogs {
+  try {
+    if (-not (Test-Path $uiLogRoot)) {
+      New-Item -Path $uiLogRoot -ItemType Directory -Force | Out-Null
+    }
+    Set-Content -Path $uiLogTextPath -Value ("# Poker Vision UI Session {0} ({1})" -f $uiSessionId, [DateTime]::UtcNow.ToString("o")) -Encoding UTF8
+    Set-Content -Path $uiLogJsonlPath -Value "" -Encoding UTF8
+  }
+  catch {}
 }
 
 function Resolve-BridgePythonCommand {
@@ -2306,14 +2373,18 @@ function Ensure-BackendsRunning {
   }
 }
 
-function Update-FlopButtonState {
+function Update-EngineButtonState {
   if ($engineHandoffBusy) {
     $btnRunFlopSet.Text = "Run Flop (1-3) [Engine Busy]"
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(90, 80, 32)
+    $btnRunTurn.Text = "Run Turn+E [Busy]"
+    $btnRunRiver.Text = "Run River+E [Busy]"
   }
   else {
     $btnRunFlopSet.Text = "Run Flop (1-3)"
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
+    $btnRunTurn.Text = "Run Turn+E"
+    $btnRunRiver.Text = "Run River+E"
   }
 }
 
@@ -2330,7 +2401,7 @@ function Get-CaptureModeSafe {
 }
 
 function Get-ActiveOverlayKeys {
-  return $cardSlotOrder
+  return $allSlotOrder
 }
 
 function Sync-OverlayToRoi {
@@ -2486,7 +2557,7 @@ function Toggle-RoiOverlays {
   if ($overlayVisible) {
     $stateText = "enabled"
   }
-  Write-Log ("Target overlays {0}." -f $stateText)
+  Write-Log ("Target overlays {0}." -f $stateText) -Type "overlay_toggle" -Data @{ enabled = [bool]$overlayVisible }
 }
 
 function Set-OverlayVisibilityForCapture {
@@ -2554,6 +2625,106 @@ function Get-RoiOverlapWarnings {
   return $warnings
 }
 
+function Resolve-CardTokenForSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$TmpDir,
+    [Parameter(Mandatory = $true)][string]$SlotTagPrefix
+  )
+
+  if (-not ($allSlotOrder -contains $Slot)) {
+    return [pscustomobject]@{
+      status = "error"
+      token = "??"
+      preview = ""
+      variant = ""
+      source = ""
+      message = ("unknown slot: {0}" -f $Slot)
+      no_card = $false
+      white_ratio = 0.0
+      green_ratio = 0.0
+    }
+  }
+
+  $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$Slot]
+  if (-not (Test-RegionSelected -Rect $slotRect)) {
+    return [pscustomobject]@{
+      status = "error"
+      token = "??"
+      preview = ""
+      variant = ""
+      source = ""
+      message = ("ROI not set for {0}" -f $Slot)
+      no_card = $false
+      white_ratio = 0.0
+      green_ratio = 0.0
+    }
+  }
+
+  $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
+  if (-not $presence.likely_card) {
+    return [pscustomobject]@{
+      status = "ok"
+      token = "NO_CARD"
+      preview = ""
+      variant = ""
+      source = ""
+      message = ""
+      no_card = $true
+      white_ratio = [double]$presence.white_ratio
+      green_ratio = [double]$presence.green_ratio
+    }
+  }
+
+  $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $TmpDir -SlotTag ("{0}_{1}" -f $SlotTagPrefix, $Slot)
+  if (-not $bestCard -and $tesseractExe) {
+    $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $TmpDir -SlotTag ("{0}_{1}" -f $SlotTagPrefix, $Slot)
+    if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
+      $bestCard = $fallbackCard
+    }
+  }
+  if (-not $bestCard) {
+    return [pscustomobject]@{
+      status = "ok"
+      token = "??"
+      preview = ""
+      variant = ""
+      source = ""
+      message = ""
+      no_card = $false
+      white_ratio = [double]$presence.white_ratio
+      green_ratio = [double]$presence.green_ratio
+    }
+  }
+
+  $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
+  if ($rankOnlyMode) {
+    $token = Convert-ToRankOnlyToken -Token $token
+  }
+  else {
+    $ovr = Apply-SuitHintOverride -Token $token -Region $slotRect
+    if ($ovr.changed) {
+      $token = [string]$ovr.token
+    }
+  }
+
+  $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
+  if ($preview.Length -gt 96) {
+    $preview = $preview.Substring(0, 96) + "..."
+  }
+  return [pscustomobject]@{
+    status = "ok"
+    token = $token
+    preview = $preview
+    variant = [string]$bestCard.variant
+    source = [string]$bestCard.source
+    message = ""
+    no_card = $false
+    white_ratio = [double]$presence.white_ratio
+    green_ratio = [double]$presence.green_ratio
+  }
+}
+
 function Run-OcrSingleSlot {
   param(
     [Parameter(Mandatory = $true)][string]$Slot
@@ -2562,7 +2733,7 @@ function Run-OcrSingleSlot {
   if ($isBusy) {
     return
   }
-  if (-not ($cardSlotOrder -contains $Slot)) {
+  if (-not ($allSlotOrder -contains $Slot)) {
     Write-Log ("Single-slot OCR skipped: unknown slot '{0}'." -f $Slot)
     return
   }
@@ -2589,61 +2760,309 @@ function Run-OcrSingleSlot {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
-    $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
-    if (-not $presence.likely_card) {
-      Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $Slot, [double]$presence.white_ratio, [double]$presence.green_ratio)
+    $resolved = Resolve-CardTokenForSlot -Slot $Slot -TmpDir $tmpDir -SlotTagPrefix "single"
+    if ($resolved.status -ne "ok") {
+      Write-Log ("OCR ERROR [{0}]: {1}" -f $Slot, $resolved.message)
+      return
+    }
+    if ($resolved.no_card) {
+      if ($Slot -in $playerSlotOrder) {
+        $heroCards[$Slot] = "NO_CARD"
+      }
+      Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $Slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
       $txtLatest.Text = @(
         "run:   single_slot"
         ("slot:  {0}" -f $Slot)
         "card:  NO_CARD"
       ) -join "`r`n"
+      if ($Slot -in $playerSlotOrder) {
+        Try-AutoSendHeroCardsToEngine
+      }
       return
     }
-
-    $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("single_{0}" -f $Slot)
-    if (-not $bestCard -and $tesseractExe) {
-      $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("single_{0}" -f $Slot)
-      if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
-        $bestCard = $fallbackCard
-        Write-Log ("OCR info [{0}] vision miss; recovered with tesseract fallback." -f $Slot)
+    if ($resolved.token -eq "??") {
+      if ($Slot -in $playerSlotOrder) {
+        $heroCards[$Slot] = "??"
       }
-    }
-
-    if (-not $bestCard) {
       Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $Slot)
       $txtLatest.Text = @(
         "run:   single_slot"
         ("slot:  {0}" -f $Slot)
         "card:  ??"
       ) -join "`r`n"
+      if ($Slot -in $playerSlotOrder) {
+        Try-AutoSendHeroCardsToEngine
+      }
       return
     }
 
-    $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
-    if ($preview.Length -gt 96) {
-      $preview = $preview.Substring(0, 96) + "..."
+    $token = [string]$resolved.token
+    Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $resolved.variant, $resolved.source, $token, $resolved.preview) -Type "ocr_slot" -Data @{
+      slot = $Slot
+      parsed = $token
+      raw = [string]$resolved.preview
+      source = [string]$resolved.source
+      variant = [string]$resolved.variant
     }
-    $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
-    if ($rankOnlyMode) {
-      $token = Convert-ToRankOnlyToken -Token $token
-    }
-    if ($rankOnlyMode) {
-    Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $bestCard.variant, $bestCard.source, $token, $preview)
-    }
-    else {
-      $ovr = Apply-SuitHintOverride -Token $token -Region $slotRect
-      if ($ovr.changed) {
-        $token = [string]$ovr.token
-        Write-Log ("OCR info [{0}] suit override applied: {1}" -f $Slot, [string]$ovr.reason)
-      }
-      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $Slot, $bestCard.variant, $bestCard.source, $token, $preview)
+    if ($Slot -in $playerSlotOrder) {
+      $heroCards[$Slot] = $token
+      Try-AutoSendHeroCardsToEngine
     }
     $txtLatest.Text = @(
       "run:   single_slot"
       ("slot:  {0}" -f $Slot)
       ("card:  {0}" -f $token)
-      ("source:{0}/{1}" -f [string]$bestCard.variant, [string]$bestCard.source)
+      ("source:{0}/{1}" -f [string]$resolved.variant, [string]$resolved.source)
     ) -join "`r`n"
+  }
+  catch {
+    Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
+  }
+  finally {
+    if ($restoreOverlaysAfter) {
+      Set-OverlayVisibilityForCapture -Enable $true
+    }
+    $script:isBusy = $false
+  }
+}
+
+function Queue-EngineSolveForBoard {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$BoardTokens,
+    [Parameter(Mandatory = $true)][string]$StageLabel
+  )
+
+  if ($engineHandoffBusy) {
+    Write-Log ("Engine handoff skipped: previous solve still running ({0})." -f $StageLabel)
+    return $false
+  }
+
+  $heroReady = Get-HeroCardsReady
+  $heroTokens = @()
+  if ($heroReady) {
+    $heroTokens = @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+  }
+
+  $boardText = ($BoardTokens -join " ")
+  Write-Log ("Engine handoff queued ({0}): board {1} -> {2}" -f $StageLabel, $boardText, $bridgeSolveEndpoint) -Type "engine_queue" -Data @{
+    stage = $StageLabel
+    board = $BoardTokens
+    hero_cards = if ($heroReady) { $heroTokens } else { @() }
+    endpoint = $bridgeSolveEndpoint
+    llm_preset = $engineLlmPreset
+    solver_timeout_sec = [int]$engineSolverTimeoutSec
+  }
+
+  try {
+    $spot = Build-EngineSpotPayload -BoardCards $BoardTokens -Label $StageLabel -HeroCards $heroTokens
+    $requestPayload = @{
+      spot = $spot
+      timeout_sec = [int]$engineSolverTimeoutSec
+      quiet = $true
+      llm = @{
+        preset = [string]$engineLlmPreset
+      }
+    }
+    if ($engineEnableMultiNode) {
+      $requestPayload.enable_multi_node_locks = $true
+    }
+
+    if (-not (Test-Path $engineOutputDir)) {
+      New-Item -Path $engineOutputDir -ItemType Directory -Force | Out-Null
+    }
+    $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+    $payloadPath = Join-Path $engineOutputDir ("{0}_payload_{1}.json" -f $StageLabel, $stamp)
+    $responsePath = Join-Path $engineOutputDir ("{0}_response_{1}.json" -f $StageLabel, $stamp)
+    $requestJson = $requestPayload | ConvertTo-Json -Depth 16
+    Set-Content -Path $payloadPath -Value $requestJson -Encoding UTF8
+
+    $job = Start-Job -Name ("engine_{0}_{1}" -f $StageLabel, $stamp) -ArgumentList @(
+      $bridgeSolveEndpoint,
+      $requestJson,
+      $responsePath,
+      [int]([Math]::Max(60, $engineSolverTimeoutSec + 30))
+    ) -ScriptBlock {
+      param($endpoint, $requestJsonText, $responsePathValue, $timeoutSecValue)
+      $started = Get-Date
+      try {
+        $resp = Invoke-RestMethod -Uri ([string]$endpoint) -Method Post -ContentType "application/json" -Body ([string]$requestJsonText) -TimeoutSec ([int]$timeoutSecValue)
+        $respJson = $resp | ConvertTo-Json -Depth 20
+        Set-Content -Path ([string]$responsePathValue) -Value $respJson -Encoding UTF8
+        $elapsedSec = ((Get-Date) - $started).TotalSeconds
+        $selected = ""
+        if ($resp.PSObject.Properties.Name -contains "selected_strategy") {
+          $selected = [string]$resp.selected_strategy
+        }
+        $exploitability = $null
+        if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "exploitability")) {
+          $exploitability = $resp.result.exploitability
+        }
+        $kept = $null
+        if ($resp.PSObject.Properties.Name -contains "node_lock_kept") {
+          $kept = [bool]$resp.node_lock_kept
+        }
+        $llmErr = ""
+        if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
+          $llmErr = [string]$resp.llm_error
+        }
+        [pscustomobject]@{
+          ok = $true
+          elapsed_sec = [double]$elapsedSec
+          selected_strategy = $selected
+          exploitability = $exploitability
+          node_lock_kept = $kept
+          llm_error = $llmErr
+          response_path = [string]$responsePathValue
+        }
+      }
+      catch {
+        [pscustomobject]@{
+          ok = $false
+          error = $_.Exception.Message
+          response_path = [string]$responsePathValue
+        }
+      }
+    }
+
+    $enginePendingJobs[$job.Id] = @{
+      payload_path = $payloadPath
+      response_path = $responsePath
+      stage = $StageLabel
+      board = $BoardTokens
+    }
+    $script:engineHandoffBusy = $true
+    Update-EngineButtonState
+    Write-Log ("Engine job started (id={0}). UI remains responsive." -f $job.Id) -Type "engine_job_started" -Data @{
+      job_id = [int]$job.Id
+      stage = $StageLabel
+      board = $BoardTokens
+      payload_path = $payloadPath
+      response_path = $responsePath
+    }
+    Write-Log ("Engine artifacts (pending): payload={0}, response={1}" -f $payloadPath, $responsePath)
+    return $true
+  }
+  catch {
+    Write-Log ("Engine handoff error ({0}): {1}" -f $StageLabel, $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("Engine handoff error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
+    return $false
+  }
+}
+
+function Try-AutoSendHeroCardsToEngine {
+  if (-not (Get-HeroCardsReady)) {
+    return
+  }
+  if (-not (Get-BoardReadyFromTokens -Tokens $lastBoardTokens)) {
+    Write-Log ("Hero cards ready ({0}) but board not ready; auto-send waiting for flop/turn/river capture." -f (Get-HeroCardsText)) -Type "hero_waiting_board"
+    return
+  }
+  $key = ("{0}|{1}|{2}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"], ($lastBoardTokens -join ","))
+  if ($key -eq $lastHeroAutoSendKey) {
+    return
+  }
+  if (Queue-EngineSolveForBoard -BoardTokens $lastBoardTokens -StageLabel "hero_auto") {
+    $script:lastHeroAutoSendKey = $key
+  }
+}
+
+function Run-OcrBoardSetAndQueueEngine {
+  param(
+    [Parameter(Mandatory = $true)][string]$StageLabel,
+    [Parameter(Mandatory = $true)][string[]]$Slots
+  )
+  if ($isBusy) {
+    return
+  }
+  if (-not (Test-OllamaEndpoint)) {
+    Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
+    return
+  }
+
+  $missing = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $Slots) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missing.Add([string]$slot)
+    }
+  }
+  if ($missing.Count -gt 0) {
+    Write-Log ("{0} OCR skipped: set ROIs first ({1})." -f $StageLabel, ($missing -join ", "))
+    return
+  }
+
+  $script:isBusy = $true
+  $restoreOverlaysAfter = $false
+  try {
+    if ($overlayVisible) {
+      $restoreOverlaysAfter = $true
+      Set-OverlayVisibilityForCapture -Enable $false
+      Start-Sleep -Milliseconds 50
+    }
+
+    $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+    $cards = @{}
+    foreach ($slot in $Slots) {
+      $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant())
+      if ($resolved.status -ne "ok") {
+        $cards[$slot] = "??"
+        Write-Log ("OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
+        continue
+      }
+      if ($resolved.no_card) {
+        $cards[$slot] = "NO_CARD"
+        Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
+        continue
+      }
+      $cards[$slot] = [string]$resolved.token
+      if ($cards[$slot] -eq "??") {
+        Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
+        continue
+      }
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $cards[$slot], $resolved.preview) -Type "ocr_slot" -Data @{
+        slot = $slot
+        parsed = $cards[$slot]
+        raw = [string]$resolved.preview
+        source = [string]$resolved.source
+        variant = [string]$resolved.variant
+      }
+    }
+
+    $boardTokens = @()
+    foreach ($slot in $Slots) {
+      $boardTokens += (if ($cards.ContainsKey($slot)) { [string]$cards[$slot] } else { "??" })
+    }
+    $boardReady = Get-BoardReadyFromTokens -Tokens $boardTokens
+    $script:lastBoardTokens = @($boardTokens)
+
+    $outLines = @(
+      ("run:   {0}_only" -f $StageLabel.ToLowerInvariant())
+      ("board: {0}" -f ($boardTokens -join " "))
+      ("board_ready: {0}" -f $boardReady)
+      ("hero_cards: {0}" -f (Get-HeroCardsText))
+    )
+    if ($Slots.Count -ge 3) {
+      $outLines += ("flop:  {0} {1} {2}" -f $boardTokens[0], $boardTokens[1], $boardTokens[2])
+    }
+    $out = ($outLines -join "`r`n")
+    $txtLatest.Text = $out
+    Write-Log ("{0} OCR summary: {1}" -f $StageLabel, ($out -replace "\r?\n", " | ")) -Type "board_summary" -Data @{
+      stage = $StageLabel
+      board = $boardTokens
+      ready = [bool]$boardReady
+      hero_cards = @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    }
+    if (-not $boardReady) {
+      Write-Log ("Engine handoff skipped: {0} board not ready (requires valid rank+suit cards)." -f $StageLabel)
+      return
+    }
+    [void](Queue-EngineSolveForBoard -BoardTokens $boardTokens -StageLabel $StageLabel.ToLowerInvariant())
   }
   catch {
     Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
@@ -2660,225 +3079,22 @@ function Run-OcrSingleSlot {
 }
 
 function Run-OcrFlopSet {
-  if ($isBusy) {
-    return
-  }
-  if (-not (Test-OllamaEndpoint)) {
-    Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
-    return
-  }
+  Run-OcrBoardSetAndQueueEngine -StageLabel "Flop" -Slots @("flop1", "flop2", "flop3")
+}
 
-  $flopSlots = @("flop1", "flop2", "flop3")
-  $missing = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in $flopSlots) {
-    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-    if (-not (Test-RegionSelected -Rect $slotRect)) {
-      [void]$missing.Add([string]$slot)
-    }
-  }
-  if ($missing.Count -gt 0) {
-    Write-Log ("Flop OCR skipped: set flop ROIs first ({0})." -f ($missing -join ", "))
-    return
-  }
+function Run-OcrTurnSet {
+  Run-OcrBoardSetAndQueueEngine -StageLabel "Turn" -Slots @("flop1", "flop2", "flop3", "turn")
+}
 
-  $script:isBusy = $true
-  $restoreOverlaysAfter = $false
-  try {
-    if ($overlayVisible) {
-      $restoreOverlaysAfter = $true
-      Set-OverlayVisibilityForCapture -Enable $false
-      Start-Sleep -Milliseconds 50
-    }
-
-    $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
-    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-
-    $cards = @{}
-    foreach ($slot in $flopSlots) {
-      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-      $presence = Get-CardPresenceSignalFromRegion -Region $slotRect
-      if (-not $presence.likely_card) {
-        $cards[$slot] = "NO_CARD"
-        Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$presence.white_ratio, [double]$presence.green_ratio)
-        continue
-      }
-
-      $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("flopset_{0}" -f $slot)
-      if (-not $bestCard -and $tesseractExe) {
-        $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("flopset_{0}" -f $slot)
-        if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
-          $bestCard = $fallbackCard
-          Write-Log ("OCR info [{0}] vision miss; recovered with tesseract fallback." -f $slot)
-        }
-      }
-      if (-not $bestCard) {
-        $cards[$slot] = "??"
-        Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
-        continue
-      }
-
-      $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
-      if ($rankOnlyMode) {
-        $token = Convert-ToRankOnlyToken -Token $token
-      }
-      else {
-        $ovr = Apply-SuitHintOverride -Token $token -Region $slotRect
-        if ($ovr.changed) {
-          $token = [string]$ovr.token
-          Write-Log ("OCR info [{0}] suit override applied: {1}" -f $slot, [string]$ovr.reason)
-        }
-      }
-      $cards[$slot] = $token
-
-      $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
-      if ($preview.Length -gt 96) {
-        $preview = $preview.Substring(0, 96) + "..."
-      }
-      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $bestCard.variant, $bestCard.source, $token, $preview)
-    }
-
-    $flopTokens = @(
-      if ($cards.ContainsKey("flop1")) { [string]$cards["flop1"] } else { "??" }
-      if ($cards.ContainsKey("flop2")) { [string]$cards["flop2"] } else { "??" }
-      if ($cards.ContainsKey("flop3")) { [string]$cards["flop3"] } else { "??" }
-    )
-    $flopReady = $true
-    foreach ($tk in $flopTokens) {
-      if (-not (Test-CardTokenStrict -Token $tk)) {
-        $flopReady = $false
-        break
-      }
-    }
-
-    $out = @(
-      "run:   flop_only"
-      ("flop1: {0}" -f $flopTokens[0])
-      ("flop2: {0}" -f $flopTokens[1])
-      ("flop3: {0}" -f $flopTokens[2])
-      ("flop:  {0} {1} {2}" -f
-        $flopTokens[0], $flopTokens[1], $flopTokens[2])
-      ("flop_ready: {0}" -f $flopReady)
-    ) -join "`r`n"
-    $txtLatest.Text = $out
-    Write-Log ("Flop OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
-
-    if (-not $flopReady) {
-      Write-Log "Engine handoff skipped: flop not ready (requires 3 valid rank+suit cards)."
-      return
-    }
-
-    if ($engineHandoffBusy) {
-      Write-Log "Engine handoff skipped: previous flop solve still running."
-      return
-    }
-    Write-Log ("Engine handoff queued: flop {0} {1} {2} -> {3}" -f $flopTokens[0], $flopTokens[1], $flopTokens[2], $bridgeSolveEndpoint)
-    try {
-      $spot = Build-FlopEngineSpotPayload -FlopCards $flopTokens
-      $requestPayload = @{
-        spot = $spot
-        timeout_sec = [int]$engineSolverTimeoutSec
-        quiet = $true
-        llm = @{
-          preset = [string]$engineLlmPreset
-        }
-      }
-      if ($engineEnableMultiNode) {
-        $requestPayload.enable_multi_node_locks = $true
-      }
-
-      if (-not (Test-Path $engineOutputDir)) {
-        New-Item -Path $engineOutputDir -ItemType Directory -Force | Out-Null
-      }
-      $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
-      $payloadPath = Join-Path $engineOutputDir ("flop_payload_{0}.json" -f $stamp)
-      $responsePath = Join-Path $engineOutputDir ("flop_response_{0}.json" -f $stamp)
-      $requestJson = $requestPayload | ConvertTo-Json -Depth 16
-      Set-Content -Path $payloadPath -Value $requestJson -Encoding UTF8
-
-      $job = Start-Job -Name ("flop_engine_{0}" -f $stamp) -ArgumentList @(
-        $bridgeSolveEndpoint,
-        $requestJson,
-        $responsePath,
-        [int]([Math]::Max(60, $engineSolverTimeoutSec + 30))
-      ) -ScriptBlock {
-        param($endpoint, $requestJsonText, $responsePathValue, $timeoutSecValue)
-        $started = Get-Date
-        try {
-          $resp = Invoke-RestMethod -Uri ([string]$endpoint) -Method Post -ContentType "application/json" -Body ([string]$requestJsonText) -TimeoutSec ([int]$timeoutSecValue)
-          $respJson = $resp | ConvertTo-Json -Depth 20
-          Set-Content -Path ([string]$responsePathValue) -Value $respJson -Encoding UTF8
-          $elapsedSec = ((Get-Date) - $started).TotalSeconds
-          $selected = ""
-          if ($resp.PSObject.Properties.Name -contains "selected_strategy") {
-            $selected = [string]$resp.selected_strategy
-          }
-          $exploitability = $null
-          if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "exploitability")) {
-            $exploitability = $resp.result.exploitability
-          }
-          $kept = $null
-          if ($resp.PSObject.Properties.Name -contains "node_lock_kept") {
-            $kept = [bool]$resp.node_lock_kept
-          }
-          $llmErr = ""
-          if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
-            $llmErr = [string]$resp.llm_error
-          }
-          [pscustomobject]@{
-            ok = $true
-            elapsed_sec = [double]$elapsedSec
-            selected_strategy = $selected
-            exploitability = $exploitability
-            node_lock_kept = $kept
-            llm_error = $llmErr
-            response_path = [string]$responsePathValue
-          }
-        }
-        catch {
-          [pscustomobject]@{
-            ok = $false
-            error = $_.Exception.Message
-            response_path = [string]$responsePathValue
-          }
-        }
-      }
-
-      $enginePendingJobs[$job.Id] = @{
-        payload_path = $payloadPath
-        response_path = $responsePath
-        flop = ("{0} {1} {2}" -f $flopTokens[0], $flopTokens[1], $flopTokens[2])
-      }
-      $script:engineHandoffBusy = $true
-      Update-FlopButtonState
-      Write-Log ("Engine job started (id={0}). UI remains responsive." -f $job.Id)
-      Write-Log ("Engine artifacts (pending): payload={0}, response={1}" -f $payloadPath, $responsePath)
-    }
-    catch {
-      Write-Log ("Engine handoff error: {0}" -f $_.Exception.Message)
-      if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
-        Write-Log ("Engine handoff error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
-      }
-    }
-  }
-  catch {
-    Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
-    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
-      Write-Log ("OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
-    }
-  }
-  finally {
-    if ($restoreOverlaysAfter) {
-      Set-OverlayVisibilityForCapture -Enable $true
-    }
-    $script:isBusy = $false
-  }
+function Run-OcrRiverSet {
+  Run-OcrBoardSetAndQueueEngine -StageLabel "River" -Slots @("flop1", "flop2", "flop3", "turn", "river")
 }
 
 function Poll-EngineJobs {
   if ($enginePendingJobs.Count -eq 0) {
     if ($engineHandoffBusy) {
       $script:engineHandoffBusy = $false
-      Update-FlopButtonState
+      Update-EngineButtonState
     }
     return
   }
@@ -2916,7 +3132,13 @@ function Poll-EngineJobs {
         $result.selected_strategy,
         $result.exploitability,
         $result.node_lock_kept,
-        [double]$result.elapsed_sec)
+        [double]$result.elapsed_sec) -Type "engine_job_completed" -Data @{
+        job_id = [int]$jobId
+        strategy = [string]$result.selected_strategy
+        exploitability = $result.exploitability
+        kept = $result.node_lock_kept
+        elapsed_sec = [double]$result.elapsed_sec
+      }
       if ($result.llm_error) {
         Write-Log ("Engine llm_error: {0}" -f $result.llm_error)
       }
@@ -2927,7 +3149,10 @@ function Poll-EngineJobs {
       if ($null -ne $result -and ($result.PSObject.Properties.Name -contains "error") -and $result.error) {
         $errMsg = [string]$result.error
       }
-      Write-Log ("Engine job {0} failed: {1}" -f $jobId, $errMsg)
+      Write-Log ("Engine job {0} failed: {1}" -f $jobId, $errMsg) -Type "engine_job_failed" -Data @{
+        job_id = [int]$jobId
+        error = $errMsg
+      }
       Write-Log ("Engine artifacts: payload={0}, response={1}" -f $meta.payload_path, $meta.response_path)
     }
 
@@ -2943,7 +3168,7 @@ function Poll-EngineJobs {
   }
   if ($enginePendingJobs.Count -eq 0 -and $engineHandoffBusy) {
     $script:engineHandoffBusy = $false
-    Update-FlopButtonState
+    Update-EngineButtonState
   }
 }
 
@@ -3208,13 +3433,19 @@ $btnRunFlop3.Add_Click({
   Run-OcrSingleSlot -Slot "flop3"
 })
 $btnRunTurn.Add_Click({
-  Run-OcrSingleSlot -Slot "turn"
+  Run-OcrTurnSet
 })
 $btnRunRiver.Add_Click({
-  Run-OcrSingleSlot -Slot "river"
+  Run-OcrRiverSet
 })
 $btnRunFlopSet.Add_Click({
   Run-OcrFlopSet
+})
+$btnRunHero1.Add_Click({
+  Run-OcrSingleSlot -Slot "hero1"
+})
+$btnRunHero2.Add_Click({
+  Run-OcrSingleSlot -Slot "hero2"
 })
 
 $btnAutoStart.Add_Click({
@@ -3292,27 +3523,39 @@ $btnTargets.Add_Click({
 })
 
 $btnResetRois.Add_Click({
-  foreach ($slot in $cardSlotOrder) {
+  foreach ($slot in $allSlotOrder) {
     $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
   }
+  $heroCards["hero1"] = "??"
+  $heroCards["hero2"] = "??"
+  $script:lastHeroAutoSendKey = ""
+  $script:lastBoardTokens = @()
   $script:selectedRegion = [System.Drawing.Rectangle]::Empty
   $regionLabel.Text = "Selected: none"
   $cardStatusLabel.Text = Format-CardSlotStatus
   Save-RoiState -ForceWriteEmpty
   Refresh-RoiOverlays
-  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river."
+  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river, hero1, hero2."
 })
 
 $cmbCaptureMode.Add_SelectedIndexChanged({
-  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
+  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board and hero cards."
   $cardStatusLabel.Text = Format-CardSlotStatus
   Refresh-RoiOverlays
 })
 
 $form.Add_Shown({
+  Initialize-SessionLogs
+  Write-Log ("Session logs: text={0}, jsonl={1}" -f $uiLogTextPath, $uiLogJsonlPath) -Type "session_start" -Data @{
+    log_text_path = $uiLogTextPath
+    log_jsonl_path = $uiLogJsonlPath
+    bridge_endpoint = $bridgeSolveEndpoint
+    ollama_host = $ollamaHost
+    model = $ollamaVisionModel
+  }
   Load-RoiState
   $regionLabel.Text = "Selected: none"
-  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
+  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board and hero cards."
   $cardStatusLabel.Text = Format-CardSlotStatus
   Update-TargetsButtonText
   Refresh-RoiOverlays
@@ -3343,7 +3586,7 @@ $form.Add_FormClosing({
   catch {}
   $enginePendingJobs.Clear()
   $script:engineHandoffBusy = $false
-  Update-FlopButtonState
+  Update-EngineButtonState
   Stop-ManagedBackends
   Save-RoiState
   Close-RoiOverlays
