@@ -1562,11 +1562,24 @@ function Close-RoiOverlays {
   $overlayForms.Clear()
 }
 
+function Update-TargetsButtonText {
+  if ($overlayVisible) {
+    $btnTargets.Text = "Targets: On (F8)"
+  }
+  else {
+    $btnTargets.Text = "Targets: Off (F8)"
+  }
+}
+
 function Toggle-RoiOverlays {
   $script:overlayVisible = -not $overlayVisible
-  $btnTargets.Text = if ($overlayVisible) { "Targets: On (F8)" } else { "Targets: Off (F8)" }
+  Update-TargetsButtonText
   Refresh-RoiOverlays
-  Write-Log ("Target overlays {0}." -f (if ($overlayVisible) { "enabled" } else { "hidden" }))
+  $stateText = "hidden"
+  if ($overlayVisible) {
+    $stateText = "enabled"
+  }
+  Write-Log ("Target overlays {0}." -f $stateText)
 }
 
 function Run-Ocr {
@@ -1809,7 +1822,7 @@ $form.Add_Shown({
   $regionLabel.Text = "Selected: none"
   $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
   $cardStatusLabel.Text = Format-CardSlotStatus
-  $btnTargets.Text = if ($overlayVisible) { "Targets: On (F8)" } else { "Targets: Off (F8)" }
+  Update-TargetsButtonText
   Refresh-RoiOverlays
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
