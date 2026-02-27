@@ -807,10 +807,10 @@ function Get-CardTokenFromRegion {
     [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
 
     if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
-      [int]$x = [int]$Region.X
-      [int]$y = [int]$Region.Y
-      [int]$w = [int]$Region.Width
-      [int]$h = [int]$Region.Height
+      [int]$x = [int](@($Region.X)[0])
+      [int]$y = [int](@($Region.Y)[0])
+      [int]$w = [int](@($Region.Width)[0])
+      [int]$h = [int](@($Region.Height)[0])
       [void]$regions.Add([pscustomobject]@{
         tag = "rankcrop1"
         rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
@@ -819,13 +819,17 @@ function Get-CardTokenFromRegion {
         tag = "rankcrop2"
         rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
       })
+      [int]$xOffset = [Math]::Max(0, [int]($w * 0.03))
+      [int]$yOffset = [Math]::Max(0, [int]($h * 0.05))
+      [int]$cropW = [Math]::Max(8, [int]($w * 0.55))
+      [int]$cropH = [Math]::Max(8, [int]($h * 0.65))
       [void]$regions.Add([pscustomobject]@{
         tag = "rankcrop3"
         rect = New-Object System.Drawing.Rectangle(
-          $x + [Math]::Max(0, [int]($w * 0.03)),
-          $y + [Math]::Max(0, [int]($h * 0.05)),
-          [Math]::Max(8, [int]($w * 0.55)),
-          [Math]::Max(8, [int]($h * 0.65))
+          [int]($x + $xOffset),
+          [int]($y + $yOffset),
+          $cropW,
+          $cropH
         )
       })
     }
