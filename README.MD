@@ -198,6 +198,18 @@ Run the full stack in one command (`CI + turn/river acceptance + A/B/C`; gauntle
 .\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -IncludeGauntlet
 ```
 
+Run a cloned fast-edge profile sweep (same acceptance + A/B/C flow, tuned for lower latency):
+
+```powershell
+.\scripts\test_fast_profile.ps1 -Preset local_qwen3_coder_30b -ProfileName fast_edge_v1 -RestartServices
+```
+
+`test_fast_profile.ps1` writes a single run folder under `4_LLM_Bridge/examples/fast_profile_runs/` with:
+- profile env snapshot,
+- turn/river acceptance summaries + details,
+- A/B/C backtest report,
+- consolidated `fast_profile.summary.json`.
+
 Run live per-call progress in the terminal for API/local benchmark calls:
 
 ```powershell
