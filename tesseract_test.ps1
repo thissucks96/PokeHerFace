@@ -1180,6 +1180,7 @@ function Get-CardTokenFromVisionRegion {
     $bestSource = ""
     $bestVariant = ""
     $bestScore = -100000
+    $candidateRows = New-Object System.Collections.Generic.List[object]
 
     foreach ($entry in $regions) {
       $entryRect = Convert-ToRectangleSafe -Value $entry.rect
@@ -1249,12 +1250,95 @@ function Get-CardTokenFromVisionRegion {
           }
         }
         $candidateScore = [int]$tokenScore + [int]$sourceBonus + [int]$rawPenalty + [int]$suitScore
+        [void]$candidateRows.Add([pscustomobject]@{
+          token = [string]$token
+          score = [int]$candidateScore
+          source = [string]$entryTag
+          variant = [System.IO.Path]::GetFileName($candidatePath)
+          raw = [string]$rawText
+        })
         if ($candidateScore -gt $bestScore) {
           $bestScore = $candidateScore
           $bestToken = $token
           $bestRaw = $rawText
           $bestSource = $entryTag
           $bestVariant = [System.IO.Path]::GetFileName($candidatePath)
+        }
+      }
+    }
+
+    if ($candidateRows.Count -eq 0) {
+      return $null
+    }
+
+    # Weighted consensus across all valid candidates (rank first, then suit).
+    $rankTotals = @{}
+    foreach ($row in $candidateRows) {
+      $token = ([string]$row.token).Trim().ToUpperInvariant()
+      if ($token -notmatch "^[AKQJT98765432][SHDC]$") { continue }
+      $rank = $token.Substring(0, 1)
+      if (-not $rankTotals.ContainsKey($rank)) {
+        $rankTotals[$rank] = 0
+      }
+      $rankTotals[$rank] = [int]$rankTotals[$rank] + [int]$row.score
+    }
+
+    $chosenRank = ""
+    $rankBest = -100000
+    foreach ($rank in $rankTotals.Keys) {
+      $rs = [int]$rankTotals[$rank]
+      if ($rs -gt $rankBest) {
+        $rankBest = $rs
+        $chosenRank = [string]$rank
+      }
+    }
+
+    $chosenSuit = ""
+    $suitBest = -100000
+    if ($chosenRank) {
+      $suitTotals = @{}
+      foreach ($row in $candidateRows) {
+        $token = ([string]$row.token).Trim().ToUpperInvariant()
+        if ($token -notmatch "^[AKQJT98765432][SHDC]$") { continue }
+        if ($token.Substring(0, 1) -ne $chosenRank) { continue }
+        $suit = $token.Substring(1, 1)
+        if (-not $suitTotals.ContainsKey($suit)) {
+          $suitTotals[$suit] = 0
+        }
+        $suitTotals[$suit] = [int]$suitTotals[$suit] + [int]$row.score
+      }
+      foreach ($suit in $suitTotals.Keys) {
+        $ss = [int]$suitTotals[$suit]
+        if ($ss -gt $suitBest) {
+          $suitBest = $ss
+          $chosenSuit = [string]$suit
+        }
+      }
+    }
+
+    if ($chosenRank -and $chosenSuit) {
+      $bestToken = ("{0}{1}" -f $chosenRank, $chosenSuit)
+      $bestScore = [int]([Math]::Max($rankBest, $suitBest))
+    }
+
+    if (-not $bestRaw) {
+      # fall back to top-scored candidate for preview/source context
+      foreach ($row in $candidateRows | Sort-Object -Property score -Descending) {
+        $bestRaw = [string]$row.raw
+        $bestSource = [string]$row.source
+        $bestVariant = [string]$row.variant
+        break
+      }
+    }
+
+    # Strong per-slot suit correction from ROI color (not only duplicate collisions).
+    if ($bestToken -match "^[AKQJT98765432][SHDC]$") {
+      $hint = Get-CardSuitHintFromRegionColor -Region $Region
+      if ($null -ne $hint -and $hint.suit) {
+        $hintSuit = ([string]$hint.suit).ToUpperInvariant()
+        $tokenSuit = $bestToken.Substring(1, 1).ToUpperInvariant()
+        if ($hint.score -ge 12.0 -and $hint.confidence -ge 1.22 -and $hintSuit -ne $tokenSuit) {
+          $bestToken = ("{0}{1}" -f $bestToken.Substring(0, 1), $hintSuit)
         }
       }
     }
