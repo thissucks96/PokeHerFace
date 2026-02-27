@@ -121,6 +121,11 @@ FAST_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_FAILOVER_ON_BASELINE_ERRO
     "false",
     "False",
 }
+FAST_FLOP_LOOKUP_ONLY = os.environ.get("FAST_FLOP_LOOKUP_ONLY", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
 FAST_FAILOVER_DEFAULT_FLOP_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_FLOP_ACTION", "check")).strip().lower()
 FAST_FAILOVER_DEFAULT_TURN_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_TURN_ACTION", "check")).strip().lower()
 FAST_FAILOVER_DEFAULT_RIVER_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_RIVER_ACTION", "check")).strip().lower()
@@ -954,6 +959,8 @@ def _build_fast_failover_response(
     total_bridge_time: float,
     baseline_error: str,
     fast_spot_profile_summary: Optional[Dict[str, Any]],
+    selection_reason: str = "fast_profile_baseline_failed_lookup_fallback",
+    multi_node_policy_reason: str = "fast_failover_lookup",
 ) -> Dict[str, Any]:
     allowed_actions = _fallback_actions_from_spot(request.spot)
     chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
@@ -980,12 +987,12 @@ def _build_fast_failover_response(
         "node_lock": None,
         "node_lock_kept": False,
         "selected_strategy": "fallback_lookup_policy",
-        "selection_reason": "fast_profile_baseline_failed_lookup_fallback",
+        "selection_reason": selection_reason,
         "allowed_root_actions": allowed_actions,
         "multi_node_policy": {
             "requested": bool(request.enable_multi_node_locks),
             "enabled": False,
-            "reason": "fast_failover_lookup",
+            "reason": multi_node_policy_reason,
             "rollout_classes": _extract_rollout_classes(request.spot),
         },
         "result": result_payload,
@@ -1018,7 +1025,7 @@ def _build_fast_failover_response(
             "llm_is_local_request": _is_local_request(dict(request.llm or DEFAULT_LLM_CONFIG)),
             "multi_node_requested": bool(request.enable_multi_node_locks),
             "multi_node_enabled": False,
-            "multi_node_policy_reason": "fast_failover_lookup",
+            "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": baseline_error,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
@@ -1074,6 +1081,7 @@ def health() -> Dict[str, Any]:
         "fast_spot_bet_sizes_raw": FAST_SPOT_BET_SIZES_RAW,
         "fast_spot_raise_sizes_raw": FAST_SPOT_RAISE_SIZES_RAW,
         "fast_failover_on_baseline_error": FAST_FAILOVER_ON_BASELINE_ERROR,
+        "fast_flop_lookup_only": FAST_FLOP_LOOKUP_ONLY,
         "fast_failover_default_flop_action": FAST_FAILOVER_DEFAULT_FLOP_ACTION,
         "fast_failover_default_turn_action": FAST_FAILOVER_DEFAULT_TURN_ACTION,
         "fast_failover_default_river_action": FAST_FAILOVER_DEFAULT_RIVER_ACTION,
@@ -1164,8 +1172,30 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     _enforce_local_production_policy(llm_config)
     effective_spot = dict(request.spot)
     fast_spot_profile_summary: Optional[Dict[str, Any]] = None
+    spot_street = _detect_spot_street(request.spot)
     if runtime_profile == "fast":
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
+
+    if runtime_profile == "fast" and spot_street == "flop" and FAST_FLOP_LOOKUP_ONLY:
+        total_bridge_time = time.perf_counter() - bridge_started
+        _record_canary_observation(
+            fallback=True,
+            kept=False,
+            latency_sec=total_bridge_time,
+        )
+        return _build_fast_failover_response(
+            request=request,
+            runtime_profile=runtime_profile,
+            stage_budgets=stage_budgets,
+            request_total_budget_sec=request_total_budget_sec,
+            llm_timeout_effective=int(stage_budgets["llm_timeout_sec"]),
+            locked_stage_total_effective=float(stage_budgets["locked_stage_total_sec"]),
+            total_bridge_time=total_bridge_time,
+            baseline_error="fast_flop_lookup_only",
+            fast_spot_profile_summary=fast_spot_profile_summary,
+            selection_reason="fast_profile_flop_lookup_only",
+            multi_node_policy_reason="fast_flop_lookup_only",
+        )
 
     # Pass 1: baseline (no lock) is always computed first.
     baseline_result: Dict[str, Any]
