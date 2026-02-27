@@ -231,6 +231,80 @@ function Normalize-CardToken {
   return ("{0}{1}" -f [string]$rankMatch.Value, [string]$suitMatch.Value)
 }
 
+function Convert-RankFragmentToToken {
+  param([string]$RankFragment)
+  $r = ([string]$RankFragment).Trim().ToUpperInvariant()
+  if (-not $r) { return "" }
+  switch -Regex ($r) {
+    "^(A|ACE)$" { return "A" }
+    "^(K|KING)$" { return "K" }
+    "^(Q|QUEEN)$" { return "Q" }
+    "^(J|JACK)$" { return "J" }
+    "^(10|T|TEN)$" { return "T" }
+    "^(9|NINE)$" { return "9" }
+    "^(8|EIGHT)$" { return "8" }
+    "^(7|SEVEN)$" { return "7" }
+    "^(6|SIX)$" { return "6" }
+    "^(5|FIVE)$" { return "5" }
+    "^(4|FOUR)$" { return "4" }
+    "^(3|THREE)$" { return "3" }
+    "^(2|TWO)$" { return "2" }
+    default { return "" }
+  }
+}
+
+function Convert-SuitFragmentToToken {
+  param([string]$SuitFragment)
+  $s = ([string]$SuitFragment).Trim().ToUpperInvariant()
+  if (-not $s) { return "" }
+  $s = $s -replace "[^A-Z♠♥♦♣]", ""
+  switch -Regex ($s) {
+    "^(S|SP|SPA|SPAD|SPADE|SPADES|♠)$" { return "S" }
+    "^(H|HE|HEA|HEAR|HEART|HEARTS|♥)$" { return "H" }
+    "^(D|DI|DIA|DIAM|DIAMO|DIAMON|DIAMOND|DIAMONDS|♦)$" { return "D" }
+    "^(C|CL|CLU|CLUB|CLUBS|♣)$" { return "C" }
+    default { return "" }
+  }
+}
+
+function Extract-CardTokenFromText {
+  param([string]$Text)
+  $raw = ([string]$Text).Trim()
+  if (-not $raw) {
+    return ""
+  }
+
+  # 1) Compact token style: "Qc", "10h", "4 s"
+  $compact = [regex]::Match($raw, "(?i)\b(10|[2-9TJQKA])\s*([SHDC])\b")
+  if ($compact.Success) {
+    $rank = Convert-RankFragmentToToken -RankFragment $compact.Groups[1].Value
+    $suit = Convert-SuitFragmentToToken -SuitFragment $compact.Groups[2].Value
+    if ($rank -and $suit) {
+      return ("{0}{1}" -f $rank, $suit)
+    }
+  }
+
+  # 2) Verbose style: "Seven of Diamonds", "4 of Sp"
+  $verboseMatches = [regex]::Matches($raw, "(?i)\b(ACE|KING|QUEEN|JACK|TEN|NINE|EIGHT|SEVEN|SIX|FIVE|FOUR|THREE|TWO|10|[2-9TJQKA])\b(?:\s+OF)?\s+([A-Z♠♥♦♣]{1,12})")
+  foreach ($m in $verboseMatches) {
+    $rank = Convert-RankFragmentToToken -RankFragment ([string]$m.Groups[1].Value)
+    $suit = Convert-SuitFragmentToToken -SuitFragment ([string]$m.Groups[2].Value)
+    if ($rank -and $suit) {
+      return ("{0}{1}" -f $rank, $suit)
+    }
+  }
+
+  # 3) Last-resort normalization only for very short responses.
+  if ($raw.Length -le 6) {
+    $n = Normalize-CardToken -Text $raw
+    if ($n -match "^[AKQJT98765432][SHDC]$") {
+      return $n
+    }
+  }
+
+  return ""
+}
+
 function Get-OcrProfileSpec {
   param([string]$ProfileName)
   $name = [string]$ProfileName
@@ -672,7 +746,7 @@ function Get-CardTokenFromRegion {
         [string]$best.text
       }
       $rawText = $rawText.Trim()
-      $token = Normalize-CardToken -Text $rawText
+      $token = Extract-CardTokenFromText -Text $rawText
       $tokenScore = Get-CardTokenScore -Token $token
       $combinedScore = [int]$tokenScore + [int]$best.score
       if ($combinedScore -gt $bestScore) {
@@ -717,7 +791,7 @@ function Invoke-OllamaVisionCard {
   )
   $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
   $b64 = [Convert]::ToBase64String($bytes)
-  $prompt = "You are OCR. Read exactly one poker community card from this image crop. Return only one token in format Rank+Suit using ranks AKQJT98765432 and suits s h d c (example: As, Td, 7h). If uncertain, blurred, or missing suit/rank, return ??. Do not guess. No extra words."
+  $prompt = "Read exactly one poker community card from this image crop. Output exactly one token only: rank+suit using AKQJT98765432 and shdc (examples: As, Td, 7h). If uncertain return ??. No other words."
   $payload = @{
     model = $ollamaVisionModel
     prompt = $prompt
@@ -726,7 +800,7 @@ function Invoke-OllamaVisionCard {
     options = @{
       temperature = 0
       top_p = 0.1
-      num_predict = 12
+      num_predict = 6
     }
   }
   $jsonBody = ConvertTo-Json $payload -Depth 8 -Compress
@@ -871,7 +945,7 @@ function Parse-BoardTokensFromText {
     $obj = $candidateJson | ConvertFrom-Json -ErrorAction Stop
     foreach ($s in $slots) {
       if ($null -ne $obj.$s) {
-        $token = Normalize-CardToken -Text ([string]$obj.$s)
+        $token = Extract-CardTokenFromText -Text ([string]$obj.$s)
         if ($token) { $cards[$s] = $token }
       }
     }
@@ -888,14 +962,14 @@ function Parse-BoardTokensFromText {
   foreach ($m in $matches) {
     $rank = [string]$m.Groups[1].Value
     $suit = [string]$m.Groups[2].Value
-    $token = Normalize-CardToken -Text ("{0}{1}" -f $rank, $suit)
+    $token = Extract-CardTokenFromText -Text ("{0} {1}" -f $rank, $suit)
     if ($token) { [void]$tokens.Add($token) }
   }
   if ($tokens.Count -eq 0) {
     # Try compact tokens like "As Kd 7h"
     $m2 = [regex]::Matches($raw, "(?i)\b(10|[2-9TJQKA])\s*([SHDC])\b")
     foreach ($m in $m2) {
-      $token = Normalize-CardToken -Text ("{0}{1}" -f [string]$m.Groups[1].Value, [string]$m.Groups[2].Value)
+      $token = Extract-CardTokenFromText -Text ("{0} {1}" -f [string]$m.Groups[1].Value, [string]$m.Groups[2].Value)
       if ($token) { [void]$tokens.Add($token) }
     }
   }
