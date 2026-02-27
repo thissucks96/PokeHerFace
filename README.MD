@@ -221,13 +221,14 @@ Clickable OCR watcher test utility:
 .\tesseract_test.ps1
 ```
 
-- Click `Pick ROI` and drag-select per-card ROIs (`flop1`, `flop2`, `flop3`, `turn`, `river`).
+- Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
 - Fast testing controls:
-  - `Run flop1` ... `Run river`, plus `Run hero1` / `Run hero2`, for single-slot OCR checks.
+  - `Run flop1` ... `Run river` for single-slot OCR checks.
+  - `Run Hero (New)` resets previous hand cache and scans `hero1` + `hero2`.
   - `Run Flop (1-3)` for atomic flop capture.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
 - Hero auto-send:
-  - define separate ROIs for `hero1` and `hero2`,
+  - define `hero` ROI once (tester auto-clones to `hero2`),
   - once both hero cards are identified and board cards are valid, tester auto-queues engine solve.
 - Engine handoff from tester:
   - staged runs (`Run Flop (1-3)`, `Run Turn+E`, `Run River+E`) validate strict rank+suit cards (`[AKQJT98765432][shdc]`),

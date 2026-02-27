@@ -138,7 +138,8 @@ $autoEnabled = $false
 $overlayVisible = $true
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
 $playerSlotOrder = @("hero1", "hero2")
-$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2")
+$actionSlotOrder = @("fold_btn", "call_btn", "bet_btn", "raise_btn")
+$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "fold_btn", "call_btn", "bet_btn", "raise_btn")
 $cardRegions = @{}
 $overlayForms = @{}
 $overlayColors = @{
@@ -150,6 +151,10 @@ $overlayColors = @{
   river = [System.Drawing.Color]::FromArgb(255, 150, 80)
   hero1 = [System.Drawing.Color]::FromArgb(150, 110, 255)
   hero2 = [System.Drawing.Color]::FromArgb(150, 110, 255)
+  fold_btn = [System.Drawing.Color]::FromArgb(255, 86, 86)
+  call_btn = [System.Drawing.Color]::FromArgb(70, 180, 255)
+  bet_btn = [System.Drawing.Color]::FromArgb(110, 220, 130)
+  raise_btn = [System.Drawing.Color]::FromArgb(255, 180, 70)
 }
 foreach ($slot in $allSlotOrder) {
   $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
@@ -186,6 +191,18 @@ function Clone-Flop1ToAllCardRois {
   foreach ($slot in $cardSlotOrder) {
     Set-RoiRectByKey -Key $slot -Rect $flop1Rect
   }
+  Save-RoiState -ForceWriteEmpty
+  Close-RoiOverlays
+  Refresh-RoiOverlays
+  return $true
+}
+
+function Clone-Hero1ToHero2Roi {
+  $heroRect = Get-RoiRectByKey -Key "hero1"
+  if (-not (Test-RegionSelected -Rect $heroRect)) {
+    return $false
+  }
+  Set-RoiRectByKey -Key "hero2" -Rect $heroRect
   Save-RoiState -ForceWriteEmpty
   Close-RoiOverlays
   Refresh-RoiOverlays
@@ -330,9 +347,18 @@ function Format-CardSlotStatus {
     }
   }
 
+  $missingActions = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $actionSlotOrder) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missingActions.Add([string]$slot)
+    }
+  }
+
   $boardStatus = if ($missingBoard.Count -eq 0) { "board ready" } else { ("board missing: {0}" -f ($missingBoard -join ", ")) }
   $heroStatus = if ($missingHero.Count -eq 0) { "hero ROIs ready" } else { ("hero missing: {0}" -f ($missingHero -join ", ")) }
-  return ("Card ROIs: {0} | {1}" -f $boardStatus, $heroStatus)
+  $actionStatus = if ($missingActions.Count -eq 0) { "action ROIs ready" } else { ("action missing: {0}" -f ($missingActions -join ", ")) }
+  return ("Card ROIs: {0} | {1} | {2}" -f $boardStatus, $heroStatus, $actionStatus)
 }
 
 function Get-HeroCardsReady {
@@ -2090,26 +2116,57 @@ $btnRunFlopSet.ForeColor = [System.Drawing.Color]::White
 $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
 $form.Controls.Add($btnRunFlopSet)
 
-$btnRunHero1 = New-Object System.Windows.Forms.Button
-$btnRunHero1.Text = "Run hero1"
-$btnRunHero1.Location = New-Object System.Drawing.Point(796, 182)
-$btnRunHero1.Size = New-Object System.Drawing.Size(78, 28)
-$btnRunHero1.FlatStyle = "Flat"
-$btnRunHero1.ForeColor = [System.Drawing.Color]::White
-$btnRunHero1.BackColor = [System.Drawing.Color]::FromArgb(88, 66, 120)
-$form.Controls.Add($btnRunHero1)
+$btnRunHero = New-Object System.Windows.Forms.Button
+$btnRunHero.Text = "Run Hero (New)"
+$btnRunHero.Location = New-Object System.Drawing.Point(796, 182)
+$btnRunHero.Size = New-Object System.Drawing.Size(160, 28)
+$btnRunHero.FlatStyle = "Flat"
+$btnRunHero.ForeColor = [System.Drawing.Color]::White
+$btnRunHero.BackColor = [System.Drawing.Color]::FromArgb(88, 66, 120)
+$form.Controls.Add($btnRunHero)
 
-$btnRunHero2 = New-Object System.Windows.Forms.Button
-$btnRunHero2.Text = "Run hero2"
-$btnRunHero2.Location = New-Object System.Drawing.Point(878, 182)
-$btnRunHero2.Size = New-Object System.Drawing.Size(78, 28)
-$btnRunHero2.FlatStyle = "Flat"
-$btnRunHero2.ForeColor = [System.Drawing.Color]::White
-$btnRunHero2.BackColor = [System.Drawing.Color]::FromArgb(88, 66, 120)
-$form.Controls.Add($btnRunHero2)
+$btnFold = New-Object System.Windows.Forms.Button
+$btnFold.Text = "Fold"
+$btnFold.Location = New-Object System.Drawing.Point(610, 78)
+$btnFold.Size = New-Object System.Drawing.Size(84, 28)
+$btnFold.FlatStyle = "Flat"
+$btnFold.ForeColor = [System.Drawing.Color]::White
+$btnFold.BackColor = [System.Drawing.Color]::FromArgb(125, 36, 36)
+$btnFold.Add_Click({ Write-Log "Placeholder action clicked: FOLD (no-op)." })
+$form.Controls.Add($btnFold)
+
+$btnCall = New-Object System.Windows.Forms.Button
+$btnCall.Text = "Call"
+$btnCall.Location = New-Object System.Drawing.Point(700, 78)
+$btnCall.Size = New-Object System.Drawing.Size(84, 28)
+$btnCall.FlatStyle = "Flat"
+$btnCall.ForeColor = [System.Drawing.Color]::White
+$btnCall.BackColor = [System.Drawing.Color]::FromArgb(35, 90, 140)
+$btnCall.Add_Click({ Write-Log "Placeholder action clicked: CALL (no-op)." })
+$form.Controls.Add($btnCall)
+
+$btnBet = New-Object System.Windows.Forms.Button
+$btnBet.Text = "Bet"
+$btnBet.Location = New-Object System.Drawing.Point(790, 78)
+$btnBet.Size = New-Object System.Drawing.Size(84, 28)
+$btnBet.FlatStyle = "Flat"
+$btnBet.ForeColor = [System.Drawing.Color]::White
+$btnBet.BackColor = [System.Drawing.Color]::FromArgb(40, 110, 70)
+$btnBet.Add_Click({ Write-Log "Placeholder action clicked: BET (no-op)." })
+$form.Controls.Add($btnBet)
+
+$btnRaise = New-Object System.Windows.Forms.Button
+$btnRaise.Text = "Raise"
+$btnRaise.Location = New-Object System.Drawing.Point(880, 78)
+$btnRaise.Size = New-Object System.Drawing.Size(84, 28)
+$btnRaise.FlatStyle = "Flat"
+$btnRaise.ForeColor = [System.Drawing.Color]::White
+$btnRaise.BackColor = [System.Drawing.Color]::FromArgb(150, 96, 30)
+$btnRaise.Add_Click({ Write-Log "Placeholder action clicked: RAISE (no-op)." })
+$form.Controls.Add($btnRaise)
 
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "1) Select ROI target 2) Pick ROI 3) Set board+hero ROIs 4) Run OCR."
+$hint.Text = "1) Select ROI target 2) Pick ROI 3) Set board+hero/action ROIs 4) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $hint.Location = New-Object System.Drawing.Point(20, 214)
@@ -2152,8 +2209,11 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("flop3")
 [void]$cmbTarget.Items.Add("turn")
 [void]$cmbTarget.Items.Add("river")
-[void]$cmbTarget.Items.Add("hero1")
-[void]$cmbTarget.Items.Add("hero2")
+[void]$cmbTarget.Items.Add("hero")
+[void]$cmbTarget.Items.Add("fold_btn")
+[void]$cmbTarget.Items.Add("call_btn")
+[void]$cmbTarget.Items.Add("bet_btn")
+[void]$cmbTarget.Items.Add("raise_btn")
 $cmbTarget.SelectedIndex = 0
 $cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
@@ -3178,6 +3238,28 @@ function Run-OcrFlopSet {
   Run-OcrBoardSetAndQueueEngine -StageLabel "Flop" -Slots @("flop1", "flop2", "flop3")
 }
 
+function Reset-NewHandState {
+  $script:lastBoardTokens = @()
+  $script:lastHeroAutoSendKey = ""
+  $heroCards["hero1"] = "??"
+  $heroCards["hero2"] = "??"
+  $txtLatest.Text = @(
+    "run:   new_hand_reset"
+    "board: ?? ?? ?? ?? ??"
+    "hero:  ?? ??"
+  ) -join "`r`n"
+  Write-Log "New hand reset: cleared board/hero cache before hero scan."
+}
+
+function Run-OcrHeroSet {
+  if ($isBusy) {
+    return
+  }
+  Reset-NewHandState
+  Run-OcrSingleSlot -Slot "hero1"
+  Run-OcrSingleSlot -Slot "hero2"
+}
+
 function Run-OcrTurnSet {
   Run-OcrBoardSetAndQueueEngine -StageLabel "Turn" -Slots @("flop1", "flop2", "flop3", "turn")
 }
@@ -3478,7 +3560,19 @@ $btnPick.Add_Click({
     if (-not $target) {
       $target = "flop1"
     }
-    if ($cardRegions.ContainsKey($target)) {
+    if ($target -eq "hero") {
+      Set-RoiRectByKey -Key "hero1" -Rect $rect
+      $regionLabel.Text = ("Selected: hero1 -> X={0}, Y={1}, W={2}, H={3}" -f $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      Write-Log ("Card ROI [hero1] set to X={0}, Y={1}, W={2}, H={3}" -f $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      $didClone = Clone-Hero1ToHero2Roi
+      if ($didClone) {
+        Write-Log "Auto-cloned hero ROI: hero1 -> hero2. Drag either overlay to final seat cards."
+      }
+      else {
+        Write-Log "Hero clone skipped: hero1 ROI is empty."
+      }
+      $cardStatusLabel.Text = Format-CardSlotStatus
+    } elseif ($cardRegions.ContainsKey($target)) {
       Set-RoiRectByKey -Key $target -Rect $rect
       $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
       Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
@@ -3500,8 +3594,7 @@ $btnPick.Add_Click({
         }
       }
       $cardStatusLabel.Text = Format-CardSlotStatus
-    }
-    else {
+    } else {
       Write-Log ("Unknown ROI target: {0}" -f $target)
     }
     if (-not $didClone) {
@@ -3537,11 +3630,8 @@ $btnRunRiver.Add_Click({
 $btnRunFlopSet.Add_Click({
   Run-OcrFlopSet
 })
-$btnRunHero1.Add_Click({
-  Run-OcrSingleSlot -Slot "hero1"
-})
-$btnRunHero2.Add_Click({
-  Run-OcrSingleSlot -Slot "hero2"
+$btnRunHero.Add_Click({
+  Run-OcrHeroSet
 })
 
 $btnAutoStart.Add_Click({
@@ -3632,11 +3722,11 @@ $btnResetRois.Add_Click({
   $cardStatusLabel.Text = Format-CardSlotStatus
   Save-RoiState -ForceWriteEmpty
   Refresh-RoiOverlays
-  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river, hero1, hero2."
+  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river, hero, and action button ROIs."
 })
 
 $cmbCaptureMode.Add_SelectedIndexChanged({
-  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board and hero cards."
+  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board, hero, and action ROIs."
   $cardStatusLabel.Text = Format-CardSlotStatus
   Refresh-RoiOverlays
 })
@@ -3653,7 +3743,7 @@ $form.Add_Shown({
   }
   Load-RoiState
   $regionLabel.Text = "Selected: none"
-  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board and hero cards."
+  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board, hero, and action ROIs."
   $cardStatusLabel.Text = Format-CardSlotStatus
   Update-TargetsButtonText
   Refresh-RoiOverlays
