@@ -129,33 +129,17 @@ function Save-RoiState {
     if (-not (Test-Path $dir)) {
       New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    $existingMap = @{}
-    if (Test-Path $roiStatePath) {
-      try {
-        $existingJson = Get-Content -Path $roiStatePath -Raw -ErrorAction Stop
-        $existingObj = $existingJson | ConvertFrom-Json -ErrorAction Stop
-        foreach ($k in (Get-RoiTargets)) {
-          $n = $existingObj.$k
-          if ($null -eq $n) { continue }
-          $exRect = New-Object System.Drawing.Rectangle([int]$n.x, [int]$n.y, [int]$n.w, [int]$n.h)
-          $existingMap[$k] = $exRect
-        }
-      }
-      catch {
-        # Ignore bad existing file and continue with current snapshot.
-      }
+    $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    $payload = [ordered]@{}
+    $payload["_meta"] = [ordered]@{
+      virtual_x = [int]$virtual.X
+      virtual_y = [int]$virtual.Y
+      virtual_w = [int]$virtual.Width
+      virtual_h = [int]$virtual.Height
+      saved_utc = [DateTime]::UtcNow.ToString("o")
     }
-
-    $payload = @{}
     foreach ($key in (Get-RoiTargets)) {
-      $rCurrent = Get-RoiRectByKey -Key $key
-      $r = $rCurrent
-      if ((-not $ForceWriteEmpty) -and (-not (Test-RegionSelected -Rect $rCurrent)) -and $existingMap.ContainsKey($key)) {
-        $existingRect = Convert-ToRectangleSafe -Value $existingMap[$key]
-        if (Test-RegionSelected -Rect $existingRect) {
-          $r = $existingRect
-        }
-      }
+      $r = Get-RoiRectByKey -Key $key
       $payload[$key] = @{
         x = [int]$r.X
         y = [int]$r.Y
@@ -178,15 +162,29 @@ function Load-RoiState {
   try {
     $json = Get-Content -Path $roiStatePath -Raw -ErrorAction Stop
     $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    $scaleX = 1.0
+    $scaleY = 1.0
+    $meta = $obj._meta
+    if ($null -ne $meta) {
+      $savedW = [double]$meta.virtual_w
+      $savedH = [double]$meta.virtual_h
+      if ($savedW -gt 0 -and $savedH -gt 0) {
+        $currentVirtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $scaleX = [double]$currentVirtual.Width / $savedW
+        $scaleY = [double]$currentVirtual.Height / $savedH
+        if ([Math]::Abs($scaleX - 1.0) -lt 0.02) { $scaleX = 1.0 }
+        if ([Math]::Abs($scaleY - 1.0) -lt 0.02) { $scaleY = 1.0 }
+      }
+    }
     foreach ($key in (Get-RoiTargets)) {
       $node = $obj.$key
       if ($null -eq $node) {
         continue
       }
-      $x = [int]$node.x
-      $y = [int]$node.y
-      $w = [int]$node.w
-      $h = [int]$node.h
+      $x = [int][Math]::Round(([double]$node.x) * $scaleX)
+      $y = [int][Math]::Round(([double]$node.y) * $scaleY)
+      $w = [int][Math]::Round(([double]$node.w) * $scaleX)
+      $h = [int][Math]::Round(([double]$node.h) * $scaleY)
       if ($w -gt 0 -and $h -gt 0) {
         Set-RoiRectByKey -Key $key -Rect (New-Object System.Drawing.Rectangle($x, $y, $w, $h))
       }
