@@ -1509,11 +1509,64 @@ $btnResetRois.ForeColor = [System.Drawing.Color]::White
 $btnResetRois.BackColor = [System.Drawing.Color]::FromArgb(92, 58, 44)
 $form.Controls.Add($btnResetRois)
 
+$lblQuick = New-Object System.Windows.Forms.Label
+$lblQuick.Text = "Quick Test (single slot)"
+$lblQuick.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblQuick.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblQuick.Location = New-Object System.Drawing.Point(20, 186)
+$lblQuick.AutoSize = $true
+$form.Controls.Add($lblQuick)
+
+$btnRunFlop1 = New-Object System.Windows.Forms.Button
+$btnRunFlop1.Text = "Run flop1"
+$btnRunFlop1.Location = New-Object System.Drawing.Point(170, 182)
+$btnRunFlop1.Size = New-Object System.Drawing.Size(90, 28)
+$btnRunFlop1.FlatStyle = "Flat"
+$btnRunFlop1.ForeColor = [System.Drawing.Color]::White
+$btnRunFlop1.BackColor = [System.Drawing.Color]::FromArgb(36, 86, 60)
+$form.Controls.Add($btnRunFlop1)
+
+$btnRunFlop2 = New-Object System.Windows.Forms.Button
+$btnRunFlop2.Text = "Run flop2"
+$btnRunFlop2.Location = New-Object System.Drawing.Point(266, 182)
+$btnRunFlop2.Size = New-Object System.Drawing.Size(90, 28)
+$btnRunFlop2.FlatStyle = "Flat"
+$btnRunFlop2.ForeColor = [System.Drawing.Color]::White
+$btnRunFlop2.BackColor = [System.Drawing.Color]::FromArgb(36, 86, 60)
+$form.Controls.Add($btnRunFlop2)
+
+$btnRunFlop3 = New-Object System.Windows.Forms.Button
+$btnRunFlop3.Text = "Run flop3"
+$btnRunFlop3.Location = New-Object System.Drawing.Point(362, 182)
+$btnRunFlop3.Size = New-Object System.Drawing.Size(90, 28)
+$btnRunFlop3.FlatStyle = "Flat"
+$btnRunFlop3.ForeColor = [System.Drawing.Color]::White
+$btnRunFlop3.BackColor = [System.Drawing.Color]::FromArgb(36, 86, 60)
+$form.Controls.Add($btnRunFlop3)
+
+$btnRunTurn = New-Object System.Windows.Forms.Button
+$btnRunTurn.Text = "Run turn"
+$btnRunTurn.Location = New-Object System.Drawing.Point(458, 182)
+$btnRunTurn.Size = New-Object System.Drawing.Size(90, 28)
+$btnRunTurn.FlatStyle = "Flat"
+$btnRunTurn.ForeColor = [System.Drawing.Color]::White
+$btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
+$form.Controls.Add($btnRunTurn)
+
+$btnRunRiver = New-Object System.Windows.Forms.Button
+$btnRunRiver.Text = "Run river"
+$btnRunRiver.Location = New-Object System.Drawing.Point(554, 182)
+$btnRunRiver.Size = New-Object System.Drawing.Size(90, 28)
+$btnRunRiver.FlatStyle = "Flat"
+$btnRunRiver.ForeColor = [System.Drawing.Color]::White
+$btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
+$form.Controls.Add($btnRunRiver)
+
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = "1) Select ROI target 2) Pick ROI 3) Repeat for all 5 4) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$hint.Location = New-Object System.Drawing.Point(20, 186)
+$hint.Location = New-Object System.Drawing.Point(20, 214)
 $hint.AutoSize = $true
 $form.Controls.Add($hint)
 
@@ -1562,12 +1615,12 @@ $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
 $latestLabel.ForeColor = [System.Drawing.Color]::White
 $latestLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$latestLabel.Location = New-Object System.Drawing.Point(20, 210)
+$latestLabel.Location = New-Object System.Drawing.Point(20, 236)
 $latestLabel.AutoSize = $true
 $form.Controls.Add($latestLabel)
 
 $txtLatest = New-Object System.Windows.Forms.TextBox
-$txtLatest.Location = New-Object System.Drawing.Point(20, 234)
+$txtLatest.Location = New-Object System.Drawing.Point(20, 260)
 $txtLatest.Size = New-Object System.Drawing.Size(936, 160)
 $txtLatest.Multiline = $true
 $txtLatest.ScrollBars = "Vertical"
@@ -1581,12 +1634,12 @@ $logLabel = New-Object System.Windows.Forms.Label
 $logLabel.Text = "Log"
 $logLabel.ForeColor = [System.Drawing.Color]::White
 $logLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$logLabel.Location = New-Object System.Drawing.Point(20, 402)
+$logLabel.Location = New-Object System.Drawing.Point(20, 428)
 $logLabel.AutoSize = $true
 $form.Controls.Add($logLabel)
 
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(20, 426)
+$logBox.Location = New-Object System.Drawing.Point(20, 452)
 $logBox.Size = New-Object System.Drawing.Size(936, 222)
 $logBox.Multiline = $true
 $logBox.ScrollBars = "Vertical"
@@ -1832,6 +1885,77 @@ function Get-RoiOverlapWarnings {
   return $warnings
 }
 
+function Run-OcrSingleSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot
+  )
+
+  if ($isBusy) {
+    return
+  }
+  if (-not ($cardSlotOrder -contains $Slot)) {
+    Write-Log ("Single-slot OCR skipped: unknown slot '{0}'." -f $Slot)
+    return
+  }
+  if (-not (Test-OllamaEndpoint)) {
+    Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
+    return
+  }
+
+  $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$Slot]
+  if (-not (Test-RegionSelected -Rect $slotRect)) {
+    Write-Log ("Single-slot OCR skipped: ROI not set for {0}." -f $Slot)
+    return
+  }
+
+  $script:isBusy = $true
+  try {
+    $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("single_{0}" -f $Slot)
+    if (-not $bestCard -and $tesseractExe) {
+      $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("single_{0}" -f $Slot)
+      if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
+        $bestCard = $fallbackCard
+        Write-Log ("OCR info [{0}] vision miss; recovered with tesseract fallback." -f $Slot)
+      }
+    }
+
+    if (-not $bestCard) {
+      Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $Slot)
+      $txtLatest.Text = @(
+        "run:   single_slot"
+        ("slot:  {0}" -f $Slot)
+        "card:  ??"
+      ) -join "`r`n"
+      return
+    }
+
+    $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
+    if ($preview.Length -gt 96) {
+      $preview = $preview.Substring(0, 96) + "..."
+    }
+    Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $Slot, $bestCard.variant, $bestCard.source, $preview)
+    $token = ([string]$bestCard.token).Trim().ToUpperInvariant()
+    $txtLatest.Text = @(
+      "run:   single_slot"
+      ("slot:  {0}" -f $Slot)
+      ("card:  {0}" -f $token)
+      ("source:{0}/{1}" -f [string]$bestCard.variant, [string]$bestCard.source)
+    ) -join "`r`n"
+  }
+  catch {
+    Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
+  }
+  finally {
+    $script:isBusy = $false
+  }
+}
+
 function Run-Ocr {
   if ($isBusy) {
     return
@@ -2039,6 +2163,22 @@ $btnPick.Add_Click({
 
 $btnOnce.Add_Click({
   Run-Ocr
+})
+
+$btnRunFlop1.Add_Click({
+  Run-OcrSingleSlot -Slot "flop1"
+})
+$btnRunFlop2.Add_Click({
+  Run-OcrSingleSlot -Slot "flop2"
+})
+$btnRunFlop3.Add_Click({
+  Run-OcrSingleSlot -Slot "flop3"
+})
+$btnRunTurn.Add_Click({
+  Run-OcrSingleSlot -Slot "turn"
+})
+$btnRunRiver.Add_Click({
+  Run-OcrSingleSlot -Slot "river"
 })
 
 $btnAutoStart.Add_Click({
