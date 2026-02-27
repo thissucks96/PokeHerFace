@@ -255,7 +255,8 @@ Bridge runtime profile budgets (`POST /solve`):
     - `FAST_BASELINE_TIMEOUT_FLOP_SEC` (default `15`)
     - `FAST_BASELINE_TIMEOUT_TURN_SEC` (default `25`)
     - `FAST_BASELINE_TIMEOUT_RIVER_SEC` (default `25`)
-  - `FAST_FLOP_LOOKUP_ONLY` (`1`/`0`, default `1`) bypasses the expensive flop baseline solve entirely and returns the lightweight lookup fallback immediately in `fast` mode.
+  - `FAST_FLOP_LOOKUP_ONLY` (`1`/`0`, default `1`) bypasses the expensive flop baseline solve entirely and returns a lightweight flop lookup policy immediately in `fast` mode.
+    - current heuristic: small flop c-bet on dry boards when hero is in position; otherwise conservative fallback (`check`/`call`).
   - LLM stage timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
   - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `60`)
   - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `90`)

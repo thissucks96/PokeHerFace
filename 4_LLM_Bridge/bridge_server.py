@@ -908,8 +908,93 @@ def _fallback_actions_from_spot(spot: Dict[str, Any]) -> list[str]:
     return out
 
 
+_RANK_VALUE_MAP = {
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "T": 10,
+    "J": 11,
+    "Q": 12,
+    "K": 13,
+    "A": 14,
+}
+
+
+def _extract_board_texture_flags(spot: Dict[str, Any]) -> Dict[str, bool]:
+    board = spot.get("board")
+    if not isinstance(board, list):
+        return {"paired": False, "monotone": False, "connected": False, "dry": False}
+    ranks: list[int] = []
+    suits: list[str] = []
+    for raw_card in board[:5]:
+        token = str(raw_card or "").strip()
+        if len(token) < 2:
+            continue
+        if token[:2] == "10":
+            rank_token = "T"
+            suit_token = token[2:3].lower()
+        else:
+            rank_token = token[:1].upper()
+            suit_token = token[-1:].lower()
+        rank_val = _RANK_VALUE_MAP.get(rank_token)
+        if rank_val is None:
+            continue
+        ranks.append(rank_val)
+        if suit_token in {"s", "h", "d", "c"}:
+            suits.append(suit_token)
+    paired = len(set(ranks)) < len(ranks) if ranks else False
+    monotone = len(suits) >= 3 and len(set(suits[:3])) == 1
+    unique_ranks = sorted(set(ranks[:3]))
+    connected = len(unique_ranks) >= 3 and (max(unique_ranks) - min(unique_ranks) <= 5)
+    dry = bool(ranks) and not paired and not monotone and not connected
+    return {
+        "paired": paired,
+        "monotone": monotone,
+        "connected": connected,
+        "dry": dry,
+    }
+
+
+def _hero_is_in_position(spot: Dict[str, Any]) -> bool:
+    try:
+        # Bridge spot contract treats hero as player 1.
+        return int(spot.get("in_position_player", 0)) == 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _choose_smallest_sized_action(allowed_actions: list[str], action_base: str) -> Optional[str]:
+    best_action: Optional[str] = None
+    best_amount: Optional[int] = None
+    for action in allowed_actions:
+        token = str(action or "").strip().lower()
+        if not token.startswith(f"{action_base}:"):
+            continue
+        try:
+            amount = int(float(token.split(":", 1)[1]))
+        except ValueError:
+            continue
+        if best_amount is None or amount < best_amount:
+            best_amount = amount
+            best_action = token
+    return best_action
+
+
 def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str]) -> str:
     street = _detect_spot_street(spot)
+    if street == "flop":
+        smallest_bet = _choose_smallest_sized_action(allowed_actions, "bet")
+        if smallest_bet:
+            texture = _extract_board_texture_flags(spot)
+            if _hero_is_in_position(spot) and texture["dry"]:
+                return smallest_bet
+            if "check" not in allowed_actions:
+                return smallest_bet
     preferred_by_street = {
         "flop": FAST_FAILOVER_DEFAULT_FLOP_ACTION,
         "turn": FAST_FAILOVER_DEFAULT_TURN_ACTION,
