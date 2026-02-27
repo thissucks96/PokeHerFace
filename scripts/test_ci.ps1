@@ -1,5 +1,7 @@
 param(
     [string]$Preset = "local_qwen3_coder_30b",
+    [ValidateSet("fast", "normal")]
+    [string]$RuntimeProfile = "",
     [string]$CanonicalManifest = "",
     [string]$Output = "",
     [string]$Details = "",
@@ -107,6 +109,9 @@ $GateArgs = @(
     "--output", $Output,
     "--details", $Details
 )
+if (-not [string]::IsNullOrWhiteSpace($RuntimeProfile)) {
+    $GateArgs += @("--runtime-profile", $RuntimeProfile)
+}
 
 & $PythonExe @GateArgs
 $GateExit = $LASTEXITCODE

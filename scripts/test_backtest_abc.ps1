@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$Preset = "local_qwen3_coder_30b",
+  [ValidateSet("fast", "normal")]
+  [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$Seed = 4090,
   [int]$MaxSpots = 0,
@@ -49,6 +51,9 @@ try {
     "--seed", "$Seed",
     "--output", $Output
   )
+  if (-not [string]::IsNullOrWhiteSpace($RuntimeProfile)) {
+    $Args += @("--runtime-profile", $RuntimeProfile)
+  }
   if ($MaxSpots -gt 0) {
     $Args += @("--max-spots", "$MaxSpots")
   }

@@ -143,6 +143,12 @@ def main() -> int:
     parser.add_argument("--calls-per-spot", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=1800.0, help="HTTP timeout seconds.")
     parser.add_argument("--solver-timeout", type=int, default=1200)
+    parser.add_argument(
+        "--runtime-profile",
+        choices=["fast", "normal"],
+        default=None,
+        help="Optional runtime profile forwarded to bridge /solve (fast|normal).",
+    )
     parser.add_argument("--ev-keep-margin", type=float, default=0.005)
     parser.add_argument("--calibrate-noise-runs", type=int, default=0, help="Baseline repeats per spot for noise.")
     parser.add_argument("--noise-epsilon", type=float, default=0.001)
@@ -254,6 +260,8 @@ def main() -> int:
                 "ev_keep_margin": args.ev_keep_margin,
                 "llm": {"preset": args.preset, "mode": "benchmark"},
             }
+            if args.runtime_profile:
+                payload["runtime_profile"] = args.runtime_profile
             if enable_multi_node:
                 payload["enable_multi_node_locks"] = True
             if static_opponent_profile is not None:
@@ -348,6 +356,7 @@ def main() -> int:
         "enable_multi_node_locks": bool(args.enable_multi_node_locks),
         "multi_node_classes": requested_multi_node_classes,
         "multi_node_enabled_spots": multi_node_enabled_spots,
+        "runtime_profile": args.runtime_profile,
         "calls_total": total_calls,
         "calls_http_ok": total_ok,
         "fallback_rate": fallback_rate,

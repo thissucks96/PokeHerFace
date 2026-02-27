@@ -134,12 +134,28 @@ Run class-specific acceptance suites:
 .\scripts\test_acceptance.ps1 -Suite river_class23 -Preset local_qwen3_coder_30b
 ```
 
+Runtime profile selection (A_2 toggle):
+
+```powershell
+# Low-latency profile
+.\scripts\test_acceptance.ps1 -Suite turn_class1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
+
+# Full-latency profile
+.\scripts\test_acceptance.ps1 -Suite turn_class1 -Preset local_qwen3_coder_30b -RuntimeProfile normal
+```
+
 Current API testing policy: use `openai_52` as the only cloud preset by default.
 
 Run A/B/C routing backtest (`baseline_gto`, `class1_live_shadow23`, `full_multi_node_benchmark`):
 
 ```powershell
 .\scripts\test_backtest_abc.ps1 -Preset local_qwen3_coder_30b -MaxSpots 40
+```
+
+With explicit runtime profile:
+
+```powershell
+.\scripts\test_backtest_abc.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast -MaxSpots 40
 ```
 
 Analyze River shadow diagnostics (where full multi-node underperforms class1-shadow):
@@ -198,10 +214,16 @@ Run the full stack in one command (`CI + turn/river acceptance + A/B/C`; gauntle
 .\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -IncludeGauntlet
 ```
 
+Fast profile end-to-end:
+
+```powershell
+.\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
+```
+
 Run a cloned fast-edge profile sweep (same acceptance + A/B/C flow, tuned for lower latency):
 
 ```powershell
-.\scripts\test_fast_profile.ps1 -Preset local_qwen3_coder_30b -ProfileName fast_edge_v1 -RestartServices
+.\scripts\test_fast_profile.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast -ProfileName fast_edge_v1 -RestartServices
 ```
 
 `test_fast_profile.ps1` writes a single run folder under `4_LLM_Bridge/examples/fast_profile_runs/` with:
@@ -209,6 +231,18 @@ Run a cloned fast-edge profile sweep (same acceptance + A/B/C flow, tuned for lo
 - turn/river acceptance summaries + details,
 - A/B/C backtest report,
 - consolidated `fast_profile.summary.json`.
+
+Bridge runtime profile budgets (`POST /solve`):
+- `runtime_profile=fast`:
+  - baseline timeout cap: `FAST_BASELINE_TIMEOUT_SEC` (default `180`)
+  - LLM stage timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
+  - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `120`)
+  - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `180`)
+- `runtime_profile=normal`:
+  - baseline timeout cap: `NORMAL_BASELINE_TIMEOUT_SEC` (default `900`)
+  - LLM stage timeout cap: `NORMAL_LLM_TIMEOUT_SEC` (default `60`)
+  - locked solve timeout cap: `NORMAL_LOCKED_TIMEOUT_SEC` (default `900`)
+  - locked stage total budget: `NORMAL_LOCKED_STAGE_TOTAL_SEC` (default `900`)
 
 Run live per-call progress in the terminal for API/local benchmark calls:
 

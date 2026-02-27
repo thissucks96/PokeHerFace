@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$Preset = "local_qwen3_coder_30b",
+  [ValidateSet("fast", "normal")]
+  [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$BacktestSeed = 4090,
   [int]$BacktestMaxSpots = 40,
@@ -23,6 +25,7 @@ foreach ($p in @($scriptCi, $scriptAcceptance, $scriptBacktest, $scriptGauntlet)
 Write-Host "==> Running canonical CI gate"
 & $scriptCi `
   -Preset $Preset `
+  -RuntimeProfile $RuntimeProfile `
   -EvKeepMargin $EvKeepMargin `
   -NoiseRuns 1 `
   -StopStartedServices:$StopStartedServices
@@ -32,6 +35,7 @@ Write-Host "==> Running turn class1 acceptance"
 & $scriptAcceptance `
   -Suite turn_class1 `
   -Preset $Preset `
+  -RuntimeProfile $RuntimeProfile `
   -EvKeepMargin $EvKeepMargin `
   -StopStartedServices:$StopStartedServices
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -40,6 +44,7 @@ Write-Host "==> Running river class23 acceptance"
 & $scriptAcceptance `
   -Suite river_class23 `
   -Preset $Preset `
+  -RuntimeProfile $RuntimeProfile `
   -EvKeepMargin $EvKeepMargin `
   -StopStartedServices:$StopStartedServices
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -47,6 +52,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "==> Running A/B/C backtest"
 & $scriptBacktest `
   -Preset $Preset `
+  -RuntimeProfile $RuntimeProfile `
   -EvKeepMargin $EvKeepMargin `
   -Seed $BacktestSeed `
   -MaxSpots $BacktestMaxSpots `

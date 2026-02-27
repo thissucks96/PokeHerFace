@@ -2,6 +2,8 @@
 param(
   [string]$Preset = "local_qwen3_coder_30b",
   [string]$ProfileName = "fast_edge_v1",
+  [ValidateSet("fast", "normal")]
+  [string]$RuntimeProfile = "fast",
   [double]$EvKeepMargin = 0.001,
   [int]$TurnCandidateCount = 1,
   [int]$RiverCandidateCount = 1,
@@ -49,6 +51,7 @@ if ($RestartServices) {
 }
 
 $env:EV_KEEP_MARGIN = [string]$EvKeepMargin
+$env:RUNTIME_PROFILE_DEFAULT = [string]$RuntimeProfile
 $env:TURN_CANDIDATE_COUNT = [string]$TurnCandidateCount
 $env:RIVER_CANDIDATE_COUNT = [string]$RiverCandidateCount
 $env:TURN_MAX_TARGETS = [string]$TurnMaxTargets
@@ -57,6 +60,7 @@ $env:ROOT_CHECK_FLOOR = [string]$RootCheckFloor
 
 $EnvSnapshot = [ordered]@{
   profile_name = $ProfileName
+  runtime_profile = $RuntimeProfile
   preset = $Preset
   ev_keep_margin = $env:EV_KEEP_MARGIN
   turn_candidate_count = $env:TURN_CANDIDATE_COUNT
@@ -82,40 +86,43 @@ $RiverDetails = Join-Path $RunDir "acceptance.river.details.json"
 $BacktestOutput = Join-Path $RunDir "backtest.abc.json"
 
 Write-Host "==> Fast Profile: turn_class1 acceptance"
-$TurnArgs = @(
-  "-Suite", "turn_class1",
-  "-Preset", $Preset,
-  "-EvKeepMargin", "$EvKeepMargin",
-  "-Output", $TurnSummary,
-  "-Details", $TurnDetails
-)
-if ($NoSpotOpponentProfile) { $TurnArgs += "-NoSpotOpponentProfile" }
-if ($StopStartedServices) { $TurnArgs += "-StopStartedServices" }
+$TurnArgs = @{
+  Suite = "turn_class1"
+  Preset = $Preset
+  RuntimeProfile = $RuntimeProfile
+  EvKeepMargin = $EvKeepMargin
+  Output = $TurnSummary
+  Details = $TurnDetails
+}
+if ($NoSpotOpponentProfile) { $TurnArgs["NoSpotOpponentProfile"] = $true }
+if ($StopStartedServices) { $TurnArgs["StopStartedServices"] = $true }
 & $AcceptanceScript @TurnArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> Fast Profile: river_class23 acceptance"
-$RiverArgs = @(
-  "-Suite", "river_class23",
-  "-Preset", $Preset,
-  "-EvKeepMargin", "$EvKeepMargin",
-  "-Output", $RiverSummary,
-  "-Details", $RiverDetails
-)
-if ($NoSpotOpponentProfile) { $RiverArgs += "-NoSpotOpponentProfile" }
-if ($StopStartedServices) { $RiverArgs += "-StopStartedServices" }
+$RiverArgs = @{
+  Suite = "river_class23"
+  Preset = $Preset
+  RuntimeProfile = $RuntimeProfile
+  EvKeepMargin = $EvKeepMargin
+  Output = $RiverSummary
+  Details = $RiverDetails
+}
+if ($NoSpotOpponentProfile) { $RiverArgs["NoSpotOpponentProfile"] = $true }
+if ($StopStartedServices) { $RiverArgs["StopStartedServices"] = $true }
 & $AcceptanceScript @RiverArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> Fast Profile: A/B/C backtest"
-$BacktestArgs = @(
-  "-Preset", $Preset,
-  "-EvKeepMargin", "$EvKeepMargin",
-  "-Seed", "$BacktestSeed",
-  "-MaxSpots", "$BacktestMaxSpots",
-  "-Output", $BacktestOutput
-)
-if ($StopStartedServices) { $BacktestArgs += "-StopStartedServices" }
+$BacktestArgs = @{
+  Preset = $Preset
+  RuntimeProfile = $RuntimeProfile
+  EvKeepMargin = $EvKeepMargin
+  Seed = $BacktestSeed
+  MaxSpots = $BacktestMaxSpots
+  Output = $BacktestOutput
+}
+if ($StopStartedServices) { $BacktestArgs["StopStartedServices"] = $true }
 & $BacktestScript @BacktestArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

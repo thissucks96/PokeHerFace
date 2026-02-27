@@ -33,6 +33,9 @@ DEFAULT_LLM_CONFIG = {
     "model": DEFAULT_LOCAL_MODEL,
     "preset": "local_qwen3_coder_30b",
 }
+RUNTIME_PROFILE_DEFAULT = str(os.environ.get("RUNTIME_PROFILE_DEFAULT", "normal")).strip().lower()
+if RUNTIME_PROFILE_DEFAULT not in {"fast", "normal"}:
+    RUNTIME_PROFILE_DEFAULT = "normal"
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
 PROD_CLASS1_MULTI_NODE_LIVE = os.environ.get("PROD_CLASS1_MULTI_NODE_LIVE", "1").strip() not in {"0", "false", "False"}
 PROD_RIVER_MULTI_NODE_SHADOW = os.environ.get("PROD_RIVER_MULTI_NODE_SHADOW", "0").strip() not in {"0", "false", "False"}
@@ -53,6 +56,42 @@ try:
     RIVER_CANDIDATE_COUNT = int(os.environ.get("RIVER_CANDIDATE_COUNT", "1"))
 except ValueError:
     RIVER_CANDIDATE_COUNT = 1
+try:
+    FAST_BASELINE_TIMEOUT_SEC = int(os.environ.get("FAST_BASELINE_TIMEOUT_SEC", "180"))
+except ValueError:
+    FAST_BASELINE_TIMEOUT_SEC = 180
+try:
+    FAST_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LLM_TIMEOUT_SEC", "25"))
+except ValueError:
+    FAST_LLM_TIMEOUT_SEC = 25
+try:
+    FAST_LOCKED_TIMEOUT_SEC = int(os.environ.get("FAST_LOCKED_TIMEOUT_SEC", "120"))
+except ValueError:
+    FAST_LOCKED_TIMEOUT_SEC = 120
+try:
+    FAST_LOCKED_STAGE_TOTAL_SEC = int(os.environ.get("FAST_LOCKED_STAGE_TOTAL_SEC", "180"))
+except ValueError:
+    FAST_LOCKED_STAGE_TOTAL_SEC = 180
+try:
+    FAST_MAX_TOKENS = int(os.environ.get("FAST_MAX_TOKENS", "280"))
+except ValueError:
+    FAST_MAX_TOKENS = 280
+try:
+    NORMAL_BASELINE_TIMEOUT_SEC = int(os.environ.get("NORMAL_BASELINE_TIMEOUT_SEC", "900"))
+except ValueError:
+    NORMAL_BASELINE_TIMEOUT_SEC = 900
+try:
+    NORMAL_LLM_TIMEOUT_SEC = int(os.environ.get("NORMAL_LLM_TIMEOUT_SEC", "60"))
+except ValueError:
+    NORMAL_LLM_TIMEOUT_SEC = 60
+try:
+    NORMAL_LOCKED_TIMEOUT_SEC = int(os.environ.get("NORMAL_LOCKED_TIMEOUT_SEC", "900"))
+except ValueError:
+    NORMAL_LOCKED_TIMEOUT_SEC = 900
+try:
+    NORMAL_LOCKED_STAGE_TOTAL_SEC = int(os.environ.get("NORMAL_LOCKED_STAGE_TOTAL_SEC", "900"))
+except ValueError:
+    NORMAL_LOCKED_STAGE_TOTAL_SEC = 900
 ENABLE_CLOUD_CANDIDATE_SEARCH = os.environ.get("ENABLE_CLOUD_CANDIDATE_SEARCH", "0").strip() not in {
     "0",
     "false",
@@ -277,6 +316,10 @@ class SolveRequest(BaseModel):
     enable_multi_node_locks: bool = Field(
         default=False,
         description="Enable multi-node lock generation/validation. Default keeps root-only lock behavior.",
+    )
+    runtime_profile: Optional[str] = Field(
+        default=None,
+        description="Runtime profile: fast | normal. Controls per-stage latency budgets.",
     )
 
 
@@ -637,6 +680,43 @@ def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]
     return requested, "request_flag", classes
 
 
+def _normalize_runtime_profile(profile: Optional[str]) -> str:
+    value = str(profile or "").strip().lower()
+    if value in {"fast", "normal"}:
+        return value
+    return RUNTIME_PROFILE_DEFAULT
+
+
+def _stage_budget_value(request_timeout: int, cap: int) -> int:
+    timeout = max(10, int(request_timeout))
+    cap_val = max(10, int(cap))
+    return max(10, min(timeout, cap_val))
+
+
+def _resolve_stage_budgets(runtime_profile: str, request_timeout: int) -> Dict[str, int]:
+    if runtime_profile == "fast":
+        baseline_cap = FAST_BASELINE_TIMEOUT_SEC
+        llm_cap = FAST_LLM_TIMEOUT_SEC
+        locked_cap = FAST_LOCKED_TIMEOUT_SEC
+        locked_total_cap = FAST_LOCKED_STAGE_TOTAL_SEC
+    else:
+        baseline_cap = NORMAL_BASELINE_TIMEOUT_SEC
+        llm_cap = NORMAL_LLM_TIMEOUT_SEC
+        locked_cap = NORMAL_LOCKED_TIMEOUT_SEC
+        locked_total_cap = NORMAL_LOCKED_STAGE_TOTAL_SEC
+
+    baseline_timeout = _stage_budget_value(request_timeout, baseline_cap)
+    llm_timeout = _stage_budget_value(request_timeout, llm_cap)
+    locked_timeout = _stage_budget_value(request_timeout, locked_cap)
+    locked_total_timeout = _stage_budget_value(request_timeout, locked_total_cap)
+    return {
+        "baseline_timeout_sec": baseline_timeout,
+        "llm_timeout_sec": llm_timeout,
+        "locked_timeout_sec": locked_timeout,
+        "locked_stage_total_sec": locked_total_timeout,
+    }
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
@@ -660,6 +740,16 @@ def health() -> Dict[str, Any]:
         "benchmark_mode_bypass_routing": BENCHMARK_MODE_BYPASS_ROUTING,
         "turn_candidate_count": TURN_CANDIDATE_COUNT,
         "river_candidate_count": RIVER_CANDIDATE_COUNT,
+        "runtime_profile_default": RUNTIME_PROFILE_DEFAULT,
+        "fast_baseline_timeout_sec": FAST_BASELINE_TIMEOUT_SEC,
+        "fast_llm_timeout_sec": FAST_LLM_TIMEOUT_SEC,
+        "fast_locked_timeout_sec": FAST_LOCKED_TIMEOUT_SEC,
+        "fast_locked_stage_total_sec": FAST_LOCKED_STAGE_TOTAL_SEC,
+        "fast_max_tokens": FAST_MAX_TOKENS,
+        "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
+        "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
+        "normal_locked_timeout_sec": NORMAL_LOCKED_TIMEOUT_SEC,
+        "normal_locked_stage_total_sec": NORMAL_LOCKED_STAGE_TOTAL_SEC,
         "enable_cloud_candidate_search": ENABLE_CLOUD_CANDIDATE_SEARCH,
         "cloud_candidate_count_cap": CLOUD_CANDIDATE_COUNT_CAP,
         "vision_root": str(VISION_ROOT),
@@ -731,9 +821,13 @@ def vision_ingest(request: VisionIngestRequest) -> Dict[str, Any]:
 @app.post("/solve")
 def solve(request: SolveRequest) -> Dict[str, Any]:
     bridge_started = time.perf_counter()
+    request_total_budget_sec = max(10, int(request.timeout_sec))
+    request_deadline = bridge_started + float(request_total_budget_sec)
     _validate_spot(request.spot)
     shark_cli = _resolve_shark_cli()
     llm_config = dict(request.llm or DEFAULT_LLM_CONFIG)
+    runtime_profile = _normalize_runtime_profile(request.runtime_profile)
+    stage_budgets = _resolve_stage_budgets(runtime_profile, request.timeout_sec)
     _enforce_local_production_policy(llm_config)
 
     # Pass 1: baseline (no lock) is always computed first.
@@ -741,13 +835,15 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         shark_cli,
         spot_payload=request.spot,
         node_lock_payload=None,
-        timeout_sec=request.timeout_sec,
+        timeout_sec=stage_budgets["baseline_timeout_sec"],
         quiet=request.quiet,
     )
     baseline_result = baseline_run["result"]
     baseline_solver_time = baseline_run["solver_wall_time_sec"]
     allowed_root_actions = _extract_allowed_root_actions(baseline_result)
     node_lock_catalog = _extract_node_lock_catalog(baseline_result)
+    llm_timeout_effective = int(stage_budgets["llm_timeout_sec"])
+    locked_stage_total_effective = float(stage_budgets["locked_stage_total_sec"])
 
     if CANARY_GUARDRAILS_ENABLED and _is_canary_tripped():
         canary_status = _canary_status_snapshot()
@@ -810,6 +906,13 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 "multi_node_enabled": False,
                 "multi_node_policy_reason": "canary_kill_switch",
                 "llm_error": "canary_kill_switch_tripped",
+                "runtime_profile": runtime_profile,
+                "stage_budgets": stage_budgets,
+                "effective_stage_budgets": {
+                    "request_total_budget_sec": request_total_budget_sec,
+                    "llm_timeout_sec": llm_timeout_effective,
+                    "locked_stage_total_sec": locked_stage_total_effective,
+                },
             },
             "canary_guardrails": _canary_status_snapshot(),
         }
@@ -822,6 +925,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     candidate_target_count = TURN_CANDIDATE_COUNT if spot_street == "turn" else RIVER_CANDIDATE_COUNT
     llm_mode = str(llm_config.get("mode", "")).strip().lower()
     is_local_request = _is_local_request(llm_config)
+    llm_budget_remaining = max(0.0, request_deadline - time.perf_counter())
+    llm_timeout_effective = int(max(1, min(stage_budgets["llm_timeout_sec"], int(math.ceil(llm_budget_remaining)))))
+    llm_config["timeout_sec"] = float(llm_timeout_effective)
+    if runtime_profile == "fast" and "max_tokens" not in llm_config:
+        llm_config["max_tokens"] = FAST_MAX_TOKENS
     if not is_local_request:
         # Keep cloud costs controlled by default. Allow parity search only when explicitly enabled.
         if ENABLE_CLOUD_CANDIDATE_SEARCH and llm_mode == "benchmark":
@@ -838,19 +946,22 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     llm_config["opponent_profile"] = dict(request.opponent_profile or {})
     llm_config["enable_multi_node_locks"] = multi_node_enabled
     llm_candidates: list[Dict[str, Any]] = []
-    try:
-        if candidate_mode_enabled:
-            llm_candidates = get_llm_intuition_candidates(
-                request.spot,
-                llm_config,
-                candidate_count=candidate_target_count,
-            )
-        else:
-            node_lock = get_llm_intuition(request.spot, llm_config)
-            if node_lock is not None:
-                llm_candidates = [node_lock]
-    except Exception as exc:  # pylint: disable=broad-except
-        llm_error = str(exc)
+    if llm_budget_remaining < 1.0:
+        llm_error = "global_budget_exhausted_before_llm_stage"
+    else:
+        try:
+            if candidate_mode_enabled:
+                llm_candidates = get_llm_intuition_candidates(
+                    request.spot,
+                    llm_config,
+                    candidate_count=candidate_target_count,
+                )
+            else:
+                node_lock = get_llm_intuition(request.spot, llm_config)
+                if node_lock is not None:
+                    llm_candidates = [node_lock]
+        except Exception as exc:  # pylint: disable=broad-except
+            llm_error = str(exc)
     llm_elapsed = time.perf_counter() - llm_started
 
     locked_result = None
@@ -858,15 +969,40 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     locked_solver_time_total = 0.0
     locked_candidate_solve_count = 0
     candidate_errors: list[str] = []
+    locked_budget_remaining = max(0.0, request_deadline - time.perf_counter())
+    locked_stage_total_effective = max(
+        0.0, min(float(stage_budgets["locked_stage_total_sec"]), float(locked_budget_remaining))
+    )
+    locked_stage_deadline = time.perf_counter() + float(locked_stage_total_effective)
     if llm_candidates:
+        if locked_stage_total_effective < 1.0:
+            candidate_errors.append("global_budget_exhausted_before_locked_stage")
+            llm_error = llm_error or "global_budget_exhausted_before_locked_stage"
+            llm_candidates = []
         candidate_runs: list[Dict[str, Any]] = []
         for idx, candidate in enumerate(llm_candidates):
+            now = time.perf_counter()
+            stage_remaining = locked_stage_deadline - now
+            total_remaining = request_deadline - now
+            if stage_remaining < 1.0 or total_remaining < 1.0:
+                candidate_errors.append("locked_stage_budget_exhausted")
+                break
+            locked_timeout_effective = int(
+                max(
+                    1,
+                    min(
+                        stage_budgets["locked_timeout_sec"],
+                        int(math.floor(stage_remaining)),
+                        int(math.floor(total_remaining)),
+                    ),
+                )
+            )
             try:
                 locked_run = _run_shark_cli(
                     shark_cli,
                     spot_payload=request.spot,
                     node_lock_payload=candidate,
-                    timeout_sec=request.timeout_sec,
+                    timeout_sec=locked_timeout_effective,
                     quiet=request.quiet,
                 )
             except HTTPException as exc:
@@ -900,17 +1036,23 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             llm_error = "all_locked_candidate_solves_failed"
     elif node_lock is not None:
         # Back-compat path: if a direct node_lock exists and candidates list is empty, still solve once.
-        locked_run = _run_shark_cli(
-            shark_cli,
-            spot_payload=request.spot,
-            node_lock_payload=node_lock,
-            timeout_sec=request.timeout_sec,
-            quiet=request.quiet,
-        )
-        locked_result = locked_run["result"]
-        locked_solver_time = locked_run["solver_wall_time_sec"]
-        locked_solver_time_total = locked_solver_time
-        locked_candidate_solve_count = 1
+        now = time.perf_counter()
+        remaining = min(locked_stage_deadline - now, request_deadline - now)
+        if remaining < 1.0:
+            llm_error = llm_error or "locked_stage_budget_exhausted"
+        else:
+            locked_timeout_effective = int(max(1, min(stage_budgets["locked_timeout_sec"], int(math.floor(remaining)))))
+            locked_run = _run_shark_cli(
+                shark_cli,
+                spot_payload=request.spot,
+                node_lock_payload=node_lock,
+                timeout_sec=locked_timeout_effective,
+                quiet=request.quiet,
+            )
+            locked_result = locked_run["result"]
+            locked_solver_time = locked_run["solver_wall_time_sec"]
+            locked_solver_time_total = locked_solver_time
+            locked_candidate_solve_count = 1
 
     baseline_exp = _to_float_or_none(baseline_result.get("final_exploitability_pct"))
     locked_exp = _to_float_or_none(locked_result.get("final_exploitability_pct")) if locked_result else None
@@ -1020,6 +1162,13 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "multi_node_enabled": multi_node_enabled,
             "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": llm_error,
+            "runtime_profile": runtime_profile,
+            "stage_budgets": stage_budgets,
+            "effective_stage_budgets": {
+                "request_total_budget_sec": request_total_budget_sec,
+                "llm_timeout_sec": llm_timeout_effective,
+                "locked_stage_total_sec": locked_stage_total_effective,
+            },
         },
         "canary_guardrails": _canary_status_snapshot(),
     }

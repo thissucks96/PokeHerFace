@@ -3,6 +3,8 @@ param(
   [ValidateSet("turn_class1", "river_class23", "canonical_turn_ci")]
   [string]$Suite = "canonical_turn_ci",
   [string]$Preset = "local_qwen3_coder_30b",
+  [ValidateSet("fast", "normal")]
+  [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$CallsPerSpot = 1,
   [int]$NoiseRuns = 0,
@@ -41,6 +43,9 @@ try {
     "--lock-applied-min", "$LockAppliedMin",
     "--keep-rate-min", "$KeepRateMin"
   )
+  if (-not [string]::IsNullOrWhiteSpace($RuntimeProfile)) {
+    $Args += @("--runtime-profile", $RuntimeProfile)
+  }
 
   switch ($Suite) {
     "turn_class1" {

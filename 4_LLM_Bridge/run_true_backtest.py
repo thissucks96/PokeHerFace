@@ -125,6 +125,7 @@ def _build_request_payload(
     solver_timeout: int,
     ev_keep_margin: float,
     include_spot_profile: bool,
+    runtime_profile: Optional[str],
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "spot": spot,
@@ -133,6 +134,8 @@ def _build_request_payload(
         "ev_keep_margin": ev_keep_margin,
         "llm": {"preset": preset},
     }
+    if runtime_profile:
+        payload["runtime_profile"] = runtime_profile
     if include_spot_profile:
         meta = spot.get("meta")
         if isinstance(meta, dict):
@@ -213,6 +216,7 @@ def main() -> int:
     parser.add_argument("--no-shuffle", action="store_true")
     parser.add_argument("--timeout", type=float, default=1800.0, help="HTTP timeout seconds.")
     parser.add_argument("--solver-timeout", type=int, default=1200)
+    parser.add_argument("--runtime-profile", choices=["fast", "normal"], default=None)
     parser.add_argument("--ev-keep-margin", type=float, default=0.001)
     parser.add_argument("--shark-cli", default=str(DEFAULT_SHARK_CLI))
     parser.add_argument("--no-opponent-profile", action="store_true")
@@ -309,6 +313,7 @@ def main() -> int:
                 solver_timeout=args.solver_timeout,
                 ev_keep_margin=args.ev_keep_margin,
                 include_spot_profile=not args.no_opponent_profile,
+                runtime_profile=args.runtime_profile,
             )
             started = time.perf_counter()
             try:
@@ -379,6 +384,7 @@ def main() -> int:
         "shark_cli": str(shark_cli),
         "preset": args.preset,
         "ev_keep_margin": args.ev_keep_margin,
+        "runtime_profile": args.runtime_profile,
         "modes": args.modes,
         "seed": args.seed,
         "shuffle": not args.no_shuffle,
