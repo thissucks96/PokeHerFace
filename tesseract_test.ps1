@@ -875,7 +875,7 @@ function Invoke-OllamaVisionCard {
   )
   $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
   $b64 = [Convert]::ToBase64String($bytes)
-  $prompt = 'Read exactly one poker community card from this image crop. Return JSON only with key card: {"card":"As"}. Valid values are rank+suit using AKQJT98765432 and shdc (examples: As, Td, 7h). If uncertain return {"card":"??"}. No prose.'
+  $prompt = 'Read exactly one poker community card from this image crop. Return JSON only with key: {"card":"??"}. Replace ?? with a valid rank+suit token only when clearly visible, using ranks AKQJT98765432 and suits shdc (for example Qd, Tc, 7h). If uncertain keep ??. Do not guess and do not default to any fixed card. No prose.'
   $payload = @{
     model = $ollamaVisionModel
     prompt = $prompt
@@ -1580,6 +1580,34 @@ function Toggle-RoiOverlays {
   Write-Log ("Target overlays {0}." -f $stateText)
 }
 
+function Get-RoiOverlapWarnings {
+  $warnings = New-Object System.Collections.Generic.List[string]
+  for ($i = 0; $i -lt $cardSlotOrder.Count; $i++) {
+    $slotA = $cardSlotOrder[$i]
+    $a = Get-RoiRectByKey -Key $slotA
+    if (-not (Test-RegionSelected -Rect $a)) { continue }
+    for ($j = $i + 1; $j -lt $cardSlotOrder.Count; $j++) {
+      $slotB = $cardSlotOrder[$j]
+      $b = Get-RoiRectByKey -Key $slotB
+      if (-not (Test-RegionSelected -Rect $b)) { continue }
+      $ix = [Math]::Max($a.X, $b.X)
+      $iy = [Math]::Max($a.Y, $b.Y)
+      $ir = [Math]::Min(($a.X + $a.Width), ($b.X + $b.Width))
+      $ib = [Math]::Min(($a.Y + $a.Height), ($b.Y + $b.Height))
+      $iw = $ir - $ix
+      $ih = $ib - $iy
+      if ($iw -le 0 -or $ih -le 0) { continue }
+      $interArea = [double]($iw * $ih)
+      $minArea = [double][Math]::Max(1, [Math]::Min(($a.Width * $a.Height), ($b.Width * $b.Height)))
+      $ratio = $interArea / $minArea
+      if ($ratio -ge 0.25) {
+        [void]$warnings.Add(("{0}<->{1} overlap {2:P0}" -f $slotA, $slotB, $ratio))
+      }
+    }
+  }
+  return $warnings
+}
+
 function Run-Ocr {
   if ($isBusy) {
     return
@@ -1598,6 +1626,10 @@ function Run-Ocr {
   if ($missing.Count -gt 0) {
     Write-Log ("OCR skipped: set all individual card ROIs first ({0})." -f ($missing -join ", "))
     return
+  }
+  $overlapWarnings = Get-RoiOverlapWarnings
+  foreach ($ow in $overlapWarnings) {
+    Write-Log ("ROI warning: {0}. Move boxes apart to avoid duplicate reads." -f $ow)
   }
 
   $script:isBusy = $true
@@ -1629,6 +1661,32 @@ function Run-Ocr {
         $preview = $preview.Substring(0, 96) + "..."
       }
       Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
+    }
+
+    # Sanity pass: if vision returned the exact same card for most/all slots, try tesseract rescue.
+    $validSlots = New-Object System.Collections.Generic.List[string]
+    $validTokens = New-Object System.Collections.Generic.List[string]
+    foreach ($slot in $cardSlotOrder) {
+      $tk = ([string]$cards[$slot]).Trim().ToUpperInvariant()
+      if ($tk -match "^[AKQJT98765432][SHDC]$") {
+        [void]$validSlots.Add($slot)
+        [void]$validTokens.Add($tk)
+      }
+    }
+    if ($validTokens.Count -ge 4) {
+      $uniq = New-Object System.Collections.Generic.HashSet[string]
+      foreach ($t in $validTokens) { [void]$uniq.Add($t) }
+      if ($uniq.Count -eq 1 -and $tesseractExe) {
+        Write-Log ("OCR warning: identical card token across {0} slots ({1}). Running tesseract rescue pass." -f $validTokens.Count, $validTokens[0])
+        foreach ($slot in $cardSlotOrder) {
+          $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+          $fallbackCard = Get-CardTokenFromRegion -Region $slotRect -TmpDir $tmpDir -SlotTag ("rescue_{0}" -f $slot)
+          if ($fallbackCard -and ([string]$fallbackCard.token).Trim().ToUpperInvariant() -match "^[AKQJT98765432][SHDC]$") {
+            $cards[$slot] = ([string]$fallbackCard.token).Trim().ToUpperInvariant()
+            $cardScores[$slot] = if ($null -ne $fallbackCard.score) { [int]$fallbackCard.score } else { -100000 }
+          }
+        }
+      }
     }
 
     $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
