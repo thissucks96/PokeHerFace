@@ -245,10 +245,14 @@ Clickable OCR watcher test utility:
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
   - `BACKEND_AUTOSTART` (`1`/`0`, default `1`)
+  - `OLLAMA_VISION_KEEP_ALIVE` (default `0s`; unloads vision model after each OCR call to free VRAM for solver/LLM work)
 
 Backend lifecycle in tester:
 - On launch, tester checks Ollama + bridge endpoints and auto-starts missing services.
 - On close/restart, tester stops only the backend processes it started in that session.
+- Vision model lifecycle:
+  - tester sends vision calls with configurable Ollama `keep_alive` (default `0s`),
+  - tester also sends an explicit unload request for the vision model during close/restart.
 
 ## Quick Start (WSL / Linux)
 

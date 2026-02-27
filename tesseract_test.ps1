@@ -76,6 +76,10 @@ catch {
 $tesseractExe = Resolve-TesseractExecutable
 $ollamaHost = if ($env:OLLAMA_HOST) { [string]$env:OLLAMA_HOST } else { "http://127.0.0.1:11434" }
 $ollamaVisionModel = if ($env:OLLAMA_VISION_MODEL) { [string]$env:OLLAMA_VISION_MODEL } else { "llava:13b" }
+$ollamaVisionKeepAlive = if ($env:OLLAMA_VISION_KEEP_ALIVE) { ([string]$env:OLLAMA_VISION_KEEP_ALIVE).Trim() } else { "0s" }
+if (-not $ollamaVisionKeepAlive) {
+  $ollamaVisionKeepAlive = "0s"
+}
 $bridgeSolveEndpoint = if ($env:BRIDGE_SOLVE_ENDPOINT) { [string]$env:BRIDGE_SOLVE_ENDPOINT } else { "http://127.0.0.1:8000/solve" }
 $bridgeHealthEndpoint = "http://127.0.0.1:8000/health"
 try {
@@ -1428,6 +1432,7 @@ function Invoke-OllamaVisionCard {
     prompt = $prompt
     images = @($b64)
     stream = $false
+    keep_alive = $ollamaVisionKeepAlive
     format = "json"
     options = @{
       temperature = 0
@@ -1458,6 +1463,7 @@ function Invoke-OllamaVisionCardRelaxed {
     prompt = $prompt
     images = @($b64)
     stream = $false
+    keep_alive = $ollamaVisionKeepAlive
     options = @{
       temperature = 0
       top_p = 0.2
@@ -1482,6 +1488,28 @@ function Test-OllamaEndpoint {
   }
   catch {
     return $false
+  }
+}
+
+function Release-OllamaVisionModel {
+  try {
+    if (-not (Test-OllamaEndpoint)) {
+      return
+    }
+    $payload = @{
+      model = $ollamaVisionModel
+      prompt = ""
+      stream = $false
+      keep_alive = "0s"
+      options = @{
+        num_predict = 0
+      }
+    }
+    $jsonBody = ConvertTo-Json $payload -Depth 6 -Compress
+    $null = Invoke-RestMethod -Uri ("{0}/api/generate" -f $ollamaHost.TrimEnd("/")) -Method Post -ContentType "application/json" -Body $jsonBody -TimeoutSec 12
+  }
+  catch {
+    # Best effort only.
   }
 }
 
@@ -1790,6 +1818,7 @@ function Invoke-OllamaVisionBoard {
     prompt = $prompt
     images = @($b64)
     stream = $false
+    keep_alive = $ollamaVisionKeepAlive
     options = @{
       temperature = 0
       top_p = 0.1
@@ -1883,7 +1912,7 @@ $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
-$status.Text = ("Local Vision: {0} @ {1} | card mode: {2} | bridge: {3}" -f $ollamaVisionModel, $ollamaHost, $modeLabel, $bridgeSolveEndpoint)
+$status.Text = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | bridge: {4}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $bridgeSolveEndpoint)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
@@ -3566,6 +3595,7 @@ $btnRestart.Add_Click({
     }
   }
   catch {}
+  Release-OllamaVisionModel
   Stop-ManagedBackends
   $form.Close()
 })
@@ -3604,6 +3634,7 @@ $form.Add_Shown({
     bridge_endpoint = $bridgeSolveEndpoint
     ollama_host = $ollamaHost
     model = $ollamaVisionModel
+    keep_alive = $ollamaVisionKeepAlive
   }
   Load-RoiState
   $regionLabel.Text = "Selected: none"
@@ -3639,6 +3670,7 @@ $form.Add_FormClosing({
   $enginePendingJobs.Clear()
   $script:engineHandoffBusy = $false
   Update-EngineButtonState
+  Release-OllamaVisionModel
   Stop-ManagedBackends
   Save-RoiState
   Close-RoiOverlays
