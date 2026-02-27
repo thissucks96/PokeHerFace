@@ -448,6 +448,8 @@ One-click wrapper (auto-starts local services if needed):
     - `FAST_BASELINE_TIMEOUT_RIVER_SEC` (default `25`)
   - `FAST_FLOP_LOOKUP_ONLY` (`1`/`0`, default `1`) bypasses the expensive flop baseline solve entirely and returns a lightweight flop lookup policy immediately in `fast` mode.
     - current heuristic: small flop c-bet on dry boards when hero is in position; otherwise conservative fallback (`check`/`call`).
+  - `FAST_TURN_LOOKUP_ONLY` (`1`/`0`, default `0`) optionally applies the same idea to turn in `fast` mode.
+    - current heuristic: small turn stab only on dry, unpaired boards when hero is in position; otherwise conservative fallback (`check`/`call`).
   - LLM timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
   - locked solve timeout cap: `FAST_LOCKED_TIMEOUT_SEC` (default `60`)
   - locked stage total budget: `FAST_LOCKED_STAGE_TOTAL_SEC` (default `90`)

@@ -126,6 +126,11 @@ FAST_FLOP_LOOKUP_ONLY = os.environ.get("FAST_FLOP_LOOKUP_ONLY", "1").strip() not
     "false",
     "False",
 }
+FAST_TURN_LOOKUP_ONLY = os.environ.get("FAST_TURN_LOOKUP_ONLY", "0").strip() not in {
+    "0",
+    "false",
+    "False",
+}
 FAST_FAILOVER_DEFAULT_FLOP_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_FLOP_ACTION", "check")).strip().lower()
 FAST_FAILOVER_DEFAULT_TURN_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_TURN_ACTION", "check")).strip().lower()
 FAST_FAILOVER_DEFAULT_RIVER_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_RIVER_ACTION", "check")).strip().lower()
@@ -928,7 +933,7 @@ _RANK_VALUE_MAP = {
 def _extract_board_texture_flags(spot: Dict[str, Any]) -> Dict[str, bool]:
     board = spot.get("board")
     if not isinstance(board, list):
-        return {"paired": False, "monotone": False, "connected": False, "dry": False}
+        return {"paired": False, "monotone": False, "four_flush": False, "connected": False, "dry": False}
     ranks: list[int] = []
     suits: list[str] = []
     for raw_card in board[:5]:
@@ -948,13 +953,17 @@ def _extract_board_texture_flags(spot: Dict[str, Any]) -> Dict[str, bool]:
         if suit_token in {"s", "h", "d", "c"}:
             suits.append(suit_token)
     paired = len(set(ranks)) < len(ranks) if ranks else False
-    monotone = len(suits) >= 3 and len(set(suits[:3])) == 1
-    unique_ranks = sorted(set(ranks[:3]))
-    connected = len(unique_ranks) >= 3 and (max(unique_ranks) - min(unique_ranks) <= 5)
-    dry = bool(ranks) and not paired and not monotone and not connected
+    suit_counts = {suit: suits.count(suit) for suit in set(suits)}
+    max_suit_count = max(suit_counts.values()) if suit_counts else 0
+    monotone = max_suit_count >= 3
+    four_flush = max_suit_count >= 4
+    unique_ranks = sorted(set(ranks))
+    connected = len(unique_ranks) >= 3 and (max(unique_ranks) - min(unique_ranks) <= (len(unique_ranks) + 1))
+    dry = bool(ranks) and not paired and not monotone and not four_flush and not connected
     return {
         "paired": paired,
         "monotone": monotone,
+        "four_flush": four_flush,
         "connected": connected,
         "dry": dry,
     }
@@ -987,11 +996,13 @@ def _choose_smallest_sized_action(allowed_actions: list[str], action_base: str) 
 
 def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str]) -> str:
     street = _detect_spot_street(spot)
-    if street == "flop":
+    if street in {"flop", "turn"}:
         smallest_bet = _choose_smallest_sized_action(allowed_actions, "bet")
         if smallest_bet:
             texture = _extract_board_texture_flags(spot)
-            if _hero_is_in_position(spot) and texture["dry"]:
+            if street == "flop" and _hero_is_in_position(spot) and texture["dry"]:
+                return smallest_bet
+            if street == "turn" and _hero_is_in_position(spot) and texture["dry"] and not texture["paired"]:
                 return smallest_bet
             if "check" not in allowed_actions:
                 return smallest_bet
@@ -1167,6 +1178,7 @@ def health() -> Dict[str, Any]:
         "fast_spot_raise_sizes_raw": FAST_SPOT_RAISE_SIZES_RAW,
         "fast_failover_on_baseline_error": FAST_FAILOVER_ON_BASELINE_ERROR,
         "fast_flop_lookup_only": FAST_FLOP_LOOKUP_ONLY,
+        "fast_turn_lookup_only": FAST_TURN_LOOKUP_ONLY,
         "fast_failover_default_flop_action": FAST_FAILOVER_DEFAULT_FLOP_ACTION,
         "fast_failover_default_turn_action": FAST_FAILOVER_DEFAULT_TURN_ACTION,
         "fast_failover_default_river_action": FAST_FAILOVER_DEFAULT_RIVER_ACTION,
@@ -1280,6 +1292,26 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             fast_spot_profile_summary=fast_spot_profile_summary,
             selection_reason="fast_profile_flop_lookup_only",
             multi_node_policy_reason="fast_flop_lookup_only",
+        )
+    if runtime_profile == "fast" and spot_street == "turn" and FAST_TURN_LOOKUP_ONLY:
+        total_bridge_time = time.perf_counter() - bridge_started
+        _record_canary_observation(
+            fallback=True,
+            kept=False,
+            latency_sec=total_bridge_time,
+        )
+        return _build_fast_failover_response(
+            request=request,
+            runtime_profile=runtime_profile,
+            stage_budgets=stage_budgets,
+            request_total_budget_sec=request_total_budget_sec,
+            llm_timeout_effective=int(stage_budgets["llm_timeout_sec"]),
+            locked_stage_total_effective=float(stage_budgets["locked_stage_total_sec"]),
+            total_bridge_time=total_bridge_time,
+            baseline_error="fast_turn_lookup_only",
+            fast_spot_profile_summary=fast_spot_profile_summary,
+            selection_reason="fast_profile_turn_lookup_only",
+            multi_node_policy_reason="fast_turn_lookup_only",
         )
 
     # Pass 1: baseline (no lock) is always computed first.
