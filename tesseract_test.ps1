@@ -2920,6 +2920,54 @@ function Clear-RoiForSlot {
   Write-Log ("Cleared ROI for {0}." -f $Key) -Type "roi_clear" -Data @{ slot = $Key }
 }
 
+function Apply-ManualCardTokenToSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$Token
+  )
+  if (-not ($allSlotOrder -contains $Slot)) {
+    return
+  }
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    Write-Log ("Manual card assign skipped for {0}: invalid token '{1}'." -f $Slot, $Token)
+    return
+  }
+
+  if ($Slot -in $playerSlotOrder) {
+    $heroCards[$Slot] = $normalized
+    if (-not $suppressHeroAutoSend) {
+      Try-AutoSendHeroCardsToEngine
+    }
+  }
+  elseif ($Slot -in $cardSlotOrder) {
+    Update-LastBoardTokenFromSlot -Slot $Slot -Token $normalized
+    $manualBoardReady = Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)
+    if ($manualBoardReady) {
+      [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel "manual_single")
+    }
+  }
+  else {
+    return
+  }
+
+  $txtLatest.Text = @(
+    "run:   manual_assign"
+    ("slot:  {0}" -f $Slot)
+    ("card:  {0}" -f $normalized)
+    ("hero_cards: {0}" -f (Get-HeroCardsText))
+    ("board: {0}" -f (Get-BoardTokensText))
+    ("board_ready: {0}" -f (Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)))
+    "source:manual_menu"
+  ) -join "`r`n"
+  Write-Log ("Manual card set [{0}] = {1}" -f $Slot, $normalized) -Type "manual_card_set" -Data @{
+    slot = $Slot
+    token = $normalized
+    hero_cards = @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    board = @($lastBoardTokens)
+  }
+}
+
 function Repick-RoiForSlot {
   param(
     [Parameter(Mandatory = $true)][string]$Key
@@ -2966,6 +3014,50 @@ function Repick-RoiForSlot {
   }
 }
 
+function New-ManualCardSuitMenuItem {
+  param(
+    [Parameter(Mandatory = $true)][string]$SlotKey,
+    [Parameter(Mandatory = $true)][string]$RankToken,
+    [Parameter(Mandatory = $true)][string]$SuitToken
+  )
+  $capturedSlot = [string]$SlotKey
+  $capturedToken = ("{0}{1}" -f [string]$RankToken, [string]$SuitToken).ToUpperInvariant()
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem
+  $item.Text = [string]$SuitToken
+  $item.Add_Click({
+    Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token $capturedToken
+  })
+  return $item
+}
+
+function New-ManualCardRankMenuItem {
+  param(
+    [Parameter(Mandatory = $true)][string]$SlotKey,
+    [Parameter(Mandatory = $true)][string]$RankToken
+  )
+  $capturedSlot = [string]$SlotKey
+  $capturedRank = [string]$RankToken
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem
+  $item.Text = $capturedRank
+  foreach ($suitToken in @("S", "H", "D", "C")) {
+    [void]$item.DropDownItems.Add((New-ManualCardSuitMenuItem -SlotKey $capturedSlot -RankToken $capturedRank -SuitToken $suitToken))
+  }
+  return $item
+}
+
+function New-ManualCardMenu {
+  param(
+    [Parameter(Mandatory = $true)][string]$SlotKey
+  )
+  $capturedSlot = [string]$SlotKey
+  $menu = New-Object System.Windows.Forms.ToolStripMenuItem
+  $menu.Text = "Set Card"
+  foreach ($rankToken in @("A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2")) {
+    [void]$menu.DropDownItems.Add((New-ManualCardRankMenuItem -SlotKey $capturedSlot -RankToken $rankToken))
+  }
+  return $menu
+}
+
 function New-RoiSlotContextMenu {
   param(
     [Parameter(Mandatory = $true)][string]$Key
@@ -2979,6 +3071,7 @@ function New-RoiSlotContextMenu {
   [void]$menu.Items.Add($title)
 
   [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+  [void]$menu.Items.Add((New-ManualCardMenu -SlotKey $slotKey))
 
   $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $runItem.Text = "Run OCR"
