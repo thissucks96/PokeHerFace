@@ -482,6 +482,53 @@ function Get-CardTokenScore {
   return 0
 }
 
+function Resolve-BoardCardCollisions {
+  param(
+    [hashtable]$Cards,
+    [hashtable]$CardScores
+  )
+
+  $slotsByToken = @{}
+  foreach ($slot in $cardSlotOrder) {
+    $token = ([string]$Cards[$slot]).Trim().ToUpperInvariant()
+    if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
+      continue
+    }
+    if (-not $slotsByToken.ContainsKey($token)) {
+      $slotsByToken[$token] = New-Object System.Collections.Generic.List[string]
+    }
+    [void]$slotsByToken[$token].Add($slot)
+  }
+
+  $warnings = New-Object System.Collections.Generic.List[string]
+  foreach ($token in $slotsByToken.Keys) {
+    $slots = $slotsByToken[$token]
+    if ($slots.Count -le 1) {
+      continue
+    }
+    $keepSlot = $slots[0]
+    $keepScore = if ($CardScores.ContainsKey($keepSlot)) { [int]$CardScores[$keepSlot] } else { -100000 }
+    foreach ($slot in $slots) {
+      $score = if ($CardScores.ContainsKey($slot)) { [int]$CardScores[$slot] } else { -100000 }
+      if ($score -gt $keepScore) {
+        $keepScore = $score
+        $keepSlot = $slot
+      }
+    }
+    foreach ($slot in $slots) {
+      if ($slot -ne $keepSlot) {
+        $Cards[$slot] = "??"
+      }
+    }
+    [void]$warnings.Add(("Duplicate card token {0} detected in {1}; kept {2}, cleared others to ??." -f $token, ($slots -join ","), $keepSlot))
+  }
+
+  return [pscustomobject]@{
+    cards = $Cards
+    warnings = $warnings
+  }
+}
+
 function Get-CardTokenFromRegion {
   param(
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
@@ -493,80 +540,89 @@ function Get-CardTokenFromRegion {
     return $null
   }
 
-  $regions = New-Object System.Collections.Generic.List[object]
-  [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
+  try {
+    $regions = New-Object System.Collections.Generic.List[object]
+    [void]$regions.Add([pscustomobject]@{ tag = "full"; rect = $Region })
 
-  if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
-    [int]$x = [int]$Region.X
-    [int]$y = [int]$Region.Y
-    [int]$w = [int]$Region.Width
-    [int]$h = [int]$Region.Height
-    [void]$regions.Add([pscustomobject]@{
-      tag = "rankcrop1"
-      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
-    })
-    [void]$regions.Add([pscustomobject]@{
-      tag = "rankcrop2"
-      rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
-    })
-    [void]$regions.Add([pscustomobject]@{
-      tag = "rankcrop3"
-      rect = New-Object System.Drawing.Rectangle(
-        $x + [Math]::Max(0, [int]($w * 0.03)),
-        $y + [Math]::Max(0, [int]($h * 0.05)),
-        [Math]::Max(8, [int]($w * 0.55)),
-        [Math]::Max(8, [int]($h * 0.65))
-      )
-    })
+    if ($Region.Width -ge 20 -and $Region.Height -ge 20) {
+      [int]$x = [int]$Region.X
+      [int]$y = [int]$Region.Y
+      [int]$w = [int]$Region.Width
+      [int]$h = [int]$Region.Height
+      [void]$regions.Add([pscustomobject]@{
+        tag = "rankcrop1"
+        rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.60)), [Math]::Max(8, [int]($h * 0.70)))
+      })
+      [void]$regions.Add([pscustomobject]@{
+        tag = "rankcrop2"
+        rect = New-Object System.Drawing.Rectangle($x, $y, [Math]::Max(8, [int]($w * 0.45)), [Math]::Max(8, [int]($h * 0.52)))
+      })
+      [void]$regions.Add([pscustomobject]@{
+        tag = "rankcrop3"
+        rect = New-Object System.Drawing.Rectangle(
+          $x + [Math]::Max(0, [int]($w * 0.03)),
+          $y + [Math]::Max(0, [int]($h * 0.05)),
+          [Math]::Max(8, [int]($w * 0.55)),
+          [Math]::Max(8, [int]($h * 0.65))
+        )
+      })
+    }
+
+    $bestToken = ""
+    $bestRawText = ""
+    $bestLabel = ""
+    $bestVariant = ""
+    $bestSource = ""
+    $bestScore = -100000
+
+    foreach ($entry in $regions) {
+      $best = Get-BestOcrForRegion -Region $entry.rect -ProfileName "Cards (ranks/suits)" -TmpDir $TmpDir -Tag ("{0}_{1}" -f $SlotTag, $entry.tag)
+      if (-not $best) {
+        continue
+      }
+      $rawText = if ($best.text -is [System.Array]) {
+        [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
+      }
+      else {
+        [string]$best.text
+      }
+      $rawText = $rawText.Trim()
+      $token = Normalize-CardToken -Text $rawText
+      $tokenScore = Get-CardTokenScore -Token $token
+      $combinedScore = [int]$tokenScore + [int]$best.score
+      if ($combinedScore -gt $bestScore) {
+        $bestScore = $combinedScore
+        $bestToken = $token
+        $bestRawText = $rawText
+        $bestLabel = [string]$best.label
+        $bestVariant = [string]$best.variant
+        $bestSource = [string]$entry.tag
+      }
+    }
+
+    if (-not $bestRawText) {
+      return $null
+    }
+
+    if (-not $bestToken) {
+      $bestToken = "??"
+    }
+
+    return [pscustomobject]@{
+      token = $bestToken
+      raw_text = $bestRawText
+      label = $bestLabel
+      variant = $bestVariant
+      source = $bestSource
+      score = $bestScore
+    }
   }
-
-  $bestToken = ""
-  $bestRawText = ""
-  $bestLabel = ""
-  $bestVariant = ""
-  $bestSource = ""
-  $bestScore = -100000
-
-  foreach ($entry in $regions) {
-    $best = Get-BestOcrForRegion -Region $entry.rect -ProfileName "Cards (ranks/suits)" -TmpDir $TmpDir -Tag ("{0}_{1}" -f $SlotTag, $entry.tag)
-    if (-not $best) {
-      continue
+  catch {
+    Write-Log ("Card OCR internal error ({0}): {1}" -f $SlotTag, $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("Card OCR internal error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
     }
-    $rawText = if ($best.text -is [System.Array]) {
-      [string]::Join([Environment]::NewLine, ($best.text | ForEach-Object { [string]$_ }))
-    }
-    else {
-      [string]$best.text
-    }
-    $rawText = $rawText.Trim()
-    $token = Normalize-CardToken -Text $rawText
-    $tokenScore = Get-CardTokenScore -Token $token
-    $combinedScore = $tokenScore + [int]$best.score
-    if ($combinedScore -gt $bestScore) {
-      $bestScore = $combinedScore
-      $bestToken = $token
-      $bestRawText = $rawText
-      $bestLabel = [string]$best.label
-      $bestVariant = [string]$best.variant
-      $bestSource = [string]$entry.tag
-    }
-  }
-
-  if (-not $bestRawText) {
     return $null
-  }
-
-  if (-not $bestToken) {
-    $bestToken = "??"
-  }
-
-  return [pscustomobject]@{
-    token = $bestToken
-    raw_text = $bestRawText
-    label = $bestLabel
-    variant = $bestVariant
-    source = $bestSource
-    score = $bestScore
   }
 }
 
@@ -576,7 +632,7 @@ function Invoke-OllamaVisionCard {
   )
   $bytes = [System.IO.File]::ReadAllBytes($ImagePath)
   $b64 = [Convert]::ToBase64String($bytes)
-  $prompt = "Read the poker community card in this image crop. Return only one token in format Rank+Suit using ranks AKQJT98765432 and suits s h d c (example: As, Td, 7h). If unreadable return ??. No extra words."
+  $prompt = "You are OCR. Read exactly one poker community card from this image crop. Return only one token in format Rank+Suit using ranks AKQJT98765432 and suits s h d c (example: As, Td, 7h). If uncertain, blurred, or missing suit/rank, return ??. Do not guess. No extra words."
   $payload = @{
     model = $ollamaVisionModel
     prompt = $prompt
@@ -944,8 +1000,10 @@ function Run-Ocr {
     if ($isCardsProfile) {
       $cardModeLabel = if ($isVisionCards) { "Cards (local vision llava)" } else { "Cards (ranks/suits)" }
       $cards = @{}
+      $cardScores = @{}
       foreach ($slot in $cardSlotOrder) {
         $cards[$slot] = "--"
+        $cardScores[$slot] = -100000
       }
       foreach ($slot in $cardSlotOrder) {
         $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
@@ -961,11 +1019,18 @@ function Run-Ocr {
           continue
         }
         $cards[$slot] = $bestCard.token
+        $cardScores[$slot] = if ($null -ne $bestCard.score) { [int]$bestCard.score } else { -100000 }
         $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
         if ($preview.Length -gt 64) {
           $preview = $preview.Substring(0, 64) + "..."
         }
         Write-Log ("OCR OK [{0}] {1} {2} via {3}/{4}: {5}" -f $cardModeLabel, $slot, $bestCard.label, $bestCard.variant, $bestCard.source, $preview)
+      }
+
+      $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
+      $cards = $collisionResult.cards
+      foreach ($warn in $collisionResult.warnings) {
+        Write-Log ("OCR warning [{0}] {1}" -f $cardModeLabel, $warn)
       }
 
       $out = @(
