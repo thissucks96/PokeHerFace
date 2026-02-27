@@ -1868,6 +1868,13 @@ function Toggle-RoiOverlays {
   Write-Log ("Target overlays {0}." -f $stateText)
 }
 
+function Set-OverlayVisibilityForCapture {
+  param([bool]$Enable)
+  $script:overlayVisible = $Enable
+  Update-TargetsButtonText
+  Refresh-RoiOverlays
+}
+
 function Get-UnionCardRoiBounds {
   param(
     [int]$PadX = 0,
@@ -1950,7 +1957,14 @@ function Run-OcrSingleSlot {
   }
 
   $script:isBusy = $true
+  $restoreOverlaysAfter = $false
   try {
+    if ($overlayVisible) {
+      $restoreOverlaysAfter = $true
+      Set-OverlayVisibilityForCapture -Enable $false
+      Start-Sleep -Milliseconds 50
+    }
+
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
@@ -1993,6 +2007,9 @@ function Run-OcrSingleSlot {
     }
   }
   finally {
+    if ($restoreOverlaysAfter) {
+      Set-OverlayVisibilityForCapture -Enable $true
+    }
     $script:isBusy = $false
   }
 }
@@ -2022,7 +2039,14 @@ function Run-Ocr {
   }
 
   $script:isBusy = $true
+  $restoreOverlaysAfter = $false
   try {
+    if ($overlayVisible) {
+      $restoreOverlaysAfter = $true
+      Set-OverlayVisibilityForCapture -Enable $false
+      Start-Sleep -Milliseconds 50
+    }
+
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
     $cards = @{}
@@ -2132,6 +2156,9 @@ function Run-Ocr {
     }
   }
   finally {
+    if ($restoreOverlaysAfter) {
+      Set-OverlayVisibilityForCapture -Enable $true
+    }
     $script:isBusy = $false
   }
 }
