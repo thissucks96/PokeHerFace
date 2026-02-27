@@ -1966,7 +1966,7 @@ $regionLabel.AutoSize = $true
 $form.Controls.Add($regionLabel)
 
 $cardStatusLabel = New-Object System.Windows.Forms.Label
-$cardStatusLabel.Text = "Set all 5 card targets (flop1, flop2, flop3, turn, river)."
+$cardStatusLabel.Text = "Set board (5), hero, and action targets."
 $cardStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $cardStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $cardStatusLabel.Location = New-Object System.Drawing.Point(20, 94)
@@ -2053,6 +2053,15 @@ $btnResetRois.FlatStyle = "Flat"
 $btnResetRois.ForeColor = [System.Drawing.Color]::White
 $btnResetRois.BackColor = [System.Drawing.Color]::FromArgb(92, 58, 44)
 $form.Controls.Add($btnResetRois)
+
+$btnSetHeroes = New-Object System.Windows.Forms.Button
+$btnSetHeroes.Text = "Set Heroes ROI"
+$btnSetHeroes.Location = New-Object System.Drawing.Point(870, 156)
+$btnSetHeroes.Size = New-Object System.Drawing.Size(90, 26)
+$btnSetHeroes.FlatStyle = "Flat"
+$btnSetHeroes.ForeColor = [System.Drawing.Color]::White
+$btnSetHeroes.BackColor = [System.Drawing.Color]::FromArgb(84, 64, 120)
+$form.Controls.Add($btnSetHeroes)
 
 $lblQuick = New-Object System.Windows.Forms.Label
 $lblQuick.Text = "Quick Test (single slot)"
@@ -3707,6 +3716,12 @@ $btnRestart.Add_Click({
 
 $btnTargets.Add_Click({
   Toggle-RoiOverlays
+})
+
+$btnSetHeroes.Add_Click({
+  $cmbTarget.SelectedItem = "hero"
+  Write-Log "Set Heroes ROI: picking one hero box then auto-cloning to hero2."
+  $btnPick.PerformClick()
 })
 
 $btnResetRois.Add_Click({

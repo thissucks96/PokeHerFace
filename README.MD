@@ -222,6 +222,7 @@ Clickable OCR watcher test utility:
 ```
 
 - Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
+- `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
 - Fast testing controls:
   - `Run flop1` ... `Run river` for single-slot OCR checks.
   - `Run Hero (New)` resets previous hand cache and scans `hero1` + `hero2`.
