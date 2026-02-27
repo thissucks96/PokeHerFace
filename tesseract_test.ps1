@@ -2290,20 +2290,72 @@ function Test-BridgeEndpoint {
   }
 }
 
-function Stop-ManagedBackends {
-  if ($managedBridgeStartedByUi -and $managedBridgeProcess -and -not $managedBridgeProcess.HasExited) {
+function Stop-ProcessTreeByPid {
+  param(
+    [int]$Pid
+  )
+  if ($Pid -le 0) {
+    return $false
+  }
+
+  $stopped = $false
+  try {
+    & taskkill.exe /PID $Pid /T /F 1>$null 2>$null
+    if ($LASTEXITCODE -eq 0) {
+      $stopped = $true
+    }
+  }
+  catch {}
+
+  if (-not $stopped) {
     try {
-      Stop-Process -Id $managedBridgeProcess.Id -Force -ErrorAction SilentlyContinue
-      Write-Log ("Stopped managed bridge process (pid={0})." -f $managedBridgeProcess.Id)
+      Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue
+      $stopped = $true
     }
     catch {}
   }
-  if ($managedOllamaStartedByUi -and $managedOllamaProcess -and -not $managedOllamaProcess.HasExited) {
-    try {
-      Stop-Process -Id $managedOllamaProcess.Id -Force -ErrorAction SilentlyContinue
-      Write-Log ("Stopped managed Ollama process (pid={0})." -f $managedOllamaProcess.Id)
+  return $stopped
+}
+
+function Stop-ManagedBackends {
+  if ($managedBridgeStartedByUi) {
+    $bridgePid = 0
+    if ($managedBridgeProcess) {
+      try { $bridgePid = [int]$managedBridgeProcess.Id } catch { $bridgePid = 0 }
     }
-    catch {}
+    if ($bridgePid -gt 0) {
+      if (Stop-ProcessTreeByPid -Pid $bridgePid) {
+        Write-Log ("Stopped managed bridge process tree (pid={0})." -f $bridgePid)
+      }
+    }
+  }
+  if ($managedOllamaStartedByUi) {
+    $ollamaPid = 0
+    if ($managedOllamaProcess) {
+      try { $ollamaPid = [int]$managedOllamaProcess.Id } catch { $ollamaPid = 0 }
+    }
+    if ($ollamaPid -gt 0) {
+      if (Stop-ProcessTreeByPid -Pid $ollamaPid) {
+        Write-Log ("Stopped managed Ollama process tree (pid={0})." -f $ollamaPid)
+      }
+    }
+    # Final safety sweep for stray ollama.exe instances if this UI started the service.
+    $leftover = @(Get-Process -Name "ollama" -ErrorAction SilentlyContinue)
+    if ($leftover.Count -gt 0) {
+      foreach ($proc in $leftover) {
+        try {
+          Stop-ProcessTreeByPid -Pid ([int]$proc.Id) | Out-Null
+        }
+        catch {}
+      }
+      Start-Sleep -Milliseconds 120
+      if (-not (Test-OllamaEndpoint)) {
+        Write-Log "Stopped leftover Ollama background processes started in this session."
+      }
+      else {
+        Write-Log "Ollama endpoint still reachable after stop attempt. Another external service may still be running."
+      }
+    }
   }
   $script:managedBridgeProcess = $null
   $script:managedOllamaProcess = $null
