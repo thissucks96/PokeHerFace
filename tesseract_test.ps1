@@ -922,14 +922,15 @@ function Get-CardTokenFromVisionRegion {
       if (-not $rawText) {
         continue
       }
-      $token = Normalize-CardToken -Text $rawText
-      $tokenScore = Get-CardTokenScore -Token $token
-      if ($token -eq "??") {
-        $tokenScore -= 10
+      $token = Extract-CardTokenFromText -Text $rawText
+      if ($token -notmatch "^[AKQJT98765432][SHDC]$") {
+        # Ignore prose/malformed responses; only accept strict rank+suit.
+        continue
       }
+      $tokenScore = Get-CardTokenScore -Token $token
       if ($tokenScore -gt $bestScore) {
         $bestScore = $tokenScore
-        $bestToken = if ($token) { $token } else { "??" }
+        $bestToken = $token
         $bestRaw = $rawText
         $bestSource = [string]$entry.tag
         $bestVariant = [System.IO.Path]::GetFileName($candidatePath)
