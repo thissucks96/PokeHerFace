@@ -99,6 +99,8 @@ if ($env:POKE_RANK_ONLY -and ([string]$env:POKE_RANK_ONLY).Trim().ToLowerInvaria
 }
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
+$engineHandoffBusy = $false
+$enginePendingJobs = @{}
 $autoEnabled = $false
 $overlayVisible = $true
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
@@ -2114,6 +2116,17 @@ function Write-Log {
   $logBox.AppendText("[$stamp] $Message`r`n")
 }
 
+function Update-FlopButtonState {
+  if ($engineHandoffBusy) {
+    $btnRunFlopSet.Text = "Run Flop (1-3) [Engine Busy]"
+    $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(90, 80, 32)
+  }
+  else {
+    $btnRunFlopSet.Text = "Run Flop (1-3)"
+    $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
+  }
+}
+
 function Format-RegionText {
   param([System.Drawing.Rectangle]$Rect)
   if ($Rect -eq [System.Drawing.Rectangle]::Empty) {
@@ -2564,18 +2577,91 @@ function Run-OcrFlopSet {
       return
     }
 
-    Write-Log ("Engine handoff: sending flop {0} {1} {2} to {3}" -f $flopTokens[0], $flopTokens[1], $flopTokens[2], $bridgeSolveEndpoint)
+    if ($engineHandoffBusy) {
+      Write-Log "Engine handoff skipped: previous flop solve still running."
+      return
+    }
+    Write-Log ("Engine handoff queued: flop {0} {1} {2} -> {3}" -f $flopTokens[0], $flopTokens[1], $flopTokens[2], $bridgeSolveEndpoint)
     try {
-      $engineResult = Invoke-FlopEngineSolve -FlopCards $flopTokens
-      Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
-        $engineResult.selected_strategy,
-        $engineResult.exploitability,
-        $engineResult.node_lock_kept,
-        [double]$engineResult.elapsed_sec)
-      if ($engineResult.llm_error) {
-        Write-Log ("Engine llm_error: {0}" -f $engineResult.llm_error)
+      $spot = Build-FlopEngineSpotPayload -FlopCards $flopTokens
+      $requestPayload = @{
+        spot = $spot
+        timeout_sec = [int]$engineSolverTimeoutSec
+        quiet = $true
+        llm = @{
+          preset = [string]$engineLlmPreset
+        }
       }
-      Write-Log ("Engine artifacts: payload={0}, response={1}" -f $engineResult.payload_path, $engineResult.response_path)
+      if ($engineEnableMultiNode) {
+        $requestPayload.enable_multi_node_locks = $true
+      }
+
+      if (-not (Test-Path $engineOutputDir)) {
+        New-Item -Path $engineOutputDir -ItemType Directory -Force | Out-Null
+      }
+      $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+      $payloadPath = Join-Path $engineOutputDir ("flop_payload_{0}.json" -f $stamp)
+      $responsePath = Join-Path $engineOutputDir ("flop_response_{0}.json" -f $stamp)
+      $requestJson = $requestPayload | ConvertTo-Json -Depth 16
+      Set-Content -Path $payloadPath -Value $requestJson -Encoding UTF8
+
+      $job = Start-Job -Name ("flop_engine_{0}" -f $stamp) -ArgumentList @(
+        $bridgeSolveEndpoint,
+        $requestJson,
+        $responsePath,
+        [int]([Math]::Max(60, $engineSolverTimeoutSec + 30))
+      ) -ScriptBlock {
+        param($endpoint, $requestJsonText, $responsePathValue, $timeoutSecValue)
+        $started = Get-Date
+        try {
+          $resp = Invoke-RestMethod -Uri ([string]$endpoint) -Method Post -ContentType "application/json" -Body ([string]$requestJsonText) -TimeoutSec ([int]$timeoutSecValue)
+          $respJson = $resp | ConvertTo-Json -Depth 20
+          Set-Content -Path ([string]$responsePathValue) -Value $respJson -Encoding UTF8
+          $elapsedSec = ((Get-Date) - $started).TotalSeconds
+          $selected = ""
+          if ($resp.PSObject.Properties.Name -contains "selected_strategy") {
+            $selected = [string]$resp.selected_strategy
+          }
+          $exploitability = $null
+          if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "exploitability")) {
+            $exploitability = $resp.result.exploitability
+          }
+          $kept = $null
+          if ($resp.PSObject.Properties.Name -contains "node_lock_kept") {
+            $kept = [bool]$resp.node_lock_kept
+          }
+          $llmErr = ""
+          if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
+            $llmErr = [string]$resp.llm_error
+          }
+          [pscustomobject]@{
+            ok = $true
+            elapsed_sec = [double]$elapsedSec
+            selected_strategy = $selected
+            exploitability = $exploitability
+            node_lock_kept = $kept
+            llm_error = $llmErr
+            response_path = [string]$responsePathValue
+          }
+        }
+        catch {
+          [pscustomobject]@{
+            ok = $false
+            error = $_.Exception.Message
+            response_path = [string]$responsePathValue
+          }
+        }
+      }
+
+      $enginePendingJobs[$job.Id] = @{
+        payload_path = $payloadPath
+        response_path = $responsePath
+        flop = ("{0} {1} {2}" -f $flopTokens[0], $flopTokens[1], $flopTokens[2])
+      }
+      $script:engineHandoffBusy = $true
+      Update-FlopButtonState
+      Write-Log ("Engine job started (id={0}). UI remains responsive." -f $job.Id)
+      Write-Log ("Engine artifacts (pending): payload={0}, response={1}" -f $payloadPath, $responsePath)
     }
     catch {
       Write-Log ("Engine handoff error: {0}" -f $_.Exception.Message)
@@ -2595,6 +2681,79 @@ function Run-OcrFlopSet {
       Set-OverlayVisibilityForCapture -Enable $true
     }
     $script:isBusy = $false
+  }
+}
+
+function Poll-EngineJobs {
+  if ($enginePendingJobs.Count -eq 0) {
+    if ($engineHandoffBusy) {
+      $script:engineHandoffBusy = $false
+      Update-FlopButtonState
+    }
+    return
+  }
+
+  $completedIds = New-Object System.Collections.Generic.List[int]
+  foreach ($jobId in @($enginePendingJobs.Keys)) {
+    $job = Get-Job -Id ([int]$jobId) -ErrorAction SilentlyContinue
+    if ($null -eq $job) {
+      [void]$completedIds.Add([int]$jobId)
+      continue
+    }
+    if ($job.State -notin @("Completed", "Failed", "Stopped")) {
+      continue
+    }
+
+    $meta = $enginePendingJobs[$jobId]
+    try {
+      $resultRows = Receive-Job -Id ([int]$jobId) -ErrorAction Stop
+    }
+    catch {
+      Write-Log ("Engine job {0} receive error: {1}" -f $jobId, $_.Exception.Message)
+      $resultRows = $null
+    }
+
+    $result = $null
+    if ($resultRows -is [System.Array] -and $resultRows.Count -gt 0) {
+      $result = $resultRows[$resultRows.Count - 1]
+    }
+    elseif ($null -ne $resultRows) {
+      $result = $resultRows
+    }
+
+    if ($null -ne $result -and ($result.PSObject.Properties.Name -contains "ok") -and [bool]$result.ok) {
+      Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
+        $result.selected_strategy,
+        $result.exploitability,
+        $result.node_lock_kept,
+        [double]$result.elapsed_sec)
+      if ($result.llm_error) {
+        Write-Log ("Engine llm_error: {0}" -f $result.llm_error)
+      }
+      Write-Log ("Engine artifacts: payload={0}, response={1}" -f $meta.payload_path, $meta.response_path)
+    }
+    else {
+      $errMsg = "unknown error"
+      if ($null -ne $result -and ($result.PSObject.Properties.Name -contains "error") -and $result.error) {
+        $errMsg = [string]$result.error
+      }
+      Write-Log ("Engine job {0} failed: {1}" -f $jobId, $errMsg)
+      Write-Log ("Engine artifacts: payload={0}, response={1}" -f $meta.payload_path, $meta.response_path)
+    }
+
+    try {
+      Remove-Job -Id ([int]$jobId) -Force -ErrorAction SilentlyContinue
+    }
+    catch {}
+    [void]$completedIds.Add([int]$jobId)
+  }
+
+  foreach ($id in $completedIds) {
+    [void]$enginePendingJobs.Remove($id)
+  }
+  if ($enginePendingJobs.Count -eq 0 -and $engineHandoffBusy) {
+    $script:engineHandoffBusy = $false
+    Update-FlopButtonState
   }
 }
 
@@ -2781,6 +2940,12 @@ $timer.Add_Tick({
   }
 })
 
+$engineJobTimer = New-Object System.Windows.Forms.Timer
+$engineJobTimer.Interval = 500
+$engineJobTimer.Add_Tick({
+  Poll-EngineJobs
+})
+
 $btnPick.Add_Click({
   Write-Log "Selecting OCR rectangle..."
   $didClone = $false
@@ -2922,6 +3087,12 @@ $btnRestart.Add_Click({
     "-STA",
     "-File", "`"$PSCommandPath`""
   ) | Out-Null
+  try {
+    foreach ($jobId in @($enginePendingJobs.Keys)) {
+      Remove-Job -Id ([int]$jobId) -Force -ErrorAction SilentlyContinue
+    }
+  }
+  catch {}
   $form.Close()
 })
 
@@ -2956,6 +3127,7 @@ $form.Add_Shown({
   Refresh-RoiOverlays
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
+  $engineJobTimer.Start()
 })
 
 $form.Add_KeyDown({
@@ -2970,6 +3142,16 @@ $form.Add_KeyDown({
 $form.Add_FormClosing({
   $script:autoEnabled = $false
   $timer.Stop()
+  $engineJobTimer.Stop()
+  try {
+    foreach ($jobId in @($enginePendingJobs.Keys)) {
+      Remove-Job -Id ([int]$jobId) -Force -ErrorAction SilentlyContinue
+    }
+  }
+  catch {}
+  $enginePendingJobs.Clear()
+  $script:engineHandoffBusy = $false
+  Update-FlopButtonState
   Save-RoiState
   Close-RoiOverlays
 })

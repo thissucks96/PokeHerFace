@@ -228,7 +228,7 @@ Clickable OCR watcher test utility:
 - Engine handoff from tester:
   - `Run Flop (1-3)` now validates all 3 flop cards as strict rank+suit (`[AKQJT98765432][shdc]`),
   - builds a spot payload from `4_LLM_Bridge/examples/spot.sample.json` (board replaced by flop),
-  - sends one request to `POST /solve`,
+  - sends one request to `POST /solve` in a background job (non-blocking UI),
   - writes payload/response artifacts under `5_Vision_Extraction/out/flop_engine/`.
 - Optional env overrides for tester handoff:
   - `BRIDGE_SOLVE_ENDPOINT` (default `http://127.0.0.1:8000/solve`)
