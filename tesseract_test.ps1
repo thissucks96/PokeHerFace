@@ -111,6 +111,19 @@ if ($env:ENGINE_JOB_MAX_AGE_SEC) {
     }
   }
 }
+$enginePriorityRoutingEnabled = $true
+if ($env:ENGINE_PRIORITY_ROUTING -and ([string]$env:ENGINE_PRIORITY_ROUTING).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
+  $enginePriorityRoutingEnabled = $false
+}
+$enginePriorityHoldSec = 1.5
+if ($env:ENGINE_PRIORITY_HOLD_SEC) {
+  $parsedHold = 0.0
+  if ([double]::TryParse([string]$env:ENGINE_PRIORITY_HOLD_SEC, [ref]$parsedHold)) {
+    if ($parsedHold -ge 0.0 -and $parsedHold -le 30.0) {
+      $enginePriorityHoldSec = [double]$parsedHold
+    }
+  }
+}
 $backendAutoStart = $true
 if ($env:BACKEND_AUTOSTART -and ([string]$env:BACKEND_AUTOSTART).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
   $backendAutoStart = $false
@@ -153,6 +166,7 @@ $engineLastCompletedLogicalKey = ""
 $engineStateVersion = 0
 $engineQueueReplaceCount = 0
 $engineQueueSkipNoChangeCount = 0
+$engineQueuePrioritySkipCount = 0
 $engineQueueCompletedCount = 0
 $suppressHeroAutoSend = $false
 $heroCards = @{
@@ -303,6 +317,59 @@ function Get-EngineLogicalStateKey {
     $streetNorm = "turn"
   }
   return ("street={0}|board={1}|hero={2}|stage={3}" -f $streetNorm, $boardNorm, $heroNorm, $stageNorm)
+}
+
+function Get-EngineStagePriority {
+  param([string]$StageLabel)
+  $stage = ([string]$StageLabel).Trim().ToLowerInvariant()
+  switch ($stage) {
+    "hero_auto" { return 130 }
+    "manual_single" { return 120 }
+    "flop" { return 110 }
+    "turn" { return 80 }
+    "river" { return 70 }
+    default { return 50 }
+  }
+}
+
+function Get-OldestPendingEngineMeta {
+  if ($enginePendingJobs.Count -le 0) {
+    return $null
+  }
+  $oldestJobId = $null
+  $oldestMeta = $null
+  $oldestTime = $null
+  foreach ($jid in @($enginePendingJobs.Keys)) {
+    $meta = $enginePendingJobs[$jid]
+    if ($null -eq $meta) { continue }
+    $queuedUtc = $null
+    if ($meta.ContainsKey("queued_utc") -and $meta.queued_utc) {
+      try { $queuedUtc = [datetime]$meta.queued_utc } catch { $queuedUtc = $null }
+    }
+    if ($null -eq $queuedUtc) {
+      $queuedUtc = (Get-Date).ToUniversalTime()
+    }
+    if ($null -eq $oldestTime -or $queuedUtc -lt $oldestTime) {
+      $oldestTime = $queuedUtc
+      $oldestJobId = [int]$jid
+      $oldestMeta = $meta
+    }
+  }
+  if ($null -eq $oldestMeta) {
+    return $null
+  }
+  $stage = if ($oldestMeta.ContainsKey("stage")) { [string]$oldestMeta.stage } else { "" }
+  $priority = Get-EngineStagePriority -StageLabel $stage
+  $ageSec = 0.0
+  if ($null -ne $oldestTime) {
+    $ageSec = ((Get-Date).ToUniversalTime() - $oldestTime).TotalSeconds
+  }
+  return [pscustomobject]@{
+    job_id = [int]$oldestJobId
+    stage = $stage
+    priority = [int]$priority
+    age_sec = [double]$ageSec
+  }
 }
 
 function Should-OfferFlopClonePrompt {
@@ -2751,10 +2818,10 @@ function Update-EngineButtonState {
     if ($null -ne $engineStatusLine) {
       if ($null -ne $oldestJobId) {
         $engineStatusLine.Text = ("Engine queue: job={0} v={1} hash={2} stage={3} elapsed={4:N1}s (max={5}s) | repl={6} skip={7} done={8}" -f `
-          $oldestJobId, [int]$oldestStateVersion, $oldestStateHashShort, $oldestStage, [double]$oldestElapsedSec, [int]$engineJobMaxAgeSec, [int]$engineQueueReplaceCount, [int]$engineQueueSkipNoChangeCount, [int]$engineQueueCompletedCount)
+          $oldestJobId, [int]$oldestStateVersion, $oldestStateHashShort, $oldestStage, [double]$oldestElapsedSec, [int]$engineJobMaxAgeSec, [int]$engineQueueReplaceCount, [int]($engineQueueSkipNoChangeCount + $engineQueuePrioritySkipCount), [int]$engineQueueCompletedCount)
       }
       else {
-        $engineStatusLine.Text = ("Engine queue: busy ({0} pending) | repl={1} skip={2} done={3}" -f [int]$enginePendingJobs.Count, [int]$engineQueueReplaceCount, [int]$engineQueueSkipNoChangeCount, [int]$engineQueueCompletedCount)
+        $engineStatusLine.Text = ("Engine queue: busy ({0} pending) | repl={1} skip={2} done={3}" -f [int]$enginePendingJobs.Count, [int]$engineQueueReplaceCount, [int]($engineQueueSkipNoChangeCount + $engineQueuePrioritySkipCount), [int]$engineQueueCompletedCount)
       }
       $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(255, 208, 135)
     }
@@ -2766,7 +2833,7 @@ function Update-EngineButtonState {
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
     $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
     if ($null -ne $engineStatusLine) {
-      $engineStatusLine.Text = ("Engine queue: idle | last_v={0} last_hash={1} | repl={2} skip={3} done={4}" -f [int]$engineStateVersion, (Get-ShortHash -HashValue $engineLastCompletedStateHash), [int]$engineQueueReplaceCount, [int]$engineQueueSkipNoChangeCount, [int]$engineQueueCompletedCount)
+      $engineStatusLine.Text = ("Engine queue: idle | last_v={0} last_hash={1} | repl={2} skip={3} done={4}" -f [int]$engineStateVersion, (Get-ShortHash -HashValue $engineLastCompletedStateHash), [int]$engineQueueReplaceCount, [int]($engineQueueSkipNoChangeCount + $engineQueuePrioritySkipCount), [int]$engineQueueCompletedCount)
       $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(165, 190, 210)
     }
   }
@@ -3535,6 +3602,28 @@ function Queue-EngineSolveForBoard {
       return $false
     }
     if ($engineHandoffBusy -and $enginePendingJobs.Count -gt 0) {
+      $newPriority = Get-EngineStagePriority -StageLabel $StageLabel
+      $oldestPending = Get-OldestPendingEngineMeta
+      if ($enginePriorityRoutingEnabled -and $null -ne $oldestPending) {
+        $oldPriority = [int]$oldestPending.priority
+        $oldAge = [double]$oldestPending.age_sec
+        if (($newPriority -lt $oldPriority) -and ($oldAge -lt [double]$enginePriorityHoldSec)) {
+          $script:engineQueuePrioritySkipCount = [int]$engineQueuePrioritySkipCount + 1
+          Write-Log ("Engine handoff skipped ({0}): lower priority than active job (new={1}, active={2}, active_stage={3}, active_age={4:N2}s)." -f `
+            $StageLabel, [int]$newPriority, [int]$oldPriority, [string]$oldestPending.stage, [double]$oldAge) -Type "engine_skip_priority" -Data @{
+            stage = $StageLabel
+            stage_priority = [int]$newPriority
+            active_job_id = [int]$oldestPending.job_id
+            active_stage = [string]$oldestPending.stage
+            active_priority = [int]$oldPriority
+            active_age_sec = [double]$oldAge
+            hold_sec = [double]$enginePriorityHoldSec
+            skip_priority_count = [int]$engineQueuePrioritySkipCount
+          }
+          Update-EngineButtonState
+          return $false
+        }
+      }
       Stop-AllEngineJobs -Reason "newer_state_arrived"
       Write-Log ("Engine handoff replacing obsolete in-flight state ({0})." -f $StageLabel) -Type "engine_queue_replace" -Data @{
         stage = $StageLabel

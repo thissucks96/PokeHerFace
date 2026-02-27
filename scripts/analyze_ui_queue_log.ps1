@@ -59,12 +59,13 @@ $summary = [ordered]@{
     replaced_job = Count-Type "engine_job_replaced"
     skip_nochange_hash = Count-Type "engine_skip_nochange"
     skip_nochange_logical = Count-Type "engine_skip_nochange_logical"
+    skip_priority = Count-Type "engine_skip_priority"
   }
 }
 
 $q = $summary.queue_events
 $summary.success_rate = if (($q.started -as [int]) -gt 0) { [double]$q.completed / [double]$q.started } else { $null }
-$summary.skip_rate_vs_queue = if (($q.queued -as [int]) -gt 0) { [double]($q.skip_nochange_hash + $q.skip_nochange_logical) / [double]$q.queued } else { $null }
+$summary.skip_rate_vs_queue = if (($q.queued -as [int]) -gt 0) { [double]($q.skip_nochange_hash + $q.skip_nochange_logical + $q.skip_priority) / [double]$q.queued } else { $null }
 $summary.replace_rate_vs_queue = if (($q.queued -as [int]) -gt 0) { [double]$q.replaced / [double]$q.queued } else { $null }
 
 $summaryJson = $summary | ConvertTo-Json -Depth 6

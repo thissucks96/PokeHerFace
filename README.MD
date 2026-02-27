@@ -351,6 +351,8 @@ Clickable OCR watcher test utility:
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
   - `ENGINE_JOB_MAX_AGE_SEC` (default `max(120, ENGINE_SOLVER_TIMEOUT_SEC+45)`) for stale background-job cleanup
+  - `ENGINE_PRIORITY_ROUTING` (`1`/`0`, default `1`) enables stage-priority queue routing.
+  - `ENGINE_PRIORITY_HOLD_SEC` (default `1.5`) keeps higher-priority active jobs from being preempted by lower-priority updates for a short hold window.
   - `BACKEND_AUTOSTART` (`1`/`0`, default `1`)
   - `OLLAMA_VISION_KEEP_ALIVE` (default `0s`; unloads vision model after each OCR call to free VRAM for solver/LLM work)
   - `POKE_OCR_PARALLEL` (`1`/`0`, default `1`) enables parallel slot OCR for staged board/hero passes.
@@ -371,7 +373,7 @@ Queue stress verification helper:
 
 This summarizes queue lifecycle events from `session_*.jsonl`:
 - queued / started / completed / failed / timeout
-- replaced / skip_nochange (hash + logical)
+- replaced / skip_nochange (hash + logical) / skip_priority
 - success rate and skip/replace rates
 
 ## Quick Start (WSL / Linux)
