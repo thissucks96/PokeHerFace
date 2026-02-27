@@ -225,7 +225,7 @@ Clickable OCR watcher test utility:
 - `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
 - Fast testing controls:
   - `Run flop1` ... `Run river` for single-slot OCR checks.
-  - `Run Hero` reads only `hero1` + `hero2` in one optimized pass and shows a compact hero summary.
+  - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved.
   - `Run Flop (1-3)` for atomic flop capture.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.

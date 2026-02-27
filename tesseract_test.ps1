@@ -3219,7 +3219,7 @@ function Run-OcrBoardSetAndQueueEngine {
       $cards[$slot] = [string]$resolved.token
       $previewBySlot[$slot] = [string]$resolved.preview
       if ($cards[$slot] -eq "??") {
-        Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
+        Write-Log ("OCR info [Cards (local vision llava)] {0}: primary pass unresolved; retry will run." -f $slot)
         continue
       }
       Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $cards[$slot], $resolved.preview) -Type "ocr_slot" -Data @{
@@ -3369,6 +3369,34 @@ function Run-OcrHeroSet {
 
     foreach ($slot in $playerSlotOrder) {
       $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
+      $needsRetry = $false
+      if ($resolved.status -ne "ok" -or $resolved.no_card) {
+        $needsRetry = $true
+      }
+      else {
+        $initialToken = ([string]$resolved.token).Trim().ToUpperInvariant()
+        if (-not (Test-CardTokenStrict -Token $initialToken)) {
+          $needsRetry = $true
+        }
+      }
+
+      if ($needsRetry) {
+        $resolvedRetry = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix "hero_retry" -SkipPresenceCheck
+        if ($resolvedRetry.status -eq "ok" -and (-not $resolvedRetry.no_card)) {
+          $retryToken = ([string]$resolvedRetry.token).Trim().ToUpperInvariant()
+          if (Test-CardTokenStrict -Token $retryToken) {
+            $resolved = $resolvedRetry
+            Write-Log ("Hero OCR RETRY OK [{0}] via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $retryToken, $resolved.preview) -Type "ocr_slot_retry" -Data @{
+              slot = $slot
+              parsed = $retryToken
+              raw = [string]$resolved.preview
+              source = [string]$resolved.source
+              variant = [string]$resolved.variant
+            }
+          }
+        }
+      }
+
       if ($resolved.status -ne "ok") {
         $heroCards[$slot] = "??"
         Write-Log ("Hero OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
@@ -3384,17 +3412,16 @@ function Run-OcrHeroSet {
         $token = "??"
       }
       $heroCards[$slot] = $token
-      if ($token -eq "??") {
+      if (-not (Test-CardTokenStrict -Token $token)) {
         Write-Log ("Hero OCR warning [{0}]: no readable output." -f $slot)
+        continue
       }
-      else {
-        Write-Log ("Hero OCR OK [{0}] via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $token, $resolved.preview) -Type "ocr_slot" -Data @{
-          slot = $slot
-          parsed = $token
-          raw = [string]$resolved.preview
-          source = [string]$resolved.source
-          variant = [string]$resolved.variant
-        }
+      Write-Log ("Hero OCR OK [{0}] via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $token, $resolved.preview) -Type "ocr_slot" -Data @{
+        slot = $slot
+        parsed = $token
+        raw = [string]$resolved.preview
+        source = [string]$resolved.source
+        variant = [string]$resolved.variant
       }
     }
 
