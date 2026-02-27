@@ -3282,6 +3282,20 @@ function Run-OcrHeroSet {
   Run-OcrSingleSlot -Slot "hero1" -FastMode
   Run-OcrSingleSlot -Slot "hero2" -FastMode
 
+  $retrySlots = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $playerSlotOrder) {
+    $token = [string]$heroCards[$slot]
+    if (-not (Test-CardTokenStrict -Token $token)) {
+      [void]$retrySlots.Add([string]$slot)
+    }
+  }
+  if ($retrySlots.Count -gt 0) {
+    Write-Log ("Hero fast-pass incomplete; retrying full OCR for: {0}" -f ($retrySlots -join ", "))
+    foreach ($slot in $retrySlots) {
+      Run-OcrSingleSlot -Slot $slot
+    }
+  }
+
   $heroReady = Get-HeroCardsReady
   $boardReady = Get-BoardReadyFromTokens -Tokens $lastBoardTokens
   $elapsed = ((Get-Date) - $started).TotalSeconds
