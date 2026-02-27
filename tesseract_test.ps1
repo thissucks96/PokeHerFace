@@ -63,13 +63,104 @@ Add-Type -AssemblyName System.Drawing
 $tesseractExe = Resolve-TesseractExecutable
 $ollamaHost = if ($env:OLLAMA_HOST) { [string]$env:OLLAMA_HOST } else { "http://127.0.0.1:11434" }
 $ollamaVisionModel = if ($env:OLLAMA_VISION_MODEL) { [string]$env:OLLAMA_VISION_MODEL } else { "llava:13b" }
+$roiStatePath = Join-Path (Join-Path $env:APPDATA "PokeHerFace") "vision_tester_rois.json"
 $selectedRegion = [System.Drawing.Rectangle]::Empty
 $isBusy = $false
 $autoEnabled = $false
+$overlayVisible = $true
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
 $cardRegions = @{}
+$overlayForms = @{}
+$overlayColors = @{
+  board = [System.Drawing.Color]::FromArgb(40, 200, 255)
+  flop1 = [System.Drawing.Color]::FromArgb(80, 230, 140)
+  flop2 = [System.Drawing.Color]::FromArgb(80, 230, 140)
+  flop3 = [System.Drawing.Color]::FromArgb(80, 230, 140)
+  turn  = [System.Drawing.Color]::FromArgb(255, 215, 90)
+  river = [System.Drawing.Color]::FromArgb(255, 150, 80)
+}
 foreach ($slot in $cardSlotOrder) {
   $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
+}
+
+function Get-RoiTargets {
+  return @("board", "flop1", "flop2", "flop3", "turn", "river")
+}
+
+function Get-RoiRectByKey {
+  param([string]$Key)
+  if ($Key -eq "board") {
+    return (Convert-ToRectangleSafe -Value $selectedRegion)
+  }
+  if ($cardRegions.ContainsKey($Key)) {
+    return (Convert-ToRectangleSafe -Value $cardRegions[$Key])
+  }
+  return [System.Drawing.Rectangle]::Empty
+}
+
+function Set-RoiRectByKey {
+  param(
+    [string]$Key,
+    [System.Drawing.Rectangle]$Rect
+  )
+  $rectSafe = Convert-ToRectangleSafe -Value $Rect
+  if ($Key -eq "board") {
+    $script:selectedRegion = $rectSafe
+    return
+  }
+  if ($cardRegions.ContainsKey($Key)) {
+    $cardRegions[$Key] = $rectSafe
+  }
+}
+
+function Save-RoiState {
+  try {
+    $dir = Split-Path -Parent $roiStatePath
+    if (-not (Test-Path $dir)) {
+      New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $payload = @{}
+    foreach ($key in (Get-RoiTargets)) {
+      $r = Get-RoiRectByKey -Key $key
+      $payload[$key] = @{
+        x = [int]$r.X
+        y = [int]$r.Y
+        w = [int]$r.Width
+        h = [int]$r.Height
+      }
+    }
+    $json = ConvertTo-Json $payload -Depth 4
+    Set-Content -Path $roiStatePath -Value $json -Encoding UTF8
+  }
+  catch {
+    # Non-fatal.
+  }
+}
+
+function Load-RoiState {
+  if (-not (Test-Path $roiStatePath)) {
+    return
+  }
+  try {
+    $json = Get-Content -Path $roiStatePath -Raw -ErrorAction Stop
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    foreach ($key in (Get-RoiTargets)) {
+      $node = $obj.$key
+      if ($null -eq $node) {
+        continue
+      }
+      $x = [int]$node.x
+      $y = [int]$node.y
+      $w = [int]$node.w
+      $h = [int]$node.h
+      if ($w -gt 0 -and $h -gt 0) {
+        Set-RoiRectByKey -Key $key -Rect (New-Object System.Drawing.Rectangle($x, $y, $w, $h))
+      }
+    }
+  }
+  catch {
+    # Non-fatal.
+  }
 }
 
 function Test-RegionSelected {
@@ -1003,6 +1094,15 @@ $btnRestart.ForeColor = [System.Drawing.Color]::White
 $btnRestart.BackColor = [System.Drawing.Color]::FromArgb(52, 64, 92)
 $form.Controls.Add($btnRestart)
 
+$btnTargets = New-Object System.Windows.Forms.Button
+$btnTargets.Text = "Targets: On"
+$btnTargets.Location = New-Object System.Drawing.Point(610, 156)
+$btnTargets.Size = New-Object System.Drawing.Size(120, 26)
+$btnTargets.FlatStyle = "Flat"
+$btnTargets.ForeColor = [System.Drawing.Color]::White
+$btnTargets.BackColor = [System.Drawing.Color]::FromArgb(44, 72, 96)
+$form.Controls.Add($btnTargets)
+
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = "1) Choose mode  2) Pick ROI(s)  3) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
@@ -1102,6 +1202,168 @@ function Format-RegionText {
     return "Region: Not selected"
   }
   return ("Region: X={0}, Y={1}, W={2}, H={3}" -f $Rect.X, $Rect.Y, $Rect.Width, $Rect.Height)
+}
+
+function Get-CaptureModeSafe {
+  if (Get-Variable -Name cmbCaptureMode -Scope Script -ErrorAction SilentlyContinue) {
+    if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) {
+      return [string]$cmbCaptureMode.SelectedItem
+    }
+  }
+  return "Full Board ROI"
+}
+
+function Get-ActiveOverlayKeys {
+  $mode = Get-CaptureModeSafe
+  if ($mode -eq "Individual Card ROIs") {
+    return $cardSlotOrder
+  }
+  return @("board")
+}
+
+function Sync-OverlayToRoi {
+  param(
+    [string]$Key,
+    [System.Windows.Forms.Form]$OverlayForm
+  )
+  if ($null -eq $OverlayForm) {
+    return
+  }
+  $r = New-Object System.Drawing.Rectangle([int]$OverlayForm.Left, [int]$OverlayForm.Top, [int]$OverlayForm.Width, [int]$OverlayForm.Height)
+  Set-RoiRectByKey -Key $Key -Rect $r
+  $regionLabel.Text = Format-RegionText -Rect $selectedRegion
+  if ((Get-CaptureModeSafe) -eq "Individual Card ROIs") {
+    $cardStatusLabel.Text = Format-CardSlotStatus
+  }
+  Save-RoiState
+}
+
+function New-RoiOverlayForm {
+  param(
+    [string]$Key,
+    [System.Drawing.Rectangle]$Rect,
+    [System.Drawing.Color]$Color
+  )
+  $overlay = New-Object System.Windows.Forms.Form
+  $overlay.FormBorderStyle = "None"
+  $overlay.StartPosition = "Manual"
+  $overlay.ShowInTaskbar = $false
+  $overlay.TopMost = $true
+  $overlay.BackColor = $Color
+  $overlay.Opacity = 0.28
+  $overlay.Bounds = $Rect
+  $overlay.Tag = $Key
+
+  $tagLabel = New-Object System.Windows.Forms.Label
+  $tagLabel.Text = $Key
+  $tagLabel.ForeColor = [System.Drawing.Color]::White
+  $tagLabel.BackColor = [System.Drawing.Color]::Transparent
+  $tagLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+  $tagLabel.AutoSize = $true
+  $tagLabel.Location = New-Object System.Drawing.Point(4, 2)
+  $overlay.Controls.Add($tagLabel)
+
+  $drag = [pscustomobject]@{
+    down = $false
+    offsetX = 0
+    offsetY = 0
+  }
+
+  $overlay.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+      $drag.down = $true
+      $drag.offsetX = [int]$e.X
+      $drag.offsetY = [int]$e.Y
+    }
+  })
+  $overlay.Add_MouseMove({
+    param($sender, $e)
+    if (-not $drag.down) {
+      return
+    }
+    $pt = [System.Windows.Forms.Control]::MousePosition
+    $sender.Left = [int]($pt.X - $drag.offsetX)
+    $sender.Top = [int]($pt.Y - $drag.offsetY)
+  })
+  $overlay.Add_MouseUp({
+    param($sender, $e)
+    if (-not $drag.down) {
+      return
+    }
+    $drag.down = $false
+    Sync-OverlayToRoi -Key $Key -OverlayForm $sender
+  })
+
+  # Dragging on the label moves the overlay too.
+  $tagLabel.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+      $drag.down = $true
+      $drag.offsetX = [int]$e.X + [int]$tagLabel.Left
+      $drag.offsetY = [int]$e.Y + [int]$tagLabel.Top
+    }
+  })
+  $tagLabel.Add_MouseMove({
+    param($sender, $e)
+    if (-not $drag.down) {
+      return
+    }
+    $pt = [System.Windows.Forms.Control]::MousePosition
+    $overlay.Left = [int]($pt.X - $drag.offsetX)
+    $overlay.Top = [int]($pt.Y - $drag.offsetY)
+  })
+  $tagLabel.Add_MouseUp({
+    param($sender, $e)
+    if (-not $drag.down) {
+      return
+    }
+    $drag.down = $false
+    Sync-OverlayToRoi -Key $Key -OverlayForm $overlay
+  })
+
+  return $overlay
+}
+
+function Refresh-RoiOverlays {
+  $active = Get-ActiveOverlayKeys
+  foreach ($key in (Get-RoiTargets)) {
+    $rect = Get-RoiRectByKey -Key $key
+    $hasRect = Test-RegionSelected -Rect $rect
+    $shouldShow = $overlayVisible -and $hasRect -and ($active -contains $key)
+    if (-not $shouldShow) {
+      if ($overlayForms.ContainsKey($key)) {
+        try { $overlayForms[$key].Hide() } catch {}
+      }
+      continue
+    }
+
+    if (-not $overlayForms.ContainsKey($key) -or $null -eq $overlayForms[$key] -or $overlayForms[$key].IsDisposed) {
+      $color = if ($overlayColors.ContainsKey($key)) { $overlayColors[$key] } else { [System.Drawing.Color]::FromArgb(120, 160, 255) }
+      $overlayForms[$key] = New-RoiOverlayForm -Key $key -Rect $rect -Color $color
+    }
+    $overlay = $overlayForms[$key]
+    if ($overlay.Bounds -ne $rect) {
+      $overlay.Bounds = $rect
+    }
+    if (-not $overlay.Visible) {
+      $overlay.Show()
+    }
+    $overlay.BringToFront()
+  }
+}
+
+function Close-RoiOverlays {
+  foreach ($key in @($overlayForms.Keys)) {
+    try {
+      if ($overlayForms[$key] -and -not $overlayForms[$key].IsDisposed) {
+        $overlayForms[$key].Close()
+        $overlayForms[$key].Dispose()
+      }
+    }
+    catch {}
+  }
+  $overlayForms.Clear()
 }
 
 function Run-Ocr {
@@ -1236,6 +1498,14 @@ $timer.Add_Tick({
 
 $btnPick.Add_Click({
   Write-Log "Selecting OCR rectangle..."
+  foreach ($key in @($overlayForms.Keys)) {
+    try {
+      if ($overlayForms[$key] -and -not $overlayForms[$key].IsDisposed) {
+        $overlayForms[$key].Hide()
+      }
+    }
+    catch {}
+  }
   $form.Hide()
   Start-Sleep -Milliseconds 150
   $rect = Select-ScreenRegion
@@ -1263,9 +1533,12 @@ $btnPick.Add_Click({
         Write-Log ("Unknown ROI target: {0}" -f $target)
       }
     }
+    Save-RoiState
+    Refresh-RoiOverlays
   }
   else {
     Write-Log "Rectangle selection canceled."
+    Refresh-RoiOverlays
   }
 })
 
@@ -1340,6 +1613,8 @@ $btnRestart.Add_Click({
   }
   $script:autoEnabled = $false
   $timer.Stop()
+  Save-RoiState
+  Close-RoiOverlays
   $hostExe = "powershell.exe"
   if (Get-Command pwsh -ErrorAction SilentlyContinue) {
     $hostExe = "pwsh"
@@ -1351,6 +1626,13 @@ $btnRestart.Add_Click({
     "-File", "`"$PSCommandPath`""
   ) | Out-Null
   $form.Close()
+})
+
+$btnTargets.Add_Click({
+  $script:overlayVisible = -not $overlayVisible
+  $btnTargets.Text = if ($overlayVisible) { "Targets: On" } else { "Targets: Off" }
+  Refresh-RoiOverlays
+  Write-Log ("Target overlays {0}." -f (if ($overlayVisible) { "enabled" } else { "hidden" }))
 })
 
 $cmbCaptureMode.Add_SelectedIndexChanged({
@@ -1366,12 +1648,16 @@ $cmbCaptureMode.Add_SelectedIndexChanged({
     $hint.Text = "Full-board mode: pick one rectangle that covers all community cards."
     $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
   }
+  Refresh-RoiOverlays
 })
 
 $form.Add_Shown({
+  Load-RoiState
   $regionLabel.Text = Format-RegionText -Rect $selectedRegion
   $hint.Text = "Full-board mode: pick one rectangle that covers all community cards."
   $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
+  $btnTargets.Text = if ($overlayVisible) { "Targets: On" } else { "Targets: Off" }
+  Refresh-RoiOverlays
   Write-Log "Ready. 1) Choose mode 2) Pick ROI(s) 3) Run OCR."
   $timer.Start()
 })
@@ -1379,6 +1665,8 @@ $form.Add_Shown({
 $form.Add_FormClosing({
   $script:autoEnabled = $false
   $timer.Stop()
+  Save-RoiState
+  Close-RoiOverlays
 })
 
 [void]$form.ShowDialog()
