@@ -327,6 +327,7 @@ Clickable OCR watcher test utility:
   - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved.
   - `Run Flop (1-3)` for atomic flop capture.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
+  - `Engine Profile` dropdown (`fast`/`normal`) controls runtime profile sent to bridge `/solve` for each queued engine job.
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
 - Engine status is shown in the top header text (`Engine: idle|busy`) instead of changing button labels.
 - Engine queue line now shows active job metadata in real time (`job id`, `stage`, `elapsed`, `max age`), and stale jobs are auto-cleaned on timeout.
@@ -352,6 +353,7 @@ Clickable OCR watcher test utility:
   - `ENGINE_SPOT_TEMPLATE_PATH` (default `4_LLM_Bridge/examples/spot.sample.json`)
   - `ENGINE_OCR_OUT_DIR` (default `5_Vision_Extraction/out/flop_engine`)
   - `ENGINE_LLM_PRESET` (default `local_qwen3_coder_30b`)
+  - `ENGINE_RUNTIME_PROFILE` (`fast`/`normal`, default `fast`)
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
   - `ENGINE_JOB_MAX_AGE_SEC` (default `max(120, ENGINE_SOLVER_TIMEOUT_SEC+45)`) for stale background-job cleanup

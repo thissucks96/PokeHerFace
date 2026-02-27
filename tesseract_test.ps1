@@ -94,6 +94,13 @@ catch {
 $engineSpotTemplatePath = if ($env:ENGINE_SPOT_TEMPLATE_PATH) { [string]$env:ENGINE_SPOT_TEMPLATE_PATH } else { (Join-Path $PSScriptRoot "4_LLM_Bridge\examples\spot.sample.json") }
 $engineOutputDir = if ($env:ENGINE_OCR_OUT_DIR) { [string]$env:ENGINE_OCR_OUT_DIR } else { (Join-Path $PSScriptRoot "5_Vision_Extraction\out\flop_engine") }
 $engineLlmPreset = if ($env:ENGINE_LLM_PRESET) { [string]$env:ENGINE_LLM_PRESET } else { "local_qwen3_coder_30b" }
+$engineRuntimeProfile = "fast"
+if ($env:ENGINE_RUNTIME_PROFILE) {
+  $parsedRuntimeProfile = ([string]$env:ENGINE_RUNTIME_PROFILE).Trim().ToLowerInvariant()
+  if ($parsedRuntimeProfile -in @("fast", "normal")) {
+    $engineRuntimeProfile = $parsedRuntimeProfile
+  }
+}
 $engineEnableMultiNode = $false
 if ($env:ENGINE_ENABLE_MULTI_NODE -and ([string]$env:ENGINE_ENABLE_MULTI_NODE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $engineEnableMultiNode = $true
@@ -2171,7 +2178,7 @@ $status.Location = New-Object System.Drawing.Point(20, 44)
 $status.AutoSize = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
 $parallelLabel = if ($ocrParallelEnabled) { ("parallel({0})" -f [int]$ocrParallelMaxWorkers) } else { "sequential" }
-$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint)
+$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant())
 $status.Text = ("{0} | Engine: idle" -f $statusBaseText)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
@@ -2290,6 +2297,26 @@ $btnSetHeroes.ForeColor = [System.Drawing.Color]::White
 $btnSetHeroes.BackColor = [System.Drawing.Color]::FromArgb(84, 64, 120)
 $form.Controls.Add($btnSetHeroes)
 
+$lblEngineProfile = New-Object System.Windows.Forms.Label
+$lblEngineProfile.Text = "Engine Profile"
+$lblEngineProfile.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblEngineProfile.Location = New-Object System.Drawing.Point(620, 214)
+$lblEngineProfile.AutoSize = $true
+$form.Controls.Add($lblEngineProfile)
+
+$cmbEngineProfile = New-Object System.Windows.Forms.ComboBox
+$cmbEngineProfile.DropDownStyle = "DropDownList"
+$cmbEngineProfile.Location = New-Object System.Drawing.Point(710, 211)
+$cmbEngineProfile.Size = New-Object System.Drawing.Size(100, 24)
+$cmbEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+[void]$cmbEngineProfile.Items.Add("fast")
+[void]$cmbEngineProfile.Items.Add("normal")
+$profileIdx = $cmbEngineProfile.Items.IndexOf($engineRuntimeProfile)
+if ($profileIdx -lt 0) { $profileIdx = 0 }
+$cmbEngineProfile.SelectedIndex = $profileIdx
+$form.Controls.Add($cmbEngineProfile)
+
 $lblQuick = New-Object System.Windows.Forms.Label
 $lblQuick.Text = "Quick Test (single slot)"
 $lblQuick.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
@@ -2402,7 +2429,7 @@ $btnRaise.Add_Click({ Write-Log "Placeholder action clicked: RAISE (no-op)." })
 $form.Controls.Add($btnRaise)
 
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "1) Select ROI target 2) Pick ROI 3) Set board+hero/action ROIs 4) Run OCR."
+$hint.Text = "Flow: select target -> pick ROI -> run OCR (flop/turn/river/hero)."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $hint.Location = New-Object System.Drawing.Point(20, 214)
@@ -3565,6 +3592,7 @@ function Queue-EngineSolveForBoard {
     board = $BoardTokens
     hero_cards = if ($heroReady) { $heroTokens } else { @() }
     endpoint = $bridgeSolveEndpoint
+    runtime_profile = $engineRuntimeProfile
     llm_preset = $engineLlmPreset
     solver_timeout_sec = [int]$engineSolverTimeoutSec
   }
@@ -3578,6 +3606,7 @@ function Queue-EngineSolveForBoard {
       llm = [ordered]@{
         preset = [string]$engineLlmPreset
       }
+      runtime_profile = [string]$engineRuntimeProfile
     }
     if ($engineEnableMultiNode) {
       $requestPayload.enable_multi_node_locks = $true
@@ -4593,6 +4622,19 @@ $cmbCaptureMode.Add_SelectedIndexChanged({
   Refresh-RoiOverlays
 })
 
+$cmbEngineProfile.Add_SelectedIndexChanged({
+  $selected = [string]$cmbEngineProfile.SelectedItem
+  if (-not [string]::IsNullOrWhiteSpace($selected)) {
+    $script:engineRuntimeProfile = $selected.ToLowerInvariant()
+    $script:statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6}" -f `
+      $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant())
+    Write-Log ("Engine runtime profile set to: {0}" -f $engineRuntimeProfile.ToUpperInvariant()) -Type "engine_runtime_profile" -Data @{
+      runtime_profile = $engineRuntimeProfile
+    }
+    Update-EngineButtonState
+  }
+})
+
 $form.Add_Shown({
   Initialize-SessionLogs
   Write-Log ("Session logs: text={0}, jsonl={1}" -f $uiLogTextPath, $uiLogJsonlPath) -Type "session_start" -Data @{
@@ -4602,6 +4644,7 @@ $form.Add_Shown({
     ollama_host = $ollamaHost
     model = $ollamaVisionModel
     keep_alive = $ollamaVisionKeepAlive
+    runtime_profile = $engineRuntimeProfile
   }
   Load-RoiState
   $regionLabel.Text = "Selected: none"
