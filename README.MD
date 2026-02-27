@@ -42,6 +42,22 @@ This workspace is organized to keep the engine, neural models, hand history data
   - keep-rate breach,
   - p95 latency breach.
 
+### Vision Queue Status (Current Workstream)
+
+- We are actively building the visual window queue path from ROI captures into solver payloads.
+- Current behavior:
+  - hero and board OCR can be captured from the clickable tester and queued to `/solve`,
+  - UI stays responsive while engine jobs run in background,
+  - backend auto-start/stop is managed by the tester (with minimized startup windows).
+- Current blockers:
+  - OCR speed is still slower than target for live pacing,
+  - OCR misses/retries still create latency spikes,
+  - mixed run paths (`Run Hero`, single-slot, staged runs) still need tighter state-machine consistency.
+- In-scope implementation files for this phase:
+  - `tesseract_test.ps1`,
+  - `4_LLM_Bridge/bridge_server.py`,
+  - `4_LLM_Bridge/llm_client.py`.
+
 ### Phase 13 Bookmark (Local Baseline Locked)
 
 - 5-seed local A/B/C verification completed on `2026-02-26` across seeds:
