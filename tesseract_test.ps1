@@ -192,6 +192,21 @@ function Clone-Flop1ToAllCardRois {
   return $true
 }
 
+function Should-OfferFlopClonePrompt {
+  param([string]$Target)
+  if (([string]$Target).Trim().ToLowerInvariant() -ne "flop1") {
+    return $false
+  }
+  # Only prompt when board ROIs beyond flop1 are still empty.
+  foreach ($slot in @("flop2", "flop3", "turn", "river")) {
+    $slotRect = Get-RoiRectByKey -Key $slot
+    if (Test-RegionSelected -Rect $slotRect) {
+      return $false
+    }
+  }
+  return $true
+}
+
 function Save-RoiState {
   param(
     [switch]$ForceWriteEmpty
@@ -3467,7 +3482,7 @@ $btnPick.Add_Click({
       Set-RoiRectByKey -Key $target -Rect $rect
       $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
       Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
-      if ($target -eq "flop1") {
+      if (Should-OfferFlopClonePrompt -Target $target) {
         $cloneChoice = [System.Windows.Forms.MessageBox]::Show(
           "Clone flop1 ROI into flop2, flop3, turn, and river so you can drag each box into place?",
           "Clone ROI?",
