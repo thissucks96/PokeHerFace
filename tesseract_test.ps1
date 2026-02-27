@@ -84,14 +84,11 @@ foreach ($slot in $cardSlotOrder) {
 }
 
 function Get-RoiTargets {
-  return @("board", "flop1", "flop2", "flop3", "turn", "river")
+  return @("flop1", "flop2", "flop3", "turn", "river")
 }
 
 function Get-RoiRectByKey {
   param([string]$Key)
-  if ($Key -eq "board") {
-    return (Convert-ToRectangleSafe -Value $selectedRegion)
-  }
   if ($cardRegions.ContainsKey($Key)) {
     return (Convert-ToRectangleSafe -Value $cardRegions[$Key])
   }
@@ -104,10 +101,6 @@ function Set-RoiRectByKey {
     [System.Drawing.Rectangle]$Rect
   )
   $rectSafe = Convert-ToRectangleSafe -Value $Rect
-  if ($Key -eq "board") {
-    $script:selectedRegion = $rectSafe
-    return
-  }
   if ($cardRegions.ContainsKey($Key)) {
     $cardRegions[$Key] = $rectSafe
   }
@@ -1016,7 +1009,7 @@ $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
 
 $regionLabel = New-Object System.Windows.Forms.Label
-$regionLabel.Text = "Region: Not selected"
+$regionLabel.Text = "Selected: none"
 $regionLabel.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $regionLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $regionLabel.Location = New-Object System.Drawing.Point(20, 74)
@@ -1024,7 +1017,7 @@ $regionLabel.AutoSize = $true
 $form.Controls.Add($regionLabel)
 
 $cardStatusLabel = New-Object System.Windows.Forms.Label
-$cardStatusLabel.Text = "Step 1: choose mode. Step 2: pick ROI(s). Step 3: run OCR."
+$cardStatusLabel.Text = "Set all 5 card targets (flop1, flop2, flop3, turn, river)."
 $cardStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $cardStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $cardStatusLabel.Location = New-Object System.Drawing.Point(20, 94)
@@ -1104,7 +1097,7 @@ $btnTargets.BackColor = [System.Drawing.Color]::FromArgb(44, 72, 96)
 $form.Controls.Add($btnTargets)
 
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = "1) Choose mode  2) Pick ROI(s)  3) Run OCR."
+$hint.Text = "1) Select ROI target 2) Pick ROI 3) Repeat for all 5 4) Run OCR."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $hint.Location = New-Object System.Drawing.Point(20, 186)
@@ -1112,7 +1105,7 @@ $hint.AutoSize = $true
 $form.Controls.Add($hint)
 
 $lblCaptureMode = New-Object System.Windows.Forms.Label
-$lblCaptureMode.Text = "Capture Mode"
+$lblCaptureMode.Text = "Mode"
 $lblCaptureMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $lblCaptureMode.Location = New-Object System.Drawing.Point(20, 160)
@@ -1124,9 +1117,9 @@ $cmbCaptureMode.DropDownStyle = "DropDownList"
 $cmbCaptureMode.Location = New-Object System.Drawing.Point(110, 157)
 $cmbCaptureMode.Size = New-Object System.Drawing.Size(190, 24)
 $cmbCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-[void]$cmbCaptureMode.Items.Add("Full Board ROI")
 [void]$cmbCaptureMode.Items.Add("Individual Card ROIs")
 $cmbCaptureMode.SelectedIndex = 0
+$cmbCaptureMode.Enabled = $false
 $form.Controls.Add($cmbCaptureMode)
 
 $lblTarget = New-Object System.Windows.Forms.Label
@@ -1148,9 +1141,9 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("turn")
 [void]$cmbTarget.Items.Add("river")
 $cmbTarget.SelectedIndex = 0
-$cmbTarget.Enabled = $false
+$cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
-$lblTarget.Enabled = $false
+$lblTarget.Enabled = $true
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -1205,20 +1198,11 @@ function Format-RegionText {
 }
 
 function Get-CaptureModeSafe {
-  if (Get-Variable -Name cmbCaptureMode -Scope Script -ErrorAction SilentlyContinue) {
-    if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) {
-      return [string]$cmbCaptureMode.SelectedItem
-    }
-  }
-  return "Full Board ROI"
+  return "Individual Card ROIs"
 }
 
 function Get-ActiveOverlayKeys {
-  $mode = Get-CaptureModeSafe
-  if ($mode -eq "Individual Card ROIs") {
-    return $cardSlotOrder
-  }
-  return @("board")
+  return $cardSlotOrder
 }
 
 function Sync-OverlayToRoi {
@@ -1231,10 +1215,8 @@ function Sync-OverlayToRoi {
   }
   $r = New-Object System.Drawing.Rectangle([int]$OverlayForm.Left, [int]$OverlayForm.Top, [int]$OverlayForm.Width, [int]$OverlayForm.Height)
   Set-RoiRectByKey -Key $Key -Rect $r
-  $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-  if ((Get-CaptureModeSafe) -eq "Individual Card ROIs") {
-    $cardStatusLabel.Text = Format-CardSlotStatus
-  }
+  $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $Key, $r.X, $r.Y, $r.Width, $r.Height)
+  $cardStatusLabel.Text = Format-CardSlotStatus
   Save-RoiState
 }
 
@@ -1252,7 +1234,12 @@ function New-RoiOverlayForm {
   $overlay.BackColor = $Color
   $overlay.Opacity = 0.28
   $overlay.Bounds = $Rect
-  $overlay.Tag = $Key
+  $overlay.Tag = [pscustomobject]@{
+    key = $Key
+    down = $false
+    offsetX = 0
+    offsetY = 0
+  }
 
   $tagLabel = New-Object System.Windows.Forms.Label
   $tagLabel.Text = $Key
@@ -1261,65 +1248,74 @@ function New-RoiOverlayForm {
   $tagLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
   $tagLabel.AutoSize = $true
   $tagLabel.Location = New-Object System.Drawing.Point(4, 2)
+  $tagLabel.Tag = $overlay
   $overlay.Controls.Add($tagLabel)
-
-  $drag = [pscustomobject]@{
-    down = $false
-    offsetX = 0
-    offsetY = 0
-  }
 
   $overlay.Add_MouseDown({
     param($sender, $e)
+    $state = $sender.Tag
+    if ($null -eq $state) { return }
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-      $drag.down = $true
-      $drag.offsetX = [int]$e.X
-      $drag.offsetY = [int]$e.Y
+      $state.down = $true
+      $state.offsetX = [int]$e.X
+      $state.offsetY = [int]$e.Y
     }
   })
   $overlay.Add_MouseMove({
     param($sender, $e)
-    if (-not $drag.down) {
+    $state = $sender.Tag
+    if ($null -eq $state -or -not $state.down) {
       return
     }
     $pt = [System.Windows.Forms.Control]::MousePosition
-    $sender.Left = [int]($pt.X - $drag.offsetX)
-    $sender.Top = [int]($pt.Y - $drag.offsetY)
+    $sender.Left = [int]($pt.X - [int]$state.offsetX)
+    $sender.Top = [int]($pt.Y - [int]$state.offsetY)
   })
   $overlay.Add_MouseUp({
     param($sender, $e)
-    if (-not $drag.down) {
+    $state = $sender.Tag
+    if ($null -eq $state -or -not $state.down) {
       return
     }
-    $drag.down = $false
+    $state.down = $false
     Sync-OverlayToRoi -Key $Key -OverlayForm $sender
   })
 
   # Dragging on the label moves the overlay too.
   $tagLabel.Add_MouseDown({
     param($sender, $e)
+    $owner = $sender.Tag
+    if ($null -eq $owner) { return }
+    $state = $owner.Tag
+    if ($null -eq $state) { return }
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-      $drag.down = $true
-      $drag.offsetX = [int]$e.X + [int]$tagLabel.Left
-      $drag.offsetY = [int]$e.Y + [int]$tagLabel.Top
+      $state.down = $true
+      $state.offsetX = [int]$e.X + [int]$sender.Left
+      $state.offsetY = [int]$e.Y + [int]$sender.Top
     }
   })
   $tagLabel.Add_MouseMove({
     param($sender, $e)
-    if (-not $drag.down) {
+    $owner = $sender.Tag
+    if ($null -eq $owner) { return }
+    $state = $owner.Tag
+    if ($null -eq $state -or -not $state.down) {
       return
     }
     $pt = [System.Windows.Forms.Control]::MousePosition
-    $overlay.Left = [int]($pt.X - $drag.offsetX)
-    $overlay.Top = [int]($pt.Y - $drag.offsetY)
+    $owner.Left = [int]($pt.X - [int]$state.offsetX)
+    $owner.Top = [int]($pt.Y - [int]$state.offsetY)
   })
   $tagLabel.Add_MouseUp({
     param($sender, $e)
-    if (-not $drag.down) {
+    $owner = $sender.Tag
+    if ($null -eq $owner) { return }
+    $state = $owner.Tag
+    if ($null -eq $state -or -not $state.down) {
       return
     }
-    $drag.down = $false
-    Sync-OverlayToRoi -Key $Key -OverlayForm $overlay
+    $state.down = $false
+    Sync-OverlayToRoi -Key $Key -OverlayForm $owner
   })
 
   return $overlay
@@ -1367,9 +1363,6 @@ function Close-RoiOverlays {
 }
 
 function Run-Ocr {
-  $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
-  $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
-
   if ($isBusy) {
     return
   }
@@ -1377,105 +1370,59 @@ function Run-Ocr {
     Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
     return
   }
-  if ($isIndividualMode) {
-    $missing = New-Object System.Collections.Generic.List[string]
-    foreach ($slot in $cardSlotOrder) {
-      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-      if (-not (Test-RegionSelected -Rect $slotRect)) {
-        [void]$missing.Add([string]$slot)
-      }
-    }
-    if ($missing.Count -gt 0) {
-      Write-Log ("OCR skipped: set all individual card ROIs first ({0})." -f ($missing -join ", "))
-      return
+  $missing = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $cardSlotOrder) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missing.Add([string]$slot)
     }
   }
-  else {
-    if (-not (Test-RegionSelected -Rect $selectedRegion)) {
-      Write-Log "OCR skipped: select a community-card rectangle first."
-      return
-    }
+  if ($missing.Count -gt 0) {
+    Write-Log ("OCR skipped: set all individual card ROIs first ({0})." -f ($missing -join ", "))
+    return
   }
 
   $script:isBusy = $true
   try {
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    if ($isIndividualMode) {
-      $cards = @{}
-      $cardScores = @{}
-      foreach ($slot in $cardSlotOrder) {
-        $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-        $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
-        if (-not $bestCard) {
-          $cards[$slot] = "??"
-          $cardScores[$slot] = -100000
-          Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
-          continue
-        }
-        $cards[$slot] = $bestCard.token
-        $cardScores[$slot] = if ($null -ne $bestCard.score) { [int]$bestCard.score } else { -100000 }
-        $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
-        if ($preview.Length -gt 96) {
-          $preview = $preview.Substring(0, 96) + "..."
-        }
-        Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
+    $cards = @{}
+    $cardScores = @{}
+    foreach ($slot in $cardSlotOrder) {
+      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+      $bestCard = Get-CardTokenFromVisionRegion -Region $slotRect -TmpDir $tmpDir -SlotTag $slot
+      if (-not $bestCard) {
+        $cards[$slot] = "??"
+        $cardScores[$slot] = -100000
+        Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $slot)
+        continue
       }
-
-      $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
-      $cards = $collisionResult.cards
-      foreach ($warn in $collisionResult.warnings) {
-        Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
+      $cards[$slot] = $bestCard.token
+      $cardScores[$slot] = if ($null -ne $bestCard.score) { [int]$bestCard.score } else { -100000 }
+      $preview = (($bestCard.raw_text -replace "\r?\n", " ") -as [string]).Trim()
+      if ($preview.Length -gt 96) {
+        $preview = $preview.Substring(0, 96) + "..."
       }
-
-      $out = @(
-        "run:   individual_rois"
-        ("flop1: {0}" -f $cards["flop1"])
-        ("flop2: {0}" -f $cards["flop2"])
-        ("flop3: {0}" -f $cards["flop3"])
-        ("turn:  {0}" -f $cards["turn"])
-        ("river: {0}" -f $cards["river"])
-        ("flop:  {0} {1} {2}" -f $cards["flop1"], $cards["flop2"], $cards["flop3"])
-      ) -join "`r`n"
-      $txtLatest.Text = $out
-      Write-Log ("Board OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
+      Write-Log ("OCR OK [Cards (local vision llava)] {0} via {1}/{2}: {3}" -f $slot, $bestCard.variant, $bestCard.source, $preview)
     }
-    else {
-      $board = Get-BoardTokensFromVisionRegion -Region $selectedRegion -TmpDir $tmpDir
-      if (-not $board) {
-        Write-Log "Vision OCR finished but no readable board output was produced."
-        return
-      }
 
-      $cards = $board.cards
-      $cardScores = @{}
-      foreach ($slot in $cardSlotOrder) {
-        $cardScores[$slot] = Get-BoardTokenScore -Token $cards[$slot]
-      }
-      $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
-      $cards = $collisionResult.cards
-      foreach ($warn in $collisionResult.warnings) {
-        Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
-      }
-
-      $rawPreview = (($board.raw_text -replace "\r?\n", " ") -as [string]).Trim()
-      if ($rawPreview.Length -gt 180) {
-        $rawPreview = $rawPreview.Substring(0, 180) + "..."
-      }
-      Write-Log ("OCR OK [Cards (local vision llava)] board via {0}: {1}" -f $board.variant, $rawPreview)
-
-      $out = @(
-        "run:   full_board_roi"
-        ("flop1: {0}" -f $cards["flop1"])
-        ("flop2: {0}" -f $cards["flop2"])
-        ("flop3: {0}" -f $cards["flop3"])
-        ("turn:  {0}" -f $cards["turn"])
-        ("river: {0}" -f $cards["river"])
-        ("flop:  {0} {1} {2}" -f $cards["flop1"], $cards["flop2"], $cards["flop3"])
-      ) -join "`r`n"
-      $txtLatest.Text = $out
-      Write-Log ("Board OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
+    $collisionResult = Resolve-BoardCardCollisions -Cards $cards -CardScores $cardScores
+    $cards = $collisionResult.cards
+    foreach ($warn in $collisionResult.warnings) {
+      Write-Log ("OCR warning [Cards (local vision llava)] {0}" -f $warn)
     }
+
+    $out = @(
+      "run:   individual_rois"
+      ("flop1: {0}" -f $cards["flop1"])
+      ("flop2: {0}" -f $cards["flop2"])
+      ("flop3: {0}" -f $cards["flop3"])
+      ("turn:  {0}" -f $cards["turn"])
+      ("river: {0}" -f $cards["river"])
+      ("flop:  {0} {1} {2}" -f $cards["flop1"], $cards["flop2"], $cards["flop3"])
+    ) -join "`r`n"
+    $txtLatest.Text = $out
+    Write-Log ("Board OCR summary: {0}" -f ($out -replace "\r?\n", " | "))
   }
   catch {
     Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
@@ -1512,26 +1459,18 @@ $btnPick.Add_Click({
   $form.Show()
   $form.Activate()
   if ($rect -ne [System.Drawing.Rectangle]::Empty) {
-    $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
-    $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
-    if (-not $isIndividualMode) {
-      $script:selectedRegion = $rect
-      $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-      Write-Log ("Board ROI updated. {0}" -f $regionLabel.Text)
+    $target = [string]$cmbTarget.SelectedItem
+    if (-not $target) {
+      $target = "flop1"
+    }
+    if ($cardRegions.ContainsKey($target)) {
+      $cardRegions[$target] = $rect
+      $regionLabel.Text = ("Selected: {0} -> X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      $cardStatusLabel.Text = Format-CardSlotStatus
     }
     else {
-      $target = [string]$cmbTarget.SelectedItem
-      if (-not $target) {
-        $target = "flop1"
-      }
-      if ($cardRegions.ContainsKey($target)) {
-        $cardRegions[$target] = $rect
-        Write-Log ("Card ROI [{0}] set to X={1}, Y={2}, W={3}, H={4}" -f $target, $rect.X, $rect.Y, $rect.Width, $rect.Height)
-        $cardStatusLabel.Text = Format-CardSlotStatus
-      }
-      else {
-        Write-Log ("Unknown ROI target: {0}" -f $target)
-      }
+      Write-Log ("Unknown ROI target: {0}" -f $target)
     }
     Save-RoiState
     Refresh-RoiOverlays
@@ -1547,9 +1486,6 @@ $btnOnce.Add_Click({
 })
 
 $btnAutoStart.Add_Click({
-  $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
-  $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
-
   if (-not (Test-OllamaEndpoint)) {
     [void][System.Windows.Forms.MessageBox]::Show(
       ("Ollama endpoint not reachable at {0}. Start ollama serve first." -f $ollamaHost),
@@ -1560,28 +1496,17 @@ $btnAutoStart.Add_Click({
     return
   }
 
-  if ($isIndividualMode) {
-    $missing = New-Object System.Collections.Generic.List[string]
-    foreach ($slot in $cardSlotOrder) {
-      $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-      if (-not (Test-RegionSelected -Rect $slotRect)) {
-        [void]$missing.Add([string]$slot)
-      }
-    }
-    if ($missing.Count -gt 0) {
-      [void][System.Windows.Forms.MessageBox]::Show(
-        ("Set all five individual card ROIs before auto mode. Missing: {0}" -f ($missing -join ", ")),
-        "Missing Card ROIs",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Warning
-      )
-      return
+  $missing = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $cardSlotOrder) {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      [void]$missing.Add([string]$slot)
     }
   }
-  elseif (-not (Test-RegionSelected -Rect $selectedRegion)) {
+  if ($missing.Count -gt 0) {
     [void][System.Windows.Forms.MessageBox]::Show(
-      "Pick a full-board OCR rectangle first.",
-      "No Region",
+      ("Set all five individual card ROIs before auto mode. Missing: {0}" -f ($missing -join ", ")),
+      "Missing Card ROIs",
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Warning
     )
@@ -1591,12 +1516,7 @@ $btnAutoStart.Add_Click({
   $script:autoEnabled = $true
   $btnAutoStart.Enabled = $false
   $btnAutoStop.Enabled = $true
-  if ($isIndividualMode) {
-    Write-Log ("Auto OCR started (every {0}s, mode: Individual Card ROIs)." -f [int]$numInterval.Value)
-  }
-  else {
-    Write-Log ("Auto OCR started (every {0}s, mode: Full Board ROI)." -f [int]$numInterval.Value)
-  }
+  Write-Log ("Auto OCR started (every {0}s, individual card mode)." -f [int]$numInterval.Value)
 })
 
 $btnAutoStop.Add_Click({
@@ -1636,29 +1556,19 @@ $btnTargets.Add_Click({
 })
 
 $cmbCaptureMode.Add_SelectedIndexChanged({
-  $captureMode = if ($cmbCaptureMode -and $cmbCaptureMode.SelectedItem) { [string]$cmbCaptureMode.SelectedItem } else { "Full Board ROI" }
-  $isIndividualMode = ($captureMode -eq "Individual Card ROIs")
-  $cmbTarget.Enabled = $isIndividualMode
-  $lblTarget.Enabled = $isIndividualMode
-  if ($isIndividualMode) {
-    $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
-    $cardStatusLabel.Text = Format-CardSlotStatus
-  }
-  else {
-    $hint.Text = "Full-board mode: pick one rectangle that covers all community cards."
-    $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
-  }
+  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
+  $cardStatusLabel.Text = Format-CardSlotStatus
   Refresh-RoiOverlays
 })
 
 $form.Add_Shown({
   Load-RoiState
-  $regionLabel.Text = Format-RegionText -Rect $selectedRegion
-  $hint.Text = "Full-board mode: pick one rectangle that covers all community cards."
-  $cardStatusLabel.Text = "Mode: Full Board ROI (single rectangle)."
+  $regionLabel.Text = "Selected: none"
+  $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for all 5 cards."
+  $cardStatusLabel.Text = Format-CardSlotStatus
   $btnTargets.Text = if ($overlayVisible) { "Targets: On" } else { "Targets: Off" }
   Refresh-RoiOverlays
-  Write-Log "Ready. 1) Choose mode 2) Pick ROI(s) 3) Run OCR."
+  Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
 })
 
