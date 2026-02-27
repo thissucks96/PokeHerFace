@@ -443,7 +443,7 @@ One-click wrapper (auto-starts local services if needed):
 - `runtime_profile=fast`:
   - baseline timeout cap: `FAST_BASELINE_TIMEOUT_SEC` (default `60`)
   - street baseline caps:
-    - `FAST_BASELINE_TIMEOUT_FLOP_SEC` (default `12`)
+    - `FAST_BASELINE_TIMEOUT_FLOP_SEC` (default `15`)
     - `FAST_BASELINE_TIMEOUT_TURN_SEC` (default `25`)
     - `FAST_BASELINE_TIMEOUT_RIVER_SEC` (default `25`)
   - LLM timeout cap: `FAST_LLM_TIMEOUT_SEC` (default `25`)
