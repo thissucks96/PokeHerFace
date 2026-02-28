@@ -160,6 +160,11 @@ try:
     FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC", "6"))
 except ValueError:
     FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = 6
+FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY = os.environ.get("FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
 try:
     FAST_LIVE_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_LLM_TIMEOUT_SEC", "1"))
 except ValueError:
@@ -1423,6 +1428,7 @@ def health() -> Dict[str, Any]:
         "fast_live_baseline_timeout_river_sec": FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC,
         "fast_live_active_node_timeout_sec": FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC,
         "fast_live_active_node_timeout_flop_sec": FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC,
+        "fast_live_active_node_flop_lookup_only": FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY,
         "fast_live_llm_timeout_sec": FAST_LIVE_LLM_TIMEOUT_SEC,
         "fast_live_locked_timeout_sec": FAST_LIVE_LOCKED_TIMEOUT_SEC,
         "fast_live_locked_stage_total_sec": FAST_LIVE_LOCKED_STAGE_TOTAL_SEC,
@@ -1568,6 +1574,31 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             fast_spot_profile_summary=fast_spot_profile_summary,
             selection_reason="fast_profile_turn_lookup_only",
             multi_node_policy_reason="fast_turn_lookup_only",
+        )
+    if (
+        runtime_profile == "fast_live"
+        and spot_street == "flop"
+        and FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY
+        and str(request.spot.get("active_node_path", "")).strip()
+    ):
+        total_bridge_time = time.perf_counter() - bridge_started
+        _record_canary_observation(
+            fallback=True,
+            kept=False,
+            latency_sec=total_bridge_time,
+        )
+        return _build_fast_failover_response(
+            request=request,
+            runtime_profile=runtime_profile,
+            stage_budgets=stage_budgets,
+            request_total_budget_sec=request_total_budget_sec,
+            llm_timeout_effective=int(stage_budgets["llm_timeout_sec"]),
+            locked_stage_total_effective=float(stage_budgets["locked_stage_total_sec"]),
+            total_bridge_time=total_bridge_time,
+            baseline_error="fast_live_active_node_flop_lookup_only",
+            fast_spot_profile_summary=fast_spot_profile_summary,
+            selection_reason="fast_live_profile_active_node_flop_lookup_only",
+            multi_node_policy_reason="fast_live_active_node_flop_lookup_only",
         )
 
     # Pass 1: baseline (no lock) is always computed first.
