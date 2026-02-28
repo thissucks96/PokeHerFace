@@ -178,6 +178,9 @@ $engineQueueCompletedCount = 0
 $engineLastResultSummary = "none"
 $advicePrimary = "WAIT"
 $adviceSecondary = "No actionable advice yet."
+$adviceActionPrimary = ""
+$adviceActionSecondary = ""
+$adviceHasAction = $false
 $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
@@ -2874,6 +2877,103 @@ function Set-AdviceState {
   }
 }
 
+function Convert-AdviceActionTokenToLabel {
+  param(
+    [string]$Token
+  )
+  $tokenValue = ([string]$Token).Trim().ToLowerInvariant()
+  if (-not $tokenValue) {
+    return ""
+  }
+  if ($tokenValue -match "^(bet|raise):(-?\d+)$") {
+    return ("{0} {1}" -f $matches[1].ToUpperInvariant(), $matches[2])
+  }
+  return $tokenValue.ToUpperInvariant()
+}
+
+function Convert-ActionSummaryRowToToken {
+  param(
+    $Row
+  )
+  if ($null -eq $Row) {
+    return ""
+  }
+  $actionName = ""
+  if ($Row.PSObject.Properties.Name -contains "action" -and $Row.action) {
+    $actionName = ([string]$Row.action).Trim().ToLowerInvariant()
+  }
+  if (-not $actionName) {
+    return ""
+  }
+  if ($actionName -in @("bet", "raise")) {
+    $amount = 0
+    if ($Row.PSObject.Properties.Name -contains "amount" -and $null -ne $Row.amount) {
+      try { $amount = [int][Math]::Round([double]$Row.amount) } catch { $amount = 0 }
+    }
+    if ($amount -gt 0) {
+      return ("{0}:{1}" -f $actionName, $amount)
+    }
+  }
+  return $actionName
+}
+
+function Set-AdviceFromEngineResult {
+  param(
+    [Parameter(Mandatory = $true)]$EngineResult
+  )
+
+  $rawRows = @()
+  if ($EngineResult.PSObject.Properties.Name -contains "root_actions" -and $null -ne $EngineResult.root_actions) {
+    $rawRows = @($EngineResult.root_actions)
+  }
+  if ($rawRows.Count -eq 0) {
+    return
+  }
+
+  $weightedRows = New-Object System.Collections.Generic.List[object]
+  foreach ($row in $rawRows) {
+    if ($null -eq $row) {
+      continue
+    }
+    $token = Convert-ActionSummaryRowToToken -Row $row
+    if (-not $token) {
+      continue
+    }
+    $weight = 0.0
+    if ($row.PSObject.Properties.Name -contains "avg_frequency" -and $null -ne $row.avg_frequency) {
+      try { $weight = [double]$row.avg_frequency } catch { $weight = 0.0 }
+    }
+    [void]$weightedRows.Add([pscustomobject]@{
+      token = $token
+      weight = [double]$weight
+    })
+  }
+  if ($weightedRows.Count -eq 0) {
+    return
+  }
+
+  $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  $primaryToken = [string]$sortedRows[0].token
+  $detailParts = New-Object System.Collections.Generic.List[string]
+  foreach ($row in ($sortedRows | Select-Object -First 3)) {
+    [void]$detailParts.Add(("{0} {1:N2}" -f (Convert-AdviceActionTokenToLabel -Token ([string]$row.token)), [double]$row.weight))
+  }
+  if ($EngineResult.PSObject.Properties.Name -contains "selected_strategy" -and $EngineResult.selected_strategy) {
+    [void]$detailParts.Add(("via {0}" -f [string]$EngineResult.selected_strategy))
+  }
+  if ($EngineResult.PSObject.Properties.Name -contains "elapsed_sec" -and $null -ne $EngineResult.elapsed_sec) {
+    try {
+      [void]$detailParts.Add(("{0:N2}s" -f [double]$EngineResult.elapsed_sec))
+    }
+    catch {}
+  }
+
+  $script:adviceActionPrimary = Convert-AdviceActionTokenToLabel -Token $primaryToken
+  $script:adviceActionSecondary = ($detailParts -join " | ")
+  $script:adviceHasAction = $true
+  Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
+}
+
 function New-AdviceOverlayForm {
   $overlay = New-Object System.Windows.Forms.Form
   $overlay.FormBorderStyle = "None"
@@ -3159,7 +3259,12 @@ function Update-EngineButtonState {
   }
   else {
     $engineText = ("Engine: idle (last {0})" -f [string]$engineLastResultSummary)
-    Set-AdviceState -Primary "WAIT" -Secondary ("Engine idle. Last result: {0}" -f [string]$engineLastResultSummary)
+    if ($adviceHasAction -and $adviceActionPrimary) {
+      Set-AdviceState -Primary $adviceActionPrimary -Secondary $adviceActionSecondary
+    }
+    else {
+      Set-AdviceState -Primary "WAIT" -Secondary ("Engine idle. Last result: {0}" -f [string]$engineLastResultSummary)
+    }
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
     $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
@@ -4331,6 +4436,10 @@ function Queue-EngineSolveForBoard {
         if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
           $llmErr = [string]$resp.llm_error
         }
+        $rootActionsValue = @()
+        if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "root_actions") -and $resp.result.root_actions) {
+          $rootActionsValue = @($resp.result.root_actions)
+        }
         [pscustomobject]@{
           ok = $true
           elapsed_sec = [double]$elapsedSec
@@ -4338,6 +4447,7 @@ function Queue-EngineSolveForBoard {
           exploitability = $exploitability
           node_lock_kept = $kept
           llm_error = $llmErr
+          root_actions = @($rootActionsValue)
           response_path = [string]$responsePathValue
         }
       }
@@ -4905,6 +5015,7 @@ function Poll-EngineJobs {
       $completedStage = if ($meta.ContainsKey("stage")) { [string]$meta.stage } else { "unknown" }
       $completedStrategy = if ($result.selected_strategy) { [string]$result.selected_strategy } else { "ok" }
       $script:engineLastResultSummary = ("{0}:{1} {2:N2}s" -f $completedStage, $completedStrategy, [double]$result.elapsed_sec)
+      Set-AdviceFromEngineResult -EngineResult $result
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
         $result.exploitability,
@@ -4930,6 +5041,10 @@ function Poll-EngineJobs {
       }
       $failedStage = if ($meta.ContainsKey("stage")) { [string]$meta.stage } else { "unknown" }
       $script:engineLastResultSummary = ("{0}:failed" -f $failedStage)
+      $script:adviceHasAction = $false
+      $script:adviceActionPrimary = ""
+      $script:adviceActionSecondary = ""
+      Set-AdviceState -Primary "WAIT" -Secondary ("Engine error: {0}" -f $errMsg)
       Write-Log ("Engine job {0} failed: {1}" -f $jobId, $errMsg) -Type "engine_job_failed" -Data @{
         job_id = [int]$jobId
         error = $errMsg
