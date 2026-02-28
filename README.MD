@@ -387,6 +387,11 @@ No-engine startup variant:
   - live `Villain Stack` in the right panel and floating `Table State` overlay,
   - a `Villain Action` menu (`Check`, `Bet`, `Raise`, `Fold`, `All In`) that updates pot, villain chips, and hero-facing bet state,
   - `Hero Wins` / `Villain Wins` settlement buttons that award the full pot to the selected winner without resetting bankrolls.
+- The tester also supports an optional `villain` ROI rectangle:
+  - it shows villain chips remaining,
+  - villain chips invested on the current street only,
+  - and the most recent villain action in real time,
+  - with the invested amount resetting automatically when a new street starts.
 - `Check/Call` is now state-driven instead of advice-driven: if the villain has an outstanding bet, the primary control flips to `Call`; otherwise it stays `Check`.
 - `New Hand` now starts a new cycle by clearing cards/advice while preserving both hero and villain chip stacks, then resetting the pot back to the configured blinds.
 - Right-click any board-card or hero-card overlay to open a quick context menu:

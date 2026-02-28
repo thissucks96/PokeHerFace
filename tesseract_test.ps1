@@ -201,6 +201,7 @@ $villainActionMenu = $null
 $currentPotAmount = 0
 $currentHeroChips = 0
 $currentVillainChips = 0
+$lastVillainAction = "WAIT"
 $currentFacingBetAmount = 0
 $currentHeroStreetCommit = 0
 $currentVillainStreetCommit = 0
@@ -242,8 +243,9 @@ $txtAdviceDetail = $null
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
 $playerSlotOrder = @("hero1", "hero2")
 $infoSlotOrder = @("pot_txt")
+$stateSlotOrder = @("villain_txt")
 $actionSlotOrder = @("check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn", "allin_btn")
-$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "pot_txt", "check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn", "allin_btn")
+$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "pot_txt", "villain_txt", "check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn", "allin_btn")
 $cardRegions = @{}
 $overlayForms = @{}
 $overlayColors = @{
@@ -256,6 +258,7 @@ $overlayColors = @{
   hero1 = [System.Drawing.Color]::FromArgb(150, 110, 255)
   hero2 = [System.Drawing.Color]::FromArgb(150, 110, 255)
   pot_txt = [System.Drawing.Color]::FromArgb(72, 180, 200)
+  villain_txt = [System.Drawing.Color]::FromArgb(224, 92, 156)
   check_btn = [System.Drawing.Color]::FromArgb(64, 132, 112)
   fold_btn = [System.Drawing.Color]::FromArgb(255, 86, 86)
   call_btn = [System.Drawing.Color]::FromArgb(70, 180, 255)
@@ -822,6 +825,7 @@ function Reset-HiddenVillainState {
   $script:currentVillainChips = [int]$baseChips
   $script:villainCards["villain1"] = "??"
   $script:villainCards["villain2"] = "??"
+  $script:lastVillainAction = "WAIT"
   $script:heroFolded = $false
   $script:villainFolded = $false
 }
@@ -1378,6 +1382,20 @@ function Get-VisibleVillainCardsText {
   return ("Villain Cards: {0}" -f (Get-VillainCardsText))
 }
 
+function Get-VillainRoiOverlayText {
+  $stackValue = [int]([Math]::Max(0, $script:currentVillainChips))
+  $streetInvest = [int]([Math]::Max(0, $script:currentVillainStreetCommit))
+  $actionText = ([string]$script:lastVillainAction).Trim().ToUpperInvariant()
+  if (-not $actionText) {
+    $actionText = "WAIT"
+  }
+  return @(
+    ("V {0}" -f $stackValue)
+    ("IN {0}" -f $streetInvest)
+    $actionText
+  ) -join "`n"
+}
+
 function Set-VillainCardsVisibility {
   param([bool]$Visible)
   $script:showVillainCards = [bool]$Visible
@@ -1396,6 +1414,7 @@ function Reset-StreetActionState {
   $script:currentHeroStreetCommit = 0
   $script:currentVillainStreetCommit = 0
   Update-CheckCallButtonModeFromState
+  Update-TableStateDisplay
 }
 
 function Clear-FacingBetAmount {
@@ -1491,6 +1510,15 @@ function Update-TableStateDisplay {
   if ($overlayForms.ContainsKey("pot_txt")) {
     try {
       $overlay = $overlayForms["pot_txt"]
+      if ($null -ne $overlay -and -not $overlay.IsDisposed) {
+        $overlay.Invalidate()
+      }
+    }
+    catch {}
+  }
+  if ($overlayForms.ContainsKey("villain_txt")) {
+    try {
+      $overlay = $overlayForms["villain_txt"]
       if ($null -ne $overlay -and -not $overlay.IsDisposed) {
         $overlay.Invalidate()
       }
@@ -3108,6 +3136,7 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("river")
 [void]$cmbTarget.Items.Add("hero")
 [void]$cmbTarget.Items.Add("pot")
+[void]$cmbTarget.Items.Add("villain")
 [void]$cmbTarget.Items.Add("check")
 [void]$cmbTarget.Items.Add("fold")
 [void]$cmbTarget.Items.Add("call")
@@ -3950,10 +3979,13 @@ function Invoke-VillainActionSelection {
   $stakes = Get-StakeSettings
   switch ($normalizedAction) {
     "CHECK" {
+      $script:lastVillainAction = "CHECK"
       $script:villainFolded = $false
       Clear-FacingBetAmount
+      Update-TableStateDisplay
     }
     "FOLD" {
+      $script:lastVillainAction = "FOLD"
       $script:villainFolded = $true
       Clear-FacingBetAmount
       Set-AdviceState -Primary "VILLAIN FOLDS" -Secondary "Pot awarded to hero."
@@ -3961,10 +3993,14 @@ function Invoke-VillainActionSelection {
       return
     }
     "ALL IN" {
+      $script:lastVillainAction = "ALL IN"
       $script:villainFolded = $false
       $committedAmount = [int]([Math]::Max(0, $script:currentVillainChips))
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
+      }
+      else {
+        Update-TableStateDisplay
       }
     }
     { $_ -in @("BET", "RAISE") } {
@@ -3981,9 +4017,13 @@ function Invoke-VillainActionSelection {
         Write-Log ("Villain action canceled: {0}" -f $normalizedAction)
         return
       }
+      $script:lastVillainAction = $normalizedAction
       $committedAmount = [int]$enteredAmount
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
+      }
+      else {
+        Update-TableStateDisplay
       }
     }
   }
@@ -5213,6 +5253,9 @@ function New-RoiSlotContextMenu {
     }.GetNewClosure())
     [void]$menu.Items.Add($runItem)
   }
+  elseif ($slotKey -in $stateSlotOrder) {
+    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+  }
   elseif ($slotKey -in $actionSlotOrder) {
     $actionMenu = New-ManualActionMenu -SlotKey $slotKey
     if ($null -ne $actionMenu) {
@@ -5262,7 +5305,7 @@ function New-RoiOverlayForm {
     offsetX = 0
     offsetY = 0
   }
-  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder) -or ($Key -in $actionSlotOrder) -or ($Key -in $infoSlotOrder)) {
+  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder) -or ($Key -in $actionSlotOrder) -or ($Key -in $infoSlotOrder) -or ($Key -in $stateSlotOrder)) {
     $overlay.ContextMenuStrip = New-RoiSlotContextMenu -Key $Key
   }
   $overlay.Add_Paint({
@@ -5270,6 +5313,9 @@ function New-RoiOverlayForm {
     $state = $sender.Tag
     if ($null -eq $state) { return }
     $slotText = [string]$state.key
+    if ($slotText -eq "villain_txt") {
+      $slotText = "villain"
+    }
     if (-not $slotText) { return }
     $fontSize = 9.0
     if ($sender.Width -lt 52 -or $sender.Height -lt 22) {
@@ -5286,6 +5332,10 @@ function New-RoiOverlayForm {
       $cardText = ("POT {0}" -f [int]$script:currentPotAmount)
       $cardColor = [System.Drawing.Color]::FromArgb(180, 240, 255)
     }
+    elseif ($state.key -in $stateSlotOrder) {
+      $cardText = Get-VillainRoiOverlayText
+      $cardColor = [System.Drawing.Color]::FromArgb(255, 210, 235)
+    }
     elseif ($state.key -in $actionSlotOrder) {
       $cardText = Get-ActionSlotOverlayText -Slot ([string]$state.key)
       $cardColor = Get-AdvicePrimaryColor -Primary $cardText
@@ -5297,13 +5347,21 @@ function New-RoiOverlayForm {
       $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
       $e.Graphics.DrawString($slotText, $font, $brush, 4, 2)
       if ($cardText) {
-        $cardFontSize = [Math]::Max(10.0, [Math]::Min([double]($sender.Height * 0.38), [double]($sender.Width * 0.28)))
-        $cardFont = New-Object System.Drawing.Font("Segoe UI Symbol", [single]$cardFontSize, [System.Drawing.FontStyle]::Bold)
+        if ($state.key -in $stateSlotOrder) {
+          $cardFontSize = [Math]::Max(8.0, [Math]::Min([double]($sender.Height * 0.18), [double]($sender.Width * 0.12)))
+          $cardFont = New-Object System.Drawing.Font("Segoe UI", [single]$cardFontSize, [System.Drawing.FontStyle]::Bold)
+        }
+        else {
+          $cardFontSize = [Math]::Max(10.0, [Math]::Min([double]($sender.Height * 0.38), [double]($sender.Width * 0.28)))
+          $cardFont = New-Object System.Drawing.Font("Segoe UI Symbol", [single]$cardFontSize, [System.Drawing.FontStyle]::Bold)
+        }
         $cardBrush = New-Object System.Drawing.SolidBrush($cardColor)
         $fmt = New-Object System.Drawing.StringFormat
         $fmt.Alignment = [System.Drawing.StringAlignment]::Center
         $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-        $rect = New-Object System.Drawing.RectangleF(0, 0, [single]$sender.ClientSize.Width, [single]$sender.ClientSize.Height)
+        $rectTop = if ($state.key -in $stateSlotOrder) { [single]16 } else { [single]0 }
+        $rectHeight = if ($state.key -in $stateSlotOrder) { [single]([Math]::Max(1, ($sender.ClientSize.Height - 14))) } else { [single]$sender.ClientSize.Height }
+        $rect = New-Object System.Drawing.RectangleF(0, $rectTop, [single]$sender.ClientSize.Width, $rectHeight)
         $e.Graphics.DrawString($cardText, $cardFont, $cardBrush, $rect, $fmt)
       }
     }
@@ -7055,6 +7113,7 @@ $btnPick.Add_Click({
     }
     switch ($target) {
       "pot" { $target = "pot_txt" }
+      "villain" { $target = "villain_txt" }
       "check" { $target = "check_btn" }
       "fold" { $target = "fold_btn" }
       "call" { $target = "call_btn" }
