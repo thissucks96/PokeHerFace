@@ -182,6 +182,7 @@ $heroCards = @{
 }
 $lastBoardTokens = @()
 $lastHeroAutoSendKey = ""
+$lastHeroStageKey = ""
 $managedOllamaProcess = $null
 $managedBridgeProcess = $null
 $managedOllamaStartedByUi = $false
@@ -3987,16 +3988,39 @@ function Try-AutoSendHeroCardsToEngine {
   if (-not (Get-HeroCardsReady)) {
     return
   }
+
+  $heroStageKey = ("{0}|{1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
+  if ($heroStageKey -ne $lastHeroStageKey) {
+    if ($enginePendingJobs.Count -gt 0) {
+      Stop-AllEngineJobs -Reason "new_hand_hero_staged"
+    }
+    $script:lastBoardTokens = @()
+    $script:lastHeroAutoSendKey = ""
+    $script:engineLastQueuedStateHash = ""
+    $script:engineLastCompletedStateHash = ""
+    $script:engineLastQueuedLogicalKey = ""
+    $script:engineLastCompletedLogicalKey = ""
+    Ensure-BackendsRunning
+    $script:lastHeroStageKey = $heroStageKey
+    Write-Log ("Hero cards staged for next hand ({0}); waiting for flop before first solve." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
+      hero1 = [string]$heroCards["hero1"]
+      hero2 = [string]$heroCards["hero2"]
+      stage_key = $heroStageKey
+    }
+    return
+  }
+
   if (-not (Get-BoardReadyFromTokens -Tokens $lastBoardTokens)) {
     Write-Log ("Hero cards ready ({0}) but board not ready; auto-send waiting for flop/turn/river capture." -f (Get-HeroCardsText)) -Type "hero_waiting_board"
     return
   }
-  $key = ("{0}|{1}|{2}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"], ($lastBoardTokens -join ","))
-  if ($key -eq $lastHeroAutoSendKey) {
+
+  $solveKey = ("{0}|{1}|{2}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"], ($lastBoardTokens -join ","))
+  if ($solveKey -eq $lastHeroAutoSendKey) {
     return
   }
   if (Queue-EngineSolveForBoard -BoardTokens $lastBoardTokens -StageLabel "hero_auto") {
-    $script:lastHeroAutoSendKey = $key
+    $script:lastHeroAutoSendKey = $solveKey
   }
 }
 
@@ -4177,6 +4201,7 @@ function Reset-NewHandState {
   # Reset solver/engine-relevant hand state only. Keep ROI overlays and UI layout untouched.
   $script:lastBoardTokens = @()
   $script:lastHeroAutoSendKey = ""
+  $script:lastHeroStageKey = ""
   $script:engineLastQueuedStateHash = ""
   $script:engineLastCompletedStateHash = ""
   $script:engineLastQueuedLogicalKey = ""
@@ -4305,6 +4330,8 @@ function Run-OcrHeroSet {
         hero_ready = [bool]$heroReady
         elapsed_sec = [double]$elapsed
       }
+    $script:suppressHeroAutoSend = $false
+    Try-AutoSendHeroCardsToEngine
   }
   catch {
     Write-Log ("Hero OCR ERROR: {0}" -f $_.Exception.Message)
