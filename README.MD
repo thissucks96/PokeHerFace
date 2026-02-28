@@ -380,6 +380,7 @@ No-engine startup variant:
   - `Current Pot`
   - `Hero Stack`
   - these values are shown in the right-side panel and in a draggable floating state overlay, and the engine payload now uses them directly so manual action updates affect subsequent solves.
+- Under the hood, the tester now also carries a future-facing betting scaffold (`facing_bet`, per-street hero/villain commitments, and villain-count fields) even before villain controls are exposed. That state is already included in the engine logical-state key and payload metadata so same-board betting changes are not incorrectly skipped as "no state change."
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - top-level `Random Card` for a legal non-duplicate assignment
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry

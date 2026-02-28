@@ -191,6 +191,11 @@ $stateOverlayPotLabel = $null
 $stateOverlayChipsLabel = $null
 $currentPotAmount = 0
 $currentHeroChips = 0
+$currentFacingBetAmount = 0
+$currentHeroStreetCommit = 0
+$currentVillainStreetCommit = 0
+$configuredVillainCount = 0
+$activeVillainCount = 0
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
@@ -379,6 +384,7 @@ function Get-EngineLogicalStateKey {
   }
   $heroNorm = @($heroInput | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
   $stageNorm = ([string]$StageLabel).Trim().ToLowerInvariant()
+  $state = Get-CurrentGameStateSnapshot
   $boardCount = $boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count
   $streetNorm = "flop"
   if ($boardCount -eq 0) {
@@ -390,7 +396,7 @@ function Get-EngineLogicalStateKey {
   elseif ($boardCount -eq 4) {
     $streetNorm = "turn"
   }
-  return ("street={0}|board={1}|hero={2}|stage={3}" -f $streetNorm, $boardNorm, $heroNorm, $stageNorm)
+  return ("street={0}|board={1}|hero={2}|stage={3}|pot={4}|chips={5}|facing={6}|hero_commit={7}|villain_commit={8}|villains={9}/{10}" -f $streetNorm, $boardNorm, $heroNorm, $stageNorm, [int]$state.current_pot, [int]$state.current_hero_chips, [int]$state.facing_bet, [int]$state.hero_street_commit, [int]$state.villain_street_commit, [int]$state.active_villains, [int]$state.configured_villains)
 }
 
 function Get-EngineStagePriority {
@@ -1245,6 +1251,78 @@ function Get-DefaultTableStateFromStakes {
   }
 }
 
+function Get-CurrentGameStateSnapshot {
+  return [pscustomobject]@{
+    current_pot = [int]$script:currentPotAmount
+    current_hero_chips = [int]$script:currentHeroChips
+    facing_bet = [int]$script:currentFacingBetAmount
+    hero_street_commit = [int]$script:currentHeroStreetCommit
+    villain_street_commit = [int]$script:currentVillainStreetCommit
+    configured_villains = [int]$script:configuredVillainCount
+    active_villains = [int]$script:activeVillainCount
+  }
+}
+
+function Reset-StreetActionState {
+  $script:currentFacingBetAmount = 0
+  $script:currentHeroStreetCommit = 0
+  $script:currentVillainStreetCommit = 0
+}
+
+function Clear-FacingBetAmount {
+  $script:currentFacingBetAmount = 0
+}
+
+function Set-FacingBetAmount {
+  param([int]$Amount)
+  $script:currentFacingBetAmount = [int]([Math]::Max(0, $Amount))
+}
+
+function Apply-HeroCommitmentToPot {
+  param(
+    [Parameter(Mandatory = $true)][int]$Amount,
+    [switch]$ClearFacingBet
+  )
+
+  $commit = [int]([Math]::Max(0, $Amount))
+  if ($commit -le 0) {
+    if ($ClearFacingBet) {
+      Clear-FacingBetAmount
+    }
+    return 0
+  }
+  if ($commit -gt [int]$script:currentHeroChips) {
+    $commit = [int]$script:currentHeroChips
+  }
+  $script:currentHeroChips = [Math]::Max(0, ([int]$script:currentHeroChips - $commit))
+  $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $commit))
+  $script:currentHeroStreetCommit = [int]$script:currentHeroStreetCommit + $commit
+  if ($ClearFacingBet) {
+    Clear-FacingBetAmount
+  }
+  Update-TableStateDisplay
+  return [int]$commit
+}
+
+function Apply-VillainCommitmentToPot {
+  param(
+    [Parameter(Mandatory = $true)][int]$Amount,
+    [switch]$SetAsFacingBet
+  )
+
+  $commit = [int]([Math]::Max(0, $Amount))
+  if ($commit -le 0) {
+    return 0
+  }
+  $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $commit))
+  $script:currentVillainStreetCommit = [int]$script:currentVillainStreetCommit + $commit
+  if ($SetAsFacingBet) {
+    Set-FacingBetAmount -Amount $commit
+  }
+  Update-TableStateDisplay
+  return [int]$commit
+}
+
 function Update-TableStateDisplay {
   $potText = ("Pot: {0}" -f [int]$script:currentPotAmount)
   $chipsText = ("Hero Chips: {0}" -f [int]$script:currentHeroChips)
@@ -1275,6 +1353,7 @@ function Reset-TableStateToCurrentStakes {
   $defaults = Get-DefaultTableStateFromStakes
   $script:currentPotAmount = [int]$defaults.starting_pot
   $script:currentHeroChips = [int]$defaults.hero_chips
+  Reset-StreetActionState
   Update-TableStateDisplay
 }
 
@@ -1329,6 +1408,14 @@ function Build-EngineSpotPayload {
   $spot.meta.big_blind = [int]$stakes.big_blind
   $spot.meta.buy_in = [int]$stakes.buy_in
   $spot.meta.capture_source = "vision_tester"
+  $state = Get-CurrentGameStateSnapshot
+  $spot.meta.current_pot = [int]$state.current_pot
+  $spot.meta.current_hero_chips = [int]$state.current_hero_chips
+  $spot.meta.facing_bet = [int]$state.facing_bet
+  $spot.meta.hero_street_commit = [int]$state.hero_street_commit
+  $spot.meta.villain_street_commit = [int]$state.villain_street_commit
+  $spot.meta.active_villains = [int]$state.active_villains
+  $spot.meta.configured_villains = [int]$state.configured_villains
   if ($HeroCards.Count -eq 2) {
     $spot.meta.hero_cards = @(
       ([string]$HeroCards[0]).Trim()
@@ -3511,9 +3598,7 @@ function Invoke-ManualActionSelection {
   if ($normalizedAction -eq "ALL IN") {
     $committedAmount = [int]([Math]::Max(0, $script:currentHeroChips))
     if ($committedAmount -gt 0) {
-      $script:currentHeroChips = [Math]::Max(0, ([int]$script:currentHeroChips - $committedAmount))
-      $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $committedAmount))
-      Update-TableStateDisplay
+      $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
     }
   }
   elseif ($normalizedAction -in @("CALL", "RAISE")) {
@@ -3522,12 +3607,18 @@ function Invoke-ManualActionSelection {
       if ($script:lastRecommendedRaiseAmount -gt 0) {
         [int]$script:lastRecommendedRaiseAmount
       }
+      elseif ([int]$script:currentFacingBetAmount -gt 0) {
+        [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
+      }
       else {
         [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
       }
     }
     else {
-      if ($script:lastRecommendedCallAmount -gt 0) {
+      if ([int]$script:currentFacingBetAmount -gt 0) {
+        [int]$script:currentFacingBetAmount
+      }
+      elseif ($script:lastRecommendedCallAmount -gt 0) {
         [int]$script:lastRecommendedCallAmount
       }
       else {
@@ -3542,13 +3633,11 @@ function Invoke-ManualActionSelection {
     }
     $committedAmount = [int]$enteredAmount
     if ($committedAmount -gt 0) {
-      if ($committedAmount -gt $script:currentHeroChips) {
-        $committedAmount = [int]$script:currentHeroChips
-      }
-      $script:currentHeroChips = [Math]::Max(0, ([int]$script:currentHeroChips - $committedAmount))
-      $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $committedAmount))
-      Update-TableStateDisplay
+      $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
     }
+  }
+  elseif ($normalizedAction -eq "FOLD") {
+    Clear-FacingBetAmount
   }
   $script:adviceActionPrimary = $normalizedAction
   if ($committedAmount -gt 0) {
