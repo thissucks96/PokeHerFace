@@ -2464,6 +2464,9 @@ function Build-EngineSpotPayload {
     )
   }
   if ($useActiveNode) {
+    if (-not ($spot.PSObject.Properties.Name -contains "active_node_path")) {
+      $spot | Add-Member -NotePropertyName active_node_path -NotePropertyValue "" -Force
+    }
     $spot.active_node_path = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
     $spot.remove_donk_bets = $false
     $streetKey = switch ($BoardCards.Count) {
