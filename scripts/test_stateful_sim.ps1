@@ -12,7 +12,7 @@ The LLM config preset to pass to the bridge (default "local_qwen3_coder_30b").
 The runtime latency profile "fast" or "normal" (default "fast").
 
 .PARAMETER Hands
-Number of hands to simulate (default 30).
+Number of hands to simulate (default 20).
 
 .PARAMETER OutputDir
 Directory to write the output JSON report. Defaults to `4_LLM_Bridge\examples\synthetic_hands\`.
@@ -25,7 +25,7 @@ param (
     [string]$Preset = "local_qwen3_coder_30b",
     [ValidateSet("fast", "normal")]
     [string]$RuntimeProfile = "fast",
-    [int]$Hands = 30,
+    [int]$Hands = 20,
     [string]$OutputDir = "$PSScriptRoot\..\4_LLM_Bridge\examples\synthetic_hands",
     [int]$TimeoutSec = 60
 )

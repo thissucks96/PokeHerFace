@@ -420,13 +420,29 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
 ```
 
 - Default run is now `30` hands (not `100`) so the reference benchmark stays usable while `normal` is still expensive.
+- Default run is now `20` hands so the reference benchmark stays inside the current 10–25 hand target while `normal` remains expensive.
 - The harness acts as a simple heads-up referee:
   - hero and villain each get hole cards,
   - villain checks when checked to and auto-calls any hero bet,
   - hero gets one decision on flop / turn / river,
   - showdown winner and net bb are recorded.
+- It now makes the full simplified `shark_cli` spot contract explicit for every decision:
+  - exact dealt `hero_range` combo,
+  - fixed `villain_range`,
+  - board by street,
+  - in-position flag,
+  - starting pot / stack,
+  - minimum bet,
+  - all-in threshold,
+  - iterations / thread count,
+  - raise cap,
+  - donk-bet removal,
+  - strategy compression,
+  - fixed bet sizing tree.
 - It writes a JSON report under `4_LLM_Bridge/examples/synthetic_hands/` with:
+  - top-level `scenario` block (full harness assumptions),
   - per-hand street actions,
+  - per-street solve spot snapshots,
   - per-street latency,
   - strategy source usage,
   - all-in counts / street distribution,

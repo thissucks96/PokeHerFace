@@ -22,6 +22,19 @@ RANK_CHARS = "23456789TJQKA"
 SUIT_CHARS = "shdc"
 RANK_VALS = {c: i for i, c in enumerate(RANK_CHARS)}
 DEFAULT_VILLAIN_RANGE = "22+,A2s+,K2s+,Q2s+,J2s+,T2s+,92s+,82s+,72s+,62s+,52s+,42s+,32s+,A2o+,K2o+,Q2o+,J2o+,T2o+,92o+,82o+,72o+,62o+,52o+,42o+,32o+"
+DEFAULT_BET_SIZING = {
+    "flop": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]},
+    "turn": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]},
+    "river": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]},
+}
+DEFAULT_LEGAL_ACTIONS = ["check", "bet_33", "bet_75", "all_in"]
+PASSIVE_VILLAIN_POLICY = {
+    "checked_to": "check",
+    "facing_hero_bet": "auto_call",
+    "facing_hero_all_in": "auto_call",
+    "raises": "disabled",
+    "folds": "disabled",
+}
 
 def _get_card_val(card_str: str) -> tuple[int, str]:
     if len(card_str) == 3 and card_str.startswith("10"):
@@ -97,41 +110,68 @@ def _build_engine_spot(
     hero_cards: List[str],
     board_cards: List[str],
     pot: int,
-    hero_stack: int
+    hero_stack: int,
+    scenario: Dict[str, Any],
 ) -> Dict[str, Any]:
     hero_exact_combo = _combo_range_from_hole_cards(hero_cards)
 
     return {
         "hero_range": hero_exact_combo,
-        "villain_range": DEFAULT_VILLAIN_RANGE,
+        "villain_range": str(scenario["villain_range"]),
         "board": board_cards,
-        "in_position_player": 1, # Hero acts last on post-flop streets (BTN vs BB logic)
+        "in_position_player": int(scenario["in_position_player"]),
         "starting_stack": hero_stack,
         "starting_pot": pot,
-        "minimum_bet": 2, # 1BB
-        "all_in_threshold": 0.67,
-        "iterations": 5, # Low iterations for harness speed
+        "minimum_bet": int(scenario["minimum_bet"]),
+        "all_in_threshold": float(scenario["all_in_threshold"]),
+        "iterations": int(scenario["iterations"]),
         "min_exploitability": -1.0,
-        "thread_count": 14,
-        "remove_donk_bets": True,
-        "raise_cap": 2,
-        "compress_strategy": True,
-        "bet_sizing": {
-            "flop": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]}, 
-            "turn": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]}, 
-            "river": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]}
-        }
+        "thread_count": int(scenario["thread_count"]),
+        "remove_donk_bets": bool(scenario["remove_donk_bets"]),
+        "raise_cap": int(scenario["raise_cap"]),
+        "compress_strategy": bool(scenario["compress_strategy"]),
+        "bet_sizing": scenario["bet_sizing"],
     }
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hands", type=int, default=30, help="Number of full hands to simulate")
+    parser.add_argument("--hands", type=int, default=20, help="Number of full hands to simulate")
     parser.add_argument("--endpoint", default="http://127.0.0.1:8000/solve", help="Bridge /solve endpoint")
     parser.add_argument("--preset", default="local_qwen3_coder_30b")
     parser.add_argument("--runtime-profile", default="fast")
     parser.add_argument("--timeout", type=int, default=60, help="Bridge request timeout sec")
+    parser.add_argument("--starting-stack-bb", type=int, default=100, help="Starting effective stack in big blinds")
+    parser.add_argument("--starting-pot-bb", type=int, default=6, help="Starting pot size in big blinds at flop")
+    parser.add_argument("--minimum-bet-bb", type=int, default=2, help="Minimum bet size in big blinds")
+    parser.add_argument("--all-in-threshold", type=float, default=0.67, help="All-in threshold ratio passed to shark")
+    parser.add_argument("--iterations", type=int, default=5, help="CFR iterations for each solve")
+    parser.add_argument("--thread-count", type=int, default=14, help="Thread count for each solve")
+    parser.add_argument("--raise-cap", type=int, default=2, help="Raise cap for the simulated solve tree")
+    parser.add_argument("--oop", action="store_true", help="Run the hero out of position instead of in position")
+    parser.add_argument("--allow-donk-bets", action="store_true", help="Disable the default remove_donk_bets simplification")
+    parser.add_argument("--disable-compress-strategy", action="store_true", help="Disable compress_strategy in spot payloads")
     parser.add_argument("--output", required=True, help="Output JSON map")
     args = parser.parse_args()
+
+    scenario: Dict[str, Any] = {
+        "mode": "stateful_passive_villain_heads_up",
+        "hero_seat": "btn",
+        "villain_seat": "bb",
+        "villain_policy": PASSIVE_VILLAIN_POLICY,
+        "legal_actions": DEFAULT_LEGAL_ACTIONS,
+        "villain_range": DEFAULT_VILLAIN_RANGE,
+        "in_position_player": 2 if args.oop else 1,
+        "starting_stack_bb": args.starting_stack_bb,
+        "starting_pot_bb": args.starting_pot_bb,
+        "minimum_bet": args.minimum_bet_bb,
+        "all_in_threshold": args.all_in_threshold,
+        "iterations": args.iterations,
+        "thread_count": args.thread_count,
+        "remove_donk_bets": not args.allow_donk_bets,
+        "raise_cap": args.raise_cap,
+        "compress_strategy": not args.disable_compress_strategy,
+        "bet_sizing": DEFAULT_BET_SIZING,
+    }
 
     results = []
     
@@ -149,16 +189,25 @@ def main() -> int:
         deck = _generate_deck()
         hero_hole, villain_hole, full_board = _deal_hand(deck)
         
-        # State: Postflop start
-        pot = 6 # 3bb open, 3bb call
-        hero_stack = 194 # 200bb starting, minus 3bb
-        
+        # State: Postflop start (hero/villain already reached flop in a simplified heads-up pot)
+        pot = int(args.starting_pot_bb)
+        hero_stack = int(args.starting_stack_bb)
+
         hand_record: Dict[str, Any] = {
             "hand_index": h_idx + 1,
             "hero_cards": hero_hole,
             "hero_range": _combo_range_from_hole_cards(hero_hole),
             "villain_cards": villain_hole,
+            "villain_range": str(scenario["villain_range"]),
             "full_board": full_board,
+            "scenario": {
+                "street_order": ["flop", "turn", "river"],
+                "facing_action": "checked_to_hero",
+                "legal_actions": scenario["legal_actions"],
+                "hero_in_position": scenario["in_position_player"] == 1,
+                "starting_stack_bb": scenario["starting_stack_bb"],
+                "starting_pot_bb": scenario["starting_pot_bb"],
+            },
             "streets": [],
             "showdown": {},
             "all_in": False,
@@ -172,7 +221,9 @@ def main() -> int:
                 break
                 
             current_board = full_board[:board_count]
-            spot = _build_engine_spot(hero_hole, current_board, pot, hero_stack)
+            decision_pot = pot
+            decision_stack = hero_stack
+            spot = _build_engine_spot(hero_hole, current_board, decision_pot, decision_stack, scenario)
             
             payload = {
                 "spot": spot,
@@ -251,6 +302,23 @@ def main() -> int:
             
             hand_record["streets"].append({ # type: ignore
                 "street": street_name,
+                "facing_action": "checked_to_hero",
+                "legal_actions": scenario["legal_actions"],
+                "solve_spot": {
+                    "hero_range": spot["hero_range"],
+                    "villain_range": spot["villain_range"],
+                    "board": list(current_board),
+                    "in_position_player": spot["in_position_player"],
+                    "starting_stack": decision_stack,
+                    "starting_pot": decision_pot,
+                    "minimum_bet": spot["minimum_bet"],
+                    "all_in_threshold": spot["all_in_threshold"],
+                    "iterations": spot["iterations"],
+                    "thread_count": spot["thread_count"],
+                    "remove_donk_bets": spot["remove_donk_bets"],
+                    "raise_cap": spot["raise_cap"],
+                    "compress_strategy": spot["compress_strategy"],
+                },
                 "pot": pot,
                 "stack": hero_stack,
                 "action": chosen_action,
@@ -268,9 +336,14 @@ def main() -> int:
         res = "tie" if is_tie else ("win" if is_win else "loss")
         win_loss[res] += 1
         
-        net_bb = 0.0
-        if is_win: net_bb = (pot / 2.0) - 3.0
-        elif is_loss: net_bb = -(200.0 - hero_stack - 3.0)
+        starting_stack_bb = float(args.starting_stack_bb)
+        if is_win:
+            final_hero_stack = float(hero_stack + pot)
+        elif is_tie:
+            final_hero_stack = float(hero_stack + (pot / 2.0))
+        else:
+            final_hero_stack = float(hero_stack)
+        net_bb = final_hero_stack - starting_stack_bb
         net_bb_won += net_bb
         
         hand_record["showdown"] = {"result": res, "final_pot": pot, "net_bb": net_bb}
@@ -292,7 +365,12 @@ def main() -> int:
 
     out_path = Path(args.output).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"aggregate": aggs, "hands": results}, indent=2))
+    out_path.write_text(json.dumps({
+        "schema_version": "stateful_sim_report.v2",
+        "scenario": scenario,
+        "aggregate": aggs,
+        "hands": results,
+    }, indent=2))
     print(f"Done. Wrote to {out_path}")
 
     return 0
