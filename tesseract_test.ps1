@@ -315,11 +315,13 @@ $lblCurrentPotValue = $null
 $lblCurrentChipsValue = $null
 $lblCurrentVillainChipsValue = $null
 $lblHeroPositionValue = $null
+$lblTableStatusValue = $null
 $lblVillainCardsValue = $null
 $stateOverlay = $null
 $stateOverlayPotLabel = $null
 $stateOverlayChipsLabel = $null
 $stateOverlayPositionLabel = $null
+$stateOverlayStatusLabel = $null
 $stateOverlayVillainChipsLabel = $null
 $stateOverlayVillainLabel = $null
 $btnVillainActionMenu = $null
@@ -330,6 +332,7 @@ $currentPotAmount = 0
 $currentHeroChips = 0
 $currentVillainChips = 0
 $lastVillainAction = "WAIT"
+$lastHeroAction = "WAIT"
 $currentFacingBetAmount = 0
 $currentHeroStreetCommit = 0
 $currentVillainStreetCommit = 0
@@ -2043,6 +2046,7 @@ function Update-TableStateDisplay {
   $chipsText = ("Hero Chips: {0}" -f [int]$script:currentHeroChips)
   $villainChipsText = ("Villain Chips: {0}" -f [int]$script:currentVillainChips)
   $positionText = Get-HeroPositionStatusText
+  $statusText = Get-TableStatusText
   $villainText = Get-VisibleVillainCardsText
   if ($null -ne $script:lblCurrentPotValue) {
     $script:lblCurrentPotValue.Text = $potText
@@ -2056,6 +2060,9 @@ function Update-TableStateDisplay {
   if ($null -ne $script:lblHeroPositionValue) {
     $script:lblHeroPositionValue.Text = $positionText
   }
+  if ($null -ne $script:lblTableStatusValue) {
+    $script:lblTableStatusValue.Text = $statusText
+  }
   if ($null -ne $script:lblVillainCardsValue) {
     $script:lblVillainCardsValue.Text = $villainText
   }
@@ -2067,6 +2074,9 @@ function Update-TableStateDisplay {
   }
   if ($null -ne $script:stateOverlayPositionLabel) {
     $script:stateOverlayPositionLabel.Text = $positionText
+  }
+  if ($null -ne $script:stateOverlayStatusLabel) {
+    $script:stateOverlayStatusLabel.Text = $statusText
   }
   if ($null -ne $script:stateOverlayVillainChipsLabel) {
     $script:stateOverlayVillainChipsLabel.Text = $villainChipsText
@@ -2100,14 +2110,45 @@ function Update-TableStateDisplay {
 function Get-HeroPositionStatusText {
   if ([int]$script:activeVillainCount -le 1) {
     if ([bool]$script:heroIsSmallBlind) {
-      return "You are the Small Blind. You are on the Button."
+      return "SB / BTN"
     }
-    return "You are the Big Blind. You are 1 away from the Button."
+    return "BB"
   }
   if ([bool]$script:heroIsSmallBlind) {
-    return "You are the Small Blind."
+    return "SB"
   }
-  return "You are not on the Button."
+  return "OFF BTN"
+}
+
+function Get-TableStatusText {
+  if ($script:handResolved) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:lastHandSummaryText)) {
+      return ("STATUS: {0}" -f [string]$script:lastHandSummaryText)
+    }
+    return "STATUS: HAND COMPLETE"
+  }
+  if ($script:heroFolded) {
+    return "STATUS: HERO FOLDED"
+  }
+  if ($script:villainFolded) {
+    return "STATUS: VILLAIN FOLDED"
+  }
+
+  $heroFacing = [int]([Math]::Max(0, $script:currentFacingBetAmount))
+  $villainFacing = [int](Get-VillainFacingBetAmount)
+  if (Test-IsHeroTurn) {
+    if ($heroFacing -gt 0) {
+      return ("STATUS: VILLAIN RAISED TO {0}" -f $heroFacing)
+    }
+    return "STATUS: YOUR TURN"
+  }
+  if (Test-IsVillainTurn) {
+    if ($villainFacing -gt 0) {
+      return ("STATUS: HERO RAISED TO {0}" -f $villainFacing)
+    }
+    return "STATUS: VILLAIN TO ACT"
+  }
+  return "STATUS: WAIT"
 }
 
 function Reset-TableStateToCurrentStakes {
@@ -2175,6 +2216,8 @@ function Start-PostBlindRoundState {
   $script:currentPotAmount = 0
   $script:heroFolded = $false
   $script:villainFolded = $false
+  $script:lastHeroAction = "WAIT"
+  $script:lastVillainAction = "WAIT"
   if ($script:heroIsSmallBlind) {
     [void](Apply-HeroCommitmentToPot -Amount ([int]$stakes.small_blind))
     [void](Apply-VillainCommitmentToPot -Amount ([int]$stakes.big_blind))
@@ -2487,14 +2530,23 @@ function Try-AdvanceStreetIfRoundResolved {
   $boardCount = Get-ValidBoardCardCount -Tokens @($lastBoardTokens)
   if ($boardCount -eq 0) {
     Deal-NextStreetCards -Street "flop"
+    Reset-StreetActionState
+    $script:lastHeroAction = "WAIT"
+    $script:lastVillainAction = "WAIT"
     return $true
   }
   if ($boardCount -eq 3) {
     Deal-NextStreetCards -Street "turn"
+    Reset-StreetActionState
+    $script:lastHeroAction = "WAIT"
+    $script:lastVillainAction = "WAIT"
     return $true
   }
   if ($boardCount -eq 4) {
     Deal-NextStreetCards -Street "river"
+    Reset-StreetActionState
+    $script:lastHeroAction = "WAIT"
+    $script:lastVillainAction = "WAIT"
     return $true
   }
   if ($boardCount -eq 5) {
@@ -2561,6 +2613,10 @@ function Build-EngineSpotPayload {
   $spot.starting_stack = [int]$effectiveStack
   $spot.minimum_bet = [int]$stakes.big_blind
   $spot.starting_pot = [int]$effectivePot
+  $heroComboRange = Convert-HoleCardsToStructuralCombo -Cards @($HeroCards)
+  if ($heroComboRange) {
+    $spot.hero_range = [string]$heroComboRange
+  }
   $spot.board = @()
   foreach ($card in $BoardCards) {
     $spot.board += ([string]$card).Trim()
@@ -2589,6 +2645,9 @@ function Build-EngineSpotPayload {
       ([string]$HeroCards[0]).Trim()
       ([string]$HeroCards[1]).Trim()
     )
+    if ($heroComboRange) {
+      $spot.meta.hero_combo_range = [string]$heroComboRange
+    }
   }
   if ($useActiveNode) {
     if (-not ($spot.PSObject.Properties.Name -contains "active_node_path")) {
@@ -4288,7 +4347,7 @@ $lblHeroPositionTitle.AutoSize = $true
 $advicePanel.Controls.Add($lblHeroPositionTitle)
 
 $lblHeroPositionValue = New-Object System.Windows.Forms.Label
-$lblHeroPositionValue.Text = "You are the Small Blind. You are on the Button."
+$lblHeroPositionValue.Text = "SB / BTN"
 $lblHeroPositionValue.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
 $lblHeroPositionValue.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $lblHeroPositionValue.Location = New-Object System.Drawing.Point(18, 430)
@@ -4297,9 +4356,27 @@ $lblHeroPositionValue.AutoEllipsis = $true
 $advicePanel.Controls.Add($lblHeroPositionValue)
 $script:lblHeroPositionValue = $lblHeroPositionValue
 
+$lblTableStatusTitle = New-Object System.Windows.Forms.Label
+$lblTableStatusTitle.Text = "Status"
+$lblTableStatusTitle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblTableStatusTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblTableStatusTitle.Location = New-Object System.Drawing.Point(18, 468)
+$lblTableStatusTitle.AutoSize = $true
+$advicePanel.Controls.Add($lblTableStatusTitle)
+
+$lblTableStatusValue = New-Object System.Windows.Forms.Label
+$lblTableStatusValue.Text = "STATUS: WAIT"
+$lblTableStatusValue.ForeColor = [System.Drawing.Color]::FromArgb(255, 220, 160)
+$lblTableStatusValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9, [System.Drawing.FontStyle]::Bold)
+$lblTableStatusValue.Location = New-Object System.Drawing.Point(18, 488)
+$lblTableStatusValue.Size = New-Object System.Drawing.Size(210, 32)
+$lblTableStatusValue.AutoEllipsis = $true
+$advicePanel.Controls.Add($lblTableStatusValue)
+$script:lblTableStatusValue = $lblTableStatusValue
+
 $btnToggleVillainCards = New-Object System.Windows.Forms.Button
 $btnToggleVillainCards.Text = "Show Villain Cards"
-$btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, 470)
+$btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, 524)
 $btnToggleVillainCards.Size = New-Object System.Drawing.Size(210, 28)
 $btnToggleVillainCards.FlatStyle = "Flat"
 $btnToggleVillainCards.ForeColor = [System.Drawing.Color]::White
@@ -4312,7 +4389,7 @@ $lblVillainCardsValue = New-Object System.Windows.Forms.Label
 $lblVillainCardsValue.Text = "Villain Cards: Hidden"
 $lblVillainCardsValue.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
 $lblVillainCardsValue.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, 504)
+$lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, 558)
 $lblVillainCardsValue.Size = New-Object System.Drawing.Size(210, 32)
 $lblVillainCardsValue.AutoEllipsis = $true
 $advicePanel.Controls.Add($lblVillainCardsValue)
@@ -4321,15 +4398,15 @@ $lblVillainMode = New-Object System.Windows.Forms.Label
 $lblVillainMode.Text = "Villain Mode"
 $lblVillainMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblVillainMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblVillainMode.Location = New-Object System.Drawing.Point(18, 540)
+$lblVillainMode.Location = New-Object System.Drawing.Point(18, 594)
 $lblVillainMode.AutoSize = $true
 $advicePanel.Controls.Add($lblVillainMode)
 
 $cmbVillainMode = New-Object System.Windows.Forms.ComboBox
 $cmbVillainMode.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
 $cmbVillainMode.Items.AddRange(@("Manual", "Scripted", "Engine Random"))
-$cmbVillainMode.SelectedItem = "Manual"
-$cmbVillainMode.Location = New-Object System.Drawing.Point(18, 560)
+$cmbVillainMode.SelectedItem = "Scripted"
+$cmbVillainMode.Location = New-Object System.Drawing.Point(18, 614)
 $cmbVillainMode.Size = New-Object System.Drawing.Size(210, 24)
 $cmbVillainMode.Add_SelectedIndexChanged({
   Set-VillainMode -Mode ([string]$cmbVillainMode.SelectedItem)
@@ -4344,7 +4421,7 @@ $lblVillainStyle = New-Object System.Windows.Forms.Label
 $lblVillainStyle.Text = "Villain Style"
 $lblVillainStyle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblVillainStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblVillainStyle.Location = New-Object System.Drawing.Point(18, 588)
+$lblVillainStyle.Location = New-Object System.Drawing.Point(18, 644)
 $lblVillainStyle.AutoSize = $true
 $advicePanel.Controls.Add($lblVillainStyle)
 
@@ -4352,7 +4429,7 @@ $cmbVillainStyle = New-Object System.Windows.Forms.ComboBox
 $cmbVillainStyle.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
 $cmbVillainStyle.Items.AddRange(@("Tight", "Aggressive"))
 $cmbVillainStyle.SelectedItem = "Tight"
-$cmbVillainStyle.Location = New-Object System.Drawing.Point(18, 608)
+$cmbVillainStyle.Location = New-Object System.Drawing.Point(18, 664)
 $cmbVillainStyle.Size = New-Object System.Drawing.Size(210, 24)
 $cmbVillainStyle.Add_SelectedIndexChanged({
   Set-VillainStyle -Style ([string]$cmbVillainStyle.SelectedItem)
@@ -4362,7 +4439,7 @@ $script:cmbVillainStyle = $cmbVillainStyle
 
 $btnVillainActionMenu = New-Object System.Windows.Forms.Button
 $btnVillainActionMenu.Text = "Villain Action"
-$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 638)
+$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 696)
 $btnVillainActionMenu.Size = New-Object System.Drawing.Size(210, 28)
 $btnVillainActionMenu.FlatStyle = "Flat"
 $btnVillainActionMenu.ForeColor = [System.Drawing.Color]::White
@@ -4445,7 +4522,7 @@ foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btn
 }
 
 Set-VillainCardsVisibility -Visible:$false
-Set-VillainMode -Mode "Manual"
+Set-VillainMode -Mode "Scripted"
 Set-VillainStyle -Style "Tight"
 
 $latestLabel = New-Object System.Windows.Forms.Label
@@ -4616,17 +4693,20 @@ function Update-MainLayout {
   $lblHeroPositionTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 238))
   $lblHeroPositionValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 258))
   $lblHeroPositionValue.Size = New-Object System.Drawing.Size($innerWidth, 34)
-  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 298))
+  $lblTableStatusTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 294))
+  $lblTableStatusValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 314))
+  $lblTableStatusValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
+  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 350))
   $btnToggleVillainCards.Size = New-Object System.Drawing.Size($innerWidth, 28)
-  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 332))
+  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 384))
   $lblVillainCardsValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
-  $lblVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 368))
-  $cmbVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 388))
+  $lblVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 420))
+  $cmbVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 440))
   $cmbVillainMode.Size = New-Object System.Drawing.Size($innerWidth, 24)
-  $lblVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 418))
-  $cmbVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 438))
+  $lblVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 470))
+  $cmbVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 490))
   $cmbVillainStyle.Size = New-Object System.Drawing.Size($innerWidth, 24)
-  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 470))
+  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 522))
   $btnVillainActionMenu.Size = New-Object System.Drawing.Size($innerWidth, 28)
   $settleButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
   $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 506))
@@ -5495,6 +5575,7 @@ function Invoke-ManualActionSelection {
     $script:heroActedThisRound = $true
   }
   $script:adviceActionPrimary = $normalizedAction
+  $script:lastHeroAction = $normalizedAction
   if ($committedAmount -gt 0) {
     $script:adviceActionSecondary = ("Manual action override. Amount: {0}" -f [int]$committedAmount)
   }
@@ -5633,6 +5714,36 @@ function Get-CardRankStrength {
     "2" { return 2 }
     default { return 0 }
   }
+}
+
+function Convert-HoleCardsToStructuralCombo {
+  param([string[]]$Cards)
+  if ($Cards.Count -ne 2) {
+    return ""
+  }
+  $normalizedCards = @()
+  foreach ($card in @($Cards)) {
+    $token = Normalize-CardToken -Text ([string]$card)
+    if (-not (Test-CardTokenStrict -Token $token)) {
+      return ""
+    }
+    $normalizedCards += $token
+  }
+  $ordered = @($normalizedCards | Sort-Object -Property @{ Expression = { Get-CardRankStrength -Token $_ }; Descending = $true }, @{ Expression = { [string]$_ }; Descending = $false })
+  if ($ordered.Count -ne 2) {
+    return ""
+  }
+  $rank1 = $ordered[0].Substring(0, 1).ToUpperInvariant()
+  $rank2 = $ordered[1].Substring(0, 1).ToUpperInvariant()
+  $suit1 = $ordered[0].Substring(1, 1).ToLowerInvariant()
+  $suit2 = $ordered[1].Substring(1, 1).ToLowerInvariant()
+  if ($rank1 -eq $rank2) {
+    return ("{0}{1}" -f $rank1, $rank2)
+  }
+  if ($suit1 -eq $suit2) {
+    return ("{0}{1}s" -f $rank1, $rank2)
+  }
+  return ("{0}{1}o" -f $rank1, $rank2)
 }
 
 function Build-PreflopHeuristicRootActions {
@@ -5932,7 +6043,7 @@ function New-TableStateOverlayForm {
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
-  $overlay.Size = New-Object System.Drawing.Size(240, 156)
+  $overlay.Size = New-Object System.Drawing.Size(240, 178)
   $overlay.Location = $(if ($null -ne $script:savedStateOverlayLocation) {
     New-Object System.Drawing.Point([int]$script:savedStateOverlayLocation.X, [int]$script:savedStateOverlayLocation.Y)
   } else {
@@ -5985,11 +6096,19 @@ function New-TableStateOverlayForm {
   $positionLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($positionLabel)
 
+  $statusLabel = New-Object System.Windows.Forms.Label
+  $statusLabel.Text = "STATUS: WAIT"
+  $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 220, 160)
+  $statusLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
+  $statusLabel.Location = New-Object System.Drawing.Point(10, 122)
+  $statusLabel.Size = New-Object System.Drawing.Size(220, 20)
+  $overlay.Controls.Add($statusLabel)
+
   $villainLabel = New-Object System.Windows.Forms.Label
   $villainLabel.Text = "Villain Cards: Hidden"
   $villainLabel.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
   $villainLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-  $villainLabel.Location = New-Object System.Drawing.Point(10, 122)
+  $villainLabel.Location = New-Object System.Drawing.Point(10, 144)
   $villainLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($villainLabel)
 
@@ -6018,7 +6137,7 @@ function New-TableStateOverlayForm {
     Save-RoiState
   }.GetNewClosure()
 
-  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainChipsLabel, $positionLabel, $villainLabel)) {
+  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainChipsLabel, $positionLabel, $statusLabel, $villainLabel)) {
     $ctl.ContextMenuStrip = $overlay.ContextMenuStrip
     $ctl.Add_MouseDown($dragHandlerDown)
     $ctl.Add_MouseMove($dragHandlerMove)
@@ -6029,6 +6148,7 @@ function New-TableStateOverlayForm {
   $script:stateOverlayChipsLabel = $chipsLabel
   $script:stateOverlayVillainChipsLabel = $villainChipsLabel
   $script:stateOverlayPositionLabel = $positionLabel
+  $script:stateOverlayStatusLabel = $statusLabel
   $script:stateOverlayVillainLabel = $villainLabel
   Update-TableStateDisplay
   return $overlay
@@ -8120,6 +8240,8 @@ function Reset-NewHandState {
   $script:adviceActionSecondary = ""
   $script:adviceHasAction = $false
   $script:lastAdviceWeightedRows = @()
+  $script:lastHeroAction = "WAIT"
+  $script:lastVillainAction = "WAIT"
   Update-CheckCallButtonModeFromState
   Write-Log "Hand state reset: cleared solver state and visible cards."
 }

@@ -51,6 +51,9 @@ This workspace is organized to keep the engine, neural models, hand history data
   - hero and board OCR can be captured from the clickable tester and queued to `/solve`,
   - UI stays responsive while engine jobs run in background,
   - backend auto-start/stop is managed by the tester (with minimized startup windows).
+  - heads-up turn-state flow now resets per street on auto-deal transitions (flop/turn/river), preventing stale action flags from carrying into the next street.
+  - tester payloads now inject exact hero combo class into `spot.hero_range` (for example `A4s`, `KQo`, `44`) when hero hole cards are known, instead of always solving from a broad hero range.
+  - table-state panel/overlay now includes concise position text (`SB / BTN`, `BB`) and live `STATUS` messaging (for example `STATUS: VILLAIN RAISED TO 6`).
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,
