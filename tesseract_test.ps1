@@ -175,6 +175,7 @@ $engineQueueReplaceCount = 0
 $engineQueueSkipNoChangeCount = 0
 $engineQueuePrioritySkipCount = 0
 $engineQueueCompletedCount = 0
+$engineLastResultSummary = "none"
 $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
@@ -2965,7 +2966,7 @@ function Update-EngineButtonState {
     }
   }
   else {
-    $engineText = "Engine: idle"
+    $engineText = ("Engine: idle (last {0})" -f [string]$engineLastResultSummary)
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
     $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
@@ -4663,6 +4664,9 @@ function Poll-EngineJobs {
       if ($meta.ContainsKey("logical_key") -and $meta.logical_key) {
         $script:engineLastCompletedLogicalKey = [string]$meta.logical_key
       }
+      $completedStage = if ($meta.ContainsKey("stage")) { [string]$meta.stage } else { "unknown" }
+      $completedStrategy = if ($result.selected_strategy) { [string]$result.selected_strategy } else { "ok" }
+      $script:engineLastResultSummary = ("{0}:{1} {2:N2}s" -f $completedStage, $completedStrategy, [double]$result.elapsed_sec)
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
         $result.exploitability,
@@ -4686,6 +4690,8 @@ function Poll-EngineJobs {
       if ($null -ne $result -and ($result.PSObject.Properties.Name -contains "error") -and $result.error) {
         $errMsg = [string]$result.error
       }
+      $failedStage = if ($meta.ContainsKey("stage")) { [string]$meta.stage } else { "unknown" }
+      $script:engineLastResultSummary = ("{0}:failed" -f $failedStage)
       Write-Log ("Engine job {0} failed: {1}" -f $jobId, $errMsg) -Type "engine_job_failed" -Data @{
         job_id = [int]$jobId
         error = $errMsg

@@ -348,6 +348,7 @@ No-engine startup variant:
   - `Run Flop (1-3)` for atomic flop capture. When all three flop cards are valid, that is the first actual solve request for the staged hand and it automatically uses the cached hero cards.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
   - `Engine Profile` dropdown (`fast`/`normal`) controls runtime profile sent to bridge `/solve` for each queued engine job.
+  - The top status line keeps the last engine result summary while idle (for example `flop:fallback_lookup_policy 0.05s`) so very fast jobs are still visible after completion.
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
 - Engine status is shown in the top header text (`Engine: idle|busy`) instead of changing button labels.
 - Engine queue line now shows active job metadata in real time (`job id`, `stage`, `elapsed`, `max age`), and stale jobs are auto-cleaned on timeout.
