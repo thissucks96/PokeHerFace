@@ -63,6 +63,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - the in-app log panel now uses action-aware coloring (`CHECK/CALL` green, `RAISE/ALL IN` red, `FOLD` gray, error paths red/orange) to make live state transitions easier to scan during playtesting.
   - normal UI exit/restart no longer forces a `Press Enter to exit` terminal pause (set `UI_PAUSE_ON_EXIT=1` if you explicitly want the old pause behavior); crash paths still pause for debug capture.
   - table status wording now uses `TO CALL X` semantics (instead of `RAISED TO X`) and includes a blind-posting preflop hint when SB is facing the opening BB completion amount.
+  - advice ingestion now prefers `result.active_node_actions` (when present) over root-only actions, and normalizes solver rows to current legal hero actions before display so facing-bet spots do not surface illegal `CHECK/BET` guidance.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,

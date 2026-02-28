@@ -5615,7 +5615,7 @@ function Normalize-AdviceWeightedRowsToHeroLegal {
   }
 
   if ($tokenWeights.Count -le 0) {
-    return $rows
+    return @()
   }
 
   $resultRows = New-Object System.Collections.Generic.List[object]
@@ -6280,10 +6280,34 @@ function Set-AdviceFromEngineResult {
     return
   }
 
-  if ($weightedRows.Count -le 0) {
+  $rowsForDecision = @($weightedRows)
+  if (Test-IsHeroTurn) {
+    $normalizedRows = @(Normalize-AdviceWeightedRowsToHeroLegal -WeightedRows $rowsForDecision)
+    if ($normalizedRows.Count -gt 0) {
+      $rowsForDecision = @($normalizedRows)
+    }
+    else {
+      $legalTokens = @(Get-HeroLegalActionTokens)
+      $fallbackToken = ""
+      if ($legalTokens -contains "CALL") { $fallbackToken = "call" }
+      elseif ($legalTokens -contains "CHECK") { $fallbackToken = "check" }
+      elseif ($legalTokens -contains "FOLD") { $fallbackToken = "fold" }
+      elseif ($legalTokens -contains "RAISE") { $fallbackToken = "raise" }
+      elseif ($legalTokens -contains "ALL IN") { $fallbackToken = "all in" }
+      if ($fallbackToken) {
+        $rowsForDecision = @(
+          [pscustomobject]@{
+            token = [string]$fallbackToken
+            weight = 1.0
+          }
+        )
+      }
+    }
+  }
+  if ($rowsForDecision.Count -le 0) {
     return
   }
-  $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  $sortedRows = @($rowsForDecision | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
@@ -8219,8 +8243,44 @@ function Queue-EngineSolveForBoard {
           $llmErr = [string]$resp.llm_error
         }
         $rootActionsValue = @()
-        if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result -and ($resp.result.PSObject.Properties.Name -contains "root_actions") -and $resp.result.root_actions) {
-          $rootActionsValue = @($resp.result.root_actions)
+        if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result) {
+          $useActiveNode = $false
+          if (($resp.result.PSObject.Properties.Name -contains "active_node_found") -and [bool]$resp.result.active_node_found -and `
+              ($resp.result.PSObject.Properties.Name -contains "active_node_actions") -and $resp.result.active_node_actions) {
+            $activeRows = @($resp.result.active_node_actions)
+            if ($activeRows.Count -gt 0) {
+              $rootActionsValue = @($activeRows)
+              $useActiveNode = $true
+            }
+          }
+          if ((-not $useActiveNode) -and ($resp.result.PSObject.Properties.Name -contains "root_actions") -and $resp.result.root_actions) {
+            $rootActionsValue = @($resp.result.root_actions)
+          }
+        }
+        if ($rootActionsValue.Count -eq 0 -and ($resp.PSObject.Properties.Name -contains "allowed_root_actions") -and $resp.allowed_root_actions) {
+          $allowedTokens = @($resp.allowed_root_actions)
+          if ($allowedTokens.Count -gt 0) {
+            $uniformWeight = [double](1.0 / [double]$allowedTokens.Count)
+            foreach ($tokenRaw in @($allowedTokens)) {
+              $tokenText = ([string]$tokenRaw).Trim().ToLowerInvariant()
+              if (-not $tokenText) { continue }
+              $actionName = ""
+              $amountValue = 0
+              if ($tokenText -match "^(raise|bet|call):(-?\d+)$") {
+                $actionName = [string]$matches[1]
+                try { $amountValue = [int]$matches[2] } catch { $amountValue = 0 }
+              }
+              elseif ($tokenText -in @("fold", "call", "check", "raise", "bet", "all in", "allin")) {
+                $actionName = $(if ($tokenText -eq "allin") { "all in" } else { $tokenText })
+              }
+              if (-not $actionName) { continue }
+              $rootActionsValue += [pscustomobject]@{
+                action = $actionName
+                amount = [int]$amountValue
+                avg_frequency = [double]$uniformWeight
+              }
+            }
+          }
         }
         [pscustomobject]@{
           ok = $true
