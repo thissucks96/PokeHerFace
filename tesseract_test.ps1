@@ -301,6 +301,7 @@ $engineLastResultSummary = "none"
 $advicePrimary = "WAIT"
 $adviceSecondary = "No actionable advice yet."
 $checkCallButtonToken = "CHECK"
+$autoHeroSendInProgress = $false
 $raiseAllInButtonToken = "RAISE"
 $lastRecommendedCallAmount = 0
 $lastRecommendedRaiseAmount = 0
@@ -348,7 +349,7 @@ $handCounter = 0
 $heroIsSmallBlind = $true
 $lastHandSummaryText = ""
 $showVillainCards = $false
-$villainMode = "Manual"
+$villainMode = "Scripted"
 $villainStyle = "Tight"
 $autoVillainBusy = $false
 $adviceActionPrimary = ""
@@ -7773,6 +7774,11 @@ function Queue-EngineSolveForBoard {
 }
 
 function Try-AutoSendHeroCardsToEngine {
+  if ($script:autoHeroSendInProgress) {
+    return
+  }
+  $script:autoHeroSendInProgress = $true
+  try {
   if (-not (Get-HeroCardsReady)) {
     return
   }
@@ -7842,11 +7848,25 @@ function Try-AutoSendHeroCardsToEngine {
       [int]$script:currentVillainStreetCommit, `
       [int]([bool]$script:heroActedThisRound), `
       [int]([bool]$script:villainActedThisRound))
-    Write-Log ("Hero cards ready ({0}); applied immediate preflop advice and warmed backends. Full solve begins on flop." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
-      hero1 = [string]$heroCards["hero1"]
-      hero2 = [string]$heroCards["hero2"]
-      stage_key = $heroStageKey
-      preflop_key = $preflopSolveKey
+    if ($isNewHeroStage) {
+      Write-Log ("Hero cards ready ({0}); applied immediate preflop advice and warmed backends. Full solve begins on flop." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+        stage_key = $heroStageKey
+        preflop_key = $preflopSolveKey
+      }
+    }
+    else {
+      Write-Log ("Preflop state updated ({0}): facing_bet={1}, hero_commit={2}, villain_commit={3}." -f `
+        (Get-HeroCardsText), [int]$script:currentFacingBetAmount, [int]$script:currentHeroStreetCommit, [int]$script:currentVillainStreetCommit) -Type "hero_preflop_refresh" -Data @{
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+        stage_key = $heroStageKey
+        preflop_key = $preflopSolveKey
+        facing_bet = [int]$script:currentFacingBetAmount
+        hero_commit = [int]$script:currentHeroStreetCommit
+        villain_commit = [int]$script:currentVillainStreetCommit
+      }
     }
     $script:lastHeroAutoSendKey = $preflopSolveKey
     return
@@ -7867,6 +7887,10 @@ function Try-AutoSendHeroCardsToEngine {
   }
   if (Queue-EngineSolveForBoard -BoardTokens $lastBoardTokens -StageLabel "hero_auto") {
     $script:lastHeroAutoSendKey = $solveKey
+  }
+  }
+  finally {
+    $script:autoHeroSendInProgress = $false
   }
 }
 
@@ -8107,13 +8131,20 @@ function Start-NewHandPreserveChips {
   $script:currentHeroChips = [int]$preservedChips
   Reset-HiddenVillainState -StartingChips ([int]$preservedVillainChips)
   $script:handCounter = [int]$script:handCounter + 1
-  $script:heroIsSmallBlind = (([int]$script:handCounter % 2) -eq 1)
+  if ([int]$script:handCounter -eq 1) {
+    # Randomize who starts as SB/BTN on the first hand, then alternate each hand.
+    $script:heroIsSmallBlind = ((Get-Random -Minimum 0 -Maximum 2) -eq 1)
+  }
+  else {
+    $script:heroIsSmallBlind = (-not [bool]$script:heroIsSmallBlind)
+  }
   $script:configuredVillainCount = 1
   $script:activeVillainCount = 1
   $script:handResolved = $false
   $script:lastHandSummaryText = ""
   Start-ActiveDeckFromPreparedOrFresh
   Start-PostBlindRoundState
+  $firstToActPreflop = if (Test-IsVillainTurn) { "villain" } else { "hero" }
   $script:suppressHeroAutoSend = $true
   try {
     Deal-InitialHoleCardsForCurrentHand
@@ -8128,6 +8159,7 @@ function Start-NewHandPreserveChips {
     ("hero_cards: {0}" -f (Get-HeroCardsText))
     ("villain_cards: {0}" -f (Get-VillainCardsText))
     ("board: {0}" -f (Get-BoardTokensText))
+    ("first_to_act_preflop: {0}" -f $firstToActPreflop)
     ("pot:   {0}" -f [int]$script:currentPotAmount)
     ("hero_chips: {0}" -f [int]$script:currentHeroChips)
     ("villain_chips: {0}" -f [int]$script:currentVillainChips)
@@ -8140,6 +8172,7 @@ function Start-NewHandPreserveChips {
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
     hero_is_small_blind = [bool]$script:heroIsSmallBlind
+    first_to_act_preflop = $firstToActPreflop
   }
   Try-AutoSendHeroCardsToEngine
 }
