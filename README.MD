@@ -386,6 +386,10 @@ No-engine startup variant:
 - The tester now exposes the first visible one-villain controls:
   - live `Villain Stack` in the right panel and floating `Table State` overlay,
   - a `Villain Action` menu (`Check`, `Bet`, `Raise`, `Fold`, `All In`) that updates pot, villain chips, and hero-facing bet state.
+- The tester now also includes a `Villain Mode` selector:
+  - `Manual` keeps the explicit `Villain Action` menu enabled,
+  - `Scripted` auto-plays villain turns with a deterministic, easy-to-debug policy using the existing pot/stack state,
+  - `Engine Random` uses weighted random sampling from the current postflop engine action mix when available, and falls back to the scripted policy if no valid engine mix exists.
 - The tester also supports an optional `villain` ROI rectangle:
   - it shows villain chips remaining,
   - villain chips invested on the current street only,

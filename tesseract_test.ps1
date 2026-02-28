@@ -186,6 +186,7 @@ $numSmallBlind = $null
 $numBigBlind = $null
 $numBuyIn = $null
 $btnToggleVillainCards = $null
+$cmbVillainMode = $null
 $lblCurrentPotValue = $null
 $lblCurrentChipsValue = $null
 $lblCurrentVillainChipsValue = $null
@@ -222,9 +223,12 @@ $handCounter = 0
 $heroIsSmallBlind = $true
 $lastHandSummaryText = ""
 $showVillainCards = $false
+$villainMode = "Manual"
+$autoVillainBusy = $false
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
+$lastAdviceWeightedRows = @()
 $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
@@ -1463,6 +1467,280 @@ function Get-VillainRoiOverlayText {
   ) -join "`n"
 }
 
+function Get-VillainFacingBetAmount {
+  return [int]([Math]::Max(0, ([int]$script:currentHeroStreetCommit - [int]$script:currentVillainStreetCommit)))
+}
+
+function Get-CurrentStreetName {
+  switch (Get-ValidBoardCardCount) {
+    0 { return "preflop" }
+    3 { return "flop" }
+    4 { return "turn" }
+    5 { return "river" }
+    default { return "incomplete" }
+  }
+}
+
+function Test-IsVillainTurn {
+  if ($script:handResolved -or $script:heroFolded -or $script:villainFolded) {
+    return $false
+  }
+  if ([int]$script:activeVillainCount -le 0) {
+    return $false
+  }
+
+  $villainFacingGap = Get-VillainFacingBetAmount
+  if ($villainFacingGap -gt 0) {
+    return (-not $script:villainActedThisRound)
+  }
+  if ([int]$script:currentFacingBetAmount -gt 0) {
+    return $false
+  }
+
+  $street = Get-CurrentStreetName
+  $villainActsFirst = $false
+  if ($street -eq "preflop") {
+    $villainActsFirst = (-not [bool]$script:heroIsSmallBlind)
+  }
+  elseif ($street -in @("flop", "turn", "river")) {
+    $villainActsFirst = [bool]$script:heroIsSmallBlind
+  }
+
+  if (-not $script:heroActedThisRound -and -not $script:villainActedThisRound) {
+    return $villainActsFirst
+  }
+  if ($script:heroActedThisRound -and (-not $script:villainActedThisRound)) {
+    return $true
+  }
+  return $false
+}
+
+function Set-VillainMode {
+  param([string]$Mode)
+  $normalized = ([string]$Mode).Trim()
+  if ($normalized -notin @("Manual", "Scripted", "Engine Random")) {
+    $normalized = "Manual"
+  }
+  $script:villainMode = $normalized
+  if ($null -ne $script:cmbVillainMode -and ([string]$script:cmbVillainMode.SelectedItem -ne $normalized)) {
+    $script:cmbVillainMode.SelectedItem = $normalized
+  }
+  if ($null -ne $script:btnVillainActionMenu) {
+    $script:btnVillainActionMenu.Enabled = ($normalized -eq "Manual")
+    $script:btnVillainActionMenu.Text = $(if ($normalized -eq "Manual") { "Villain Action" } else { ("Villain: {0}" -f $normalized) })
+  }
+}
+
+function Get-RecommendedVillainRaiseAmount {
+  $stakes = Get-StakeSettings
+  $facingGap = Get-VillainFacingBetAmount
+  if ($facingGap -gt 0) {
+    return [int]([Math]::Max(($facingGap + $stakes.big_blind), $stakes.big_blind))
+  }
+  return [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+}
+
+function Get-VillainLegalActionTokens {
+  $tokens = New-Object System.Collections.Generic.List[string]
+  $villainChips = [int]([Math]::Max(0, $script:currentVillainChips))
+  if ($script:handResolved -or $script:heroFolded -or $script:villainFolded -or $villainChips -le 0) {
+    return @()
+  }
+
+  $facingGap = Get-VillainFacingBetAmount
+  if ($facingGap -gt 0) {
+    [void]$tokens.Add("FOLD")
+    if ($facingGap -ge $villainChips) {
+      [void]$tokens.Add("ALL IN")
+    }
+    else {
+      [void]$tokens.Add("CALL")
+      $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
+      if ($raiseBase -ge $villainChips) {
+        [void]$tokens.Add("ALL IN")
+      }
+      else {
+        [void]$tokens.Add("RAISE")
+      }
+    }
+    return @($tokens | Select-Object -Unique)
+  }
+
+  [void]$tokens.Add("CHECK")
+  $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
+  if ($raiseBase -ge $villainChips) {
+    [void]$tokens.Add("ALL IN")
+  }
+  elseif ($villainChips -gt 0) {
+    [void]$tokens.Add("RAISE")
+  }
+  return @($tokens | Select-Object -Unique)
+}
+
+function Get-WeightedRandomActionToken {
+  param(
+    [Parameter(Mandatory = $true)]$WeightedRows,
+    [Parameter(Mandatory = $true)][string[]]$LegalTokens
+  )
+
+  $candidates = New-Object System.Collections.Generic.List[object]
+  foreach ($row in @($WeightedRows)) {
+    if ($null -eq $row) { continue }
+    $rowToken = ([string]$row.token).Trim().ToLowerInvariant()
+    if (-not $rowToken) { continue }
+    $weight = 0.0
+    try { $weight = [double]$row.weight } catch { $weight = 0.0 }
+    if ($weight -le 0.0) { continue }
+
+    $normalizedToken = ""
+    if ($rowToken -eq "fold") {
+      $normalizedToken = "FOLD"
+    }
+    elseif ($rowToken -eq "check") {
+      $normalizedToken = "CHECK"
+    }
+    elseif ($rowToken -eq "call" -or $rowToken -like "call:*") {
+      $normalizedToken = $(if ($LegalTokens -contains "CALL") { "CALL" } elseif ($LegalTokens -contains "ALL IN") { "ALL IN" } else { "" })
+    }
+    elseif ($rowToken -eq "bet" -or $rowToken -eq "raise" -or $rowToken -like "bet:*" -or $rowToken -like "raise:*") {
+      $amount = [int](Get-AmountFromActionToken -Token $rowToken)
+      if ($amount -gt 0 -and $amount -ge [int]$script:currentVillainChips -and ($LegalTokens -contains "ALL IN")) {
+        $normalizedToken = "ALL IN"
+      }
+      elseif ($LegalTokens -contains "RAISE") {
+        $normalizedToken = "RAISE"
+      }
+      elseif ($LegalTokens -contains "ALL IN") {
+        $normalizedToken = "ALL IN"
+      }
+    }
+    if (-not $normalizedToken) { continue }
+    if (-not ($LegalTokens -contains $normalizedToken)) { continue }
+    [void]$candidates.Add([pscustomobject]@{
+      token = $normalizedToken
+      weight = [double]$weight
+    })
+  }
+  if ($candidates.Count -eq 0) {
+    return ""
+  }
+
+  $totalWeight = 0.0
+  foreach ($candidate in $candidates) {
+    $totalWeight += [double]$candidate.weight
+  }
+  if ($totalWeight -le 0.0) {
+    return [string]$candidates[0].token
+  }
+
+  $roll = Get-Random -Minimum 0.0 -Maximum $totalWeight
+  $cursor = 0.0
+  foreach ($candidate in $candidates) {
+    $cursor += [double]$candidate.weight
+    if ($roll -le $cursor) {
+      return [string]$candidate.token
+    }
+  }
+  return [string]$candidates[$candidates.Count - 1].token
+}
+
+function Get-ScriptedVillainActionToken {
+  $legal = @(Get-VillainLegalActionTokens)
+  if ($legal.Count -eq 0) {
+    return ""
+  }
+
+  $facingGap = Get-VillainFacingBetAmount
+  if ($facingGap -le 0) {
+    if ($legal -contains "CHECK") { return "CHECK" }
+    if ($legal -contains "RAISE") { return "RAISE" }
+    if ($legal -contains "ALL IN") { return "ALL IN" }
+    return [string]$legal[0]
+  }
+
+  $stakes = Get-StakeSettings
+  $villainCardsNow = @()
+  foreach ($slot in @("villain1", "villain2")) {
+    $token = Normalize-CardToken -Text ([string]$script:villainCards[$slot])
+    if (Test-CardTokenStrict -Token $token) {
+      $villainCardsNow += $token
+    }
+  }
+  $preflopRows = if ($villainCardsNow.Count -eq 2) { @(Build-PreflopHeuristicRootActions -HeroCards $villainCardsNow) } else { @() }
+  $topPreflopToken = ""
+  if ($preflopRows.Count -gt 0) {
+    $topRow = @($preflopRows | Sort-Object -Property @{ Expression = "avg_frequency"; Descending = $true })[0]
+    if ($null -ne $topRow) {
+      $topPreflopToken = [string](Convert-ActionSummaryRowToToken -Row $topRow)
+    }
+  }
+
+  if (($topPreflopToken -eq "fold") -and ($facingGap -gt [int]$stakes.big_blind) -and ($legal -contains "FOLD")) {
+    return "FOLD"
+  }
+  if (($topPreflopToken -like "raise*") -and ($legal -contains "RAISE")) {
+    return "RAISE"
+  }
+  if (($facingGap -ge [int]([Math]::Max([Math]::Ceiling([double]$script:currentPotAmount * 0.75), $stakes.big_blind * 4))) -and ($legal -contains "FOLD")) {
+    return "FOLD"
+  }
+  if ($legal -contains "CALL") { return "CALL" }
+  if ($legal -contains "ALL IN") { return "ALL IN" }
+  if ($legal -contains "FOLD") { return "FOLD" }
+  return [string]$legal[0]
+}
+
+function Get-AutomaticVillainActionToken {
+  $mode = [string]$script:villainMode
+  if ($mode -eq "Engine Random" -and (Get-ValidBoardCardCount) -ge 3) {
+    $legal = @(Get-VillainLegalActionTokens)
+    $picked = Get-WeightedRandomActionToken -WeightedRows @($script:lastAdviceWeightedRows) -LegalTokens $legal
+    if ($picked) {
+      return $picked
+    }
+  }
+  return (Get-ScriptedVillainActionToken)
+}
+
+function Try-RunAutomaticVillainTurn {
+  if ($script:autoVillainBusy) {
+    return $false
+  }
+  if ([string]$script:villainMode -eq "Manual") {
+    return $false
+  }
+  if (-not (Test-IsVillainTurn)) {
+    return $false
+  }
+
+  $token = [string](Get-AutomaticVillainActionToken)
+  if (-not $token) {
+    return $false
+  }
+
+  $script:autoVillainBusy = $true
+  try {
+    $amountOverride = -1
+    if ($token -eq "RAISE") {
+      $amountOverride = [int](Get-RecommendedVillainRaiseAmount)
+    }
+    Write-Log ("Auto villain ({0}) selected: {1}" -f [string]$script:villainMode, $token) -Type "auto_villain_action" -Data @{
+      mode = [string]$script:villainMode
+      action = $token
+      current_pot = [int]$script:currentPotAmount
+      current_hero_chips = [int]$script:currentHeroChips
+      current_villain_chips = [int]$script:currentVillainChips
+      facing_bet = [int]$script:currentFacingBetAmount
+      villain_facing_bet = [int](Get-VillainFacingBetAmount)
+    }
+    Invoke-VillainActionSelection -ActionToken $token -AmountOverride $amountOverride -AutoMode
+    return $true
+  }
+  finally {
+    $script:autoVillainBusy = $false
+  }
+}
+
 function Set-VillainCardsVisibility {
   param([bool]$Visible)
   $script:showVillainCards = [bool]$Visible
@@ -1594,6 +1872,7 @@ function Update-TableStateDisplay {
     }
     catch {}
   }
+  Update-VillainActionControlState
 }
 
 function Reset-TableStateToCurrentStakes {
@@ -3773,9 +4052,32 @@ $lblVillainCardsValue.Size = New-Object System.Drawing.Size(210, 32)
 $lblVillainCardsValue.AutoEllipsis = $true
 $advicePanel.Controls.Add($lblVillainCardsValue)
 
+$lblVillainMode = New-Object System.Windows.Forms.Label
+$lblVillainMode.Text = "Villain Mode"
+$lblVillainMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblVillainMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblVillainMode.Location = New-Object System.Drawing.Point(18, 482)
+$lblVillainMode.AutoSize = $true
+$advicePanel.Controls.Add($lblVillainMode)
+
+$cmbVillainMode = New-Object System.Windows.Forms.ComboBox
+$cmbVillainMode.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+$cmbVillainMode.Items.AddRange(@("Manual", "Scripted", "Engine Random"))
+$cmbVillainMode.SelectedItem = "Manual"
+$cmbVillainMode.Location = New-Object System.Drawing.Point(18, 502)
+$cmbVillainMode.Size = New-Object System.Drawing.Size(210, 24)
+$cmbVillainMode.Add_SelectedIndexChanged({
+  Set-VillainMode -Mode ([string]$cmbVillainMode.SelectedItem)
+  if ([string]$script:villainMode -ne "Manual") {
+    [void](Try-RunAutomaticVillainTurn)
+  }
+}.GetNewClosure())
+$advicePanel.Controls.Add($cmbVillainMode)
+$script:cmbVillainMode = $cmbVillainMode
+
 $btnVillainActionMenu = New-Object System.Windows.Forms.Button
 $btnVillainActionMenu.Text = "Villain Action"
-$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 482)
+$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 536)
 $btnVillainActionMenu.Size = New-Object System.Drawing.Size(210, 28)
 $btnVillainActionMenu.FlatStyle = "Flat"
 $btnVillainActionMenu.ForeColor = [System.Drawing.Color]::White
@@ -3872,6 +4174,7 @@ foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btn
 }
 
 Set-VillainCardsVisibility -Visible:$false
+Set-VillainMode -Mode "Manual"
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -4042,14 +4345,17 @@ function Update-MainLayout {
   $btnToggleVillainCards.Size = New-Object System.Drawing.Size($innerWidth, 28)
   $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 272))
   $lblVillainCardsValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
-  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 308))
+  $lblVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 308))
+  $cmbVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 328))
+  $cmbVillainMode.Size = New-Object System.Drawing.Size($innerWidth, 24)
+  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 360))
   $btnVillainActionMenu.Size = New-Object System.Drawing.Size($innerWidth, 28)
   $settleButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
-  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 344))
+  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 396))
   $btnHeroWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stakesTopY + 344))
+  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stakesTopY + 396))
   $btnVillainWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $detailTopY = $stakesTopY + 382
+  $detailTopY = $stakesTopY + 434
   $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
   $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
   $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(120, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
@@ -4254,6 +4560,15 @@ function Set-RaiseAllInButtonMode {
   }
 }
 
+function Update-VillainActionControlState {
+  if ($null -eq $script:btnVillainActionMenu) {
+    return
+  }
+  $isManual = ([string]$script:villainMode -eq "Manual")
+  $script:btnVillainActionMenu.Enabled = $isManual -and (-not $script:handResolved) -and ([int]$script:activeVillainCount -gt 0) -and ([int]$script:currentVillainChips -gt 0)
+  $script:btnVillainActionMenu.Text = $(if ($isManual) { "Villain Action" } else { ("Villain: {0}" -f [string]$script:villainMode) })
+}
+
 function Update-CheckCallButtonModeFromState {
   $mode = if ([int]$script:currentFacingBetAmount -gt 0) { "CALL" } else { "CHECK" }
   Set-CheckCallButtonMode -ActionToken $mode
@@ -4262,6 +4577,7 @@ function Update-CheckCallButtonModeFromState {
   $allInOnly = $villainAllIn -or ($requiredRaiseAmount -ge [int]$script:currentHeroChips)
   $raiseMode = if ($allInOnly) { "ALL IN" } else { "RAISE" }
   Set-RaiseAllInButtonMode -ActionToken $raiseMode
+  Update-VillainActionControlState
 }
 
 function Get-CheckCallButtonModeFromWeightedRows {
@@ -4469,7 +4785,9 @@ function Award-PotToWinner {
 
 function Invoke-VillainActionSelection {
   param(
-    [Parameter(Mandatory = $true)][string]$ActionToken
+    [Parameter(Mandatory = $true)][string]$ActionToken,
+    [int]$AmountOverride = -1,
+    [switch]$AutoMode
   )
   $normalizedAction = ([string]$ActionToken).Trim().ToUpperInvariant()
   if (-not $normalizedAction) {
@@ -4533,12 +4851,17 @@ function Invoke-VillainActionSelection {
         [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
       }
       $maxAmount = [int]([Math]::Max(0, $script:currentVillainChips))
-      $enteredAmount = Prompt-ForChipAmount -Title ("Villain {0}" -f $normalizedAction) -Prompt ("Enter villain {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
-      if ($null -eq $enteredAmount) {
-        Write-Log ("Villain action canceled: {0}" -f $normalizedAction)
-        return
+      if ($AmountOverride -ge 0) {
+        $committedAmount = [int]([Math]::Min($maxAmount, [Math]::Max(0, $AmountOverride)))
       }
-      $committedAmount = [int]$enteredAmount
+      else {
+        $enteredAmount = Prompt-ForChipAmount -Title ("Villain {0}" -f $normalizedAction) -Prompt ("Enter villain {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
+        if ($null -eq $enteredAmount) {
+          Write-Log ("Villain action canceled: {0}" -f $normalizedAction)
+          return
+        }
+        $committedAmount = [int]$enteredAmount
+      }
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
       }
@@ -4859,6 +5182,7 @@ function Apply-PreflopHeuristicAdvice {
     "street: preflop"
     "source:preflop_heuristic"
   ) -join "`r`n"
+  [void](Try-RunAutomaticVillainTurn)
   return $true
 }
 
@@ -4931,6 +5255,12 @@ function Set-AdviceFromEngineResult {
   }
 
   $script:adviceActionPrimary = Get-AdviceDecisionPrimary -WeightedRows $sortedRows
+  $script:lastAdviceWeightedRows = @($sortedRows | ForEach-Object {
+    [pscustomobject]@{
+      token = [string]$_.token
+      weight = [double]$_.weight
+    }
+  })
   $secondaryLines = New-Object System.Collections.Generic.List[string]
   if ($mixParts.Count -gt 0) {
     [void]$secondaryLines.Add(($mixParts -join " | "))
@@ -7081,6 +7411,10 @@ function Reset-NewHandState {
     Set-SlotValueSource -Slot $slot -Source "none"
   }
   Reset-TableStateToCurrentStakes
+  $script:adviceActionPrimary = ""
+  $script:adviceActionSecondary = ""
+  $script:adviceHasAction = $false
+  $script:lastAdviceWeightedRows = @()
   Update-CheckCallButtonModeFromState
   Write-Log "Hand state reset: cleared solver state and visible cards."
 }
@@ -7373,6 +7707,7 @@ function Poll-EngineJobs {
       $completedStrategy = if ($result.selected_strategy) { [string]$result.selected_strategy } else { "ok" }
       $script:engineLastResultSummary = ("{0}:{1} {2:N2}s" -f $completedStage, $completedStrategy, [double]$result.elapsed_sec)
       Set-AdviceFromEngineResult -EngineResult $result
+      [void](Try-RunAutomaticVillainTurn)
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
         $result.exploitability,
@@ -7401,6 +7736,7 @@ function Poll-EngineJobs {
       $script:adviceHasAction = $false
       $script:adviceActionPrimary = ""
       $script:adviceActionSecondary = ""
+      $script:lastAdviceWeightedRows = @()
       Set-AdviceState -Primary "WAIT" -Secondary ("Engine error: {0}" -f $errMsg)
       Write-Log ("Engine job {0} failed: {1}" -f $jobId, $errMsg) -Type "engine_job_failed" -Data @{
         job_id = [int]$jobId
