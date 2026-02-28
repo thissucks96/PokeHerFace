@@ -383,6 +383,12 @@ No-engine startup variant:
 - Under the hood, the tester now also carries a future-facing betting scaffold (`facing_bet`, per-street hero/villain commitments, and villain-count fields) even before villain controls are exposed. That state is already included in the engine logical-state key and payload metadata so same-board betting changes are not incorrectly skipped as "no state change."
 - The hidden game-state scaffold now also tracks a future one-villain shell (`villain chips`, hidden villain hole-card placeholders, fold flags, and a single-deck remaining-card shoe). Street betting state now resets automatically when the board completes a new street (flop, turn, river), which avoids carrying a stale facing-bet state across streets before visible villain controls are added.
 - The right-side advice panel and floating `Table State` overlay now include a `Show/Hide Villain Cards` toggle for the hidden villain shell, so you can expose or hide the current hidden villain-card placeholders for debugging without adding full villain controls yet.
+- The tester now exposes the first visible one-villain controls:
+  - live `Villain Stack` in the right panel and floating `Table State` overlay,
+  - a `Villain Action` menu (`Check`, `Bet`, `Raise`, `Fold`, `All In`) that updates pot, villain chips, and hero-facing bet state,
+  - `Hero Wins` / `Villain Wins` settlement buttons that award the full pot to the selected winner without resetting bankrolls.
+- `Check/Call` is now state-driven instead of advice-driven: if the villain has an outstanding bet, the primary control flips to `Call`; otherwise it stays `Check`.
+- `New Hand` now starts a new cycle by clearing cards/advice while preserving both hero and villain chip stacks, then resetting the pot back to the configured blinds.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - top-level `Random Card` for a legal non-duplicate assignment
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry

@@ -187,11 +187,17 @@ $numBuyIn = $null
 $btnToggleVillainCards = $null
 $lblCurrentPotValue = $null
 $lblCurrentChipsValue = $null
+$lblCurrentVillainChipsValue = $null
 $lblVillainCardsValue = $null
 $stateOverlay = $null
 $stateOverlayPotLabel = $null
 $stateOverlayChipsLabel = $null
+$stateOverlayVillainChipsLabel = $null
 $stateOverlayVillainLabel = $null
+$btnVillainActionMenu = $null
+$btnHeroWinsPot = $null
+$btnVillainWinsPot = $null
+$villainActionMenu = $null
 $currentPotAmount = 0
 $currentHeroChips = 0
 $currentVillainChips = 0
@@ -811,7 +817,8 @@ function Reset-HiddenVillainState {
     [int]$StartingChips = 0
   )
   $defaults = Get-DefaultTableStateFromStakes
-  $baseChips = if ($StartingChips -gt 0) { [int]$StartingChips } else { [int]$defaults.hero_chips }
+  $useExplicitValue = $PSBoundParameters.ContainsKey("StartingChips")
+  $baseChips = if ($useExplicitValue) { [int]$StartingChips } else { [int]$defaults.hero_chips }
   $script:currentVillainChips = [int]$baseChips
   $script:villainCards["villain1"] = "??"
   $script:villainCards["villain2"] = "??"
@@ -1388,15 +1395,18 @@ function Reset-StreetActionState {
   $script:currentFacingBetAmount = 0
   $script:currentHeroStreetCommit = 0
   $script:currentVillainStreetCommit = 0
+  Update-CheckCallButtonModeFromState
 }
 
 function Clear-FacingBetAmount {
   $script:currentFacingBetAmount = 0
+  Update-CheckCallButtonModeFromState
 }
 
 function Set-FacingBetAmount {
   param([int]$Amount)
   $script:currentFacingBetAmount = [int]([Math]::Max(0, $Amount))
+  Update-CheckCallButtonModeFromState
 }
 
 function Apply-HeroCommitmentToPot {
@@ -1435,10 +1445,15 @@ function Apply-VillainCommitmentToPot {
   if ($commit -le 0) {
     return 0
   }
+  if ($commit -gt [int]$script:currentVillainChips) {
+    $commit = [int]$script:currentVillainChips
+  }
+  $script:currentVillainChips = [Math]::Max(0, ([int]$script:currentVillainChips - $commit))
   $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $commit))
   $script:currentVillainStreetCommit = [int]$script:currentVillainStreetCommit + $commit
   if ($SetAsFacingBet) {
-    Set-FacingBetAmount -Amount $commit
+    $callGap = [int]([Math]::Max(0, ([int]$script:currentVillainStreetCommit - [int]$script:currentHeroStreetCommit)))
+    Set-FacingBetAmount -Amount $callGap
   }
   Update-TableStateDisplay
   return [int]$commit
@@ -1447,12 +1462,16 @@ function Apply-VillainCommitmentToPot {
 function Update-TableStateDisplay {
   $potText = ("Pot: {0}" -f [int]$script:currentPotAmount)
   $chipsText = ("Hero Chips: {0}" -f [int]$script:currentHeroChips)
+  $villainChipsText = ("Villain Chips: {0}" -f [int]$script:currentVillainChips)
   $villainText = Get-VisibleVillainCardsText
   if ($null -ne $script:lblCurrentPotValue) {
     $script:lblCurrentPotValue.Text = $potText
   }
   if ($null -ne $script:lblCurrentChipsValue) {
     $script:lblCurrentChipsValue.Text = $chipsText
+  }
+  if ($null -ne $script:lblCurrentVillainChipsValue) {
+    $script:lblCurrentVillainChipsValue.Text = $villainChipsText
   }
   if ($null -ne $script:lblVillainCardsValue) {
     $script:lblVillainCardsValue.Text = $villainText
@@ -1462,6 +1481,9 @@ function Update-TableStateDisplay {
   }
   if ($null -ne $script:stateOverlayChipsLabel) {
     $script:stateOverlayChipsLabel.Text = $chipsText
+  }
+  if ($null -ne $script:stateOverlayVillainChipsLabel) {
+    $script:stateOverlayVillainChipsLabel.Text = $villainChipsText
   }
   if ($null -ne $script:stateOverlayVillainLabel) {
     $script:stateOverlayVillainLabel.Text = $villainText
@@ -1521,8 +1543,25 @@ function Build-EngineSpotPayload {
   $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
   $stakes = Get-StakeSettings
   $defaults = Get-DefaultTableStateFromStakes
-  $effectiveStack = if ([int]$script:currentHeroChips -gt 0) { [int]$script:currentHeroChips } else { [int]$defaults.hero_chips }
+  $state = Get-CurrentGameStateSnapshot
+  $stackCandidates = New-Object System.Collections.Generic.List[int]
+  if ([int]$script:currentHeroChips -gt 0) {
+    [void]$stackCandidates.Add([int]$script:currentHeroChips)
+  }
+  if ([int]$script:currentVillainChips -gt 0) {
+    [void]$stackCandidates.Add([int]$script:currentVillainChips)
+  }
+  if ($stackCandidates.Count -gt 0) {
+    $effectiveStack = [int]($stackCandidates | Measure-Object -Minimum).Minimum
+  }
+  else {
+    $effectiveStack = [int]$defaults.hero_chips
+  }
   $effectivePot = if ([int]$script:currentPotAmount -gt 0) { [int]$script:currentPotAmount } else { [int]$defaults.starting_pot }
+  $useActiveNode = ($BoardCards.Count -ge 3) -and ([int]$state.facing_bet -gt 0) -and (-not [bool]$state.hero_folded) -and (-not [bool]$state.villain_folded)
+  if ($useActiveNode) {
+    $effectivePot = [int]([Math]::Max(1, ([int]$effectivePot - [int]$state.facing_bet)))
+  }
 
   $spot.starting_stack = [int]$effectiveStack
   $spot.minimum_bet = [int]$stakes.big_blind
@@ -1538,7 +1577,6 @@ function Build-EngineSpotPayload {
   $spot.meta.big_blind = [int]$stakes.big_blind
   $spot.meta.buy_in = [int]$stakes.buy_in
   $spot.meta.capture_source = "vision_tester"
-  $state = Get-CurrentGameStateSnapshot
   $spot.meta.current_pot = [int]$state.current_pot
   $spot.meta.current_hero_chips = [int]$state.current_hero_chips
   $spot.meta.current_villain_chips = [int]$state.current_villain_chips
@@ -1554,6 +1592,31 @@ function Build-EngineSpotPayload {
       ([string]$HeroCards[0]).Trim()
       ([string]$HeroCards[1]).Trim()
     )
+  }
+  if ($useActiveNode) {
+    $spot.active_node_path = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+    $spot.remove_donk_bets = $false
+    $streetKey = switch ($BoardCards.Count) {
+      3 { "flop" }
+      4 { "turn" }
+      5 { "river" }
+      default { "" }
+    }
+    if ($streetKey -and ($spot.PSObject.Properties.Name -contains "bet_sizing") -and $null -ne $spot.bet_sizing) {
+      $streetSizingProp = $spot.bet_sizing.PSObject.Properties[$streetKey]
+      if ($null -ne $streetSizingProp) {
+        $streetSizing = $streetSizingProp.Value
+        if ($null -ne $streetSizing) {
+          $betRatio = [Math]::Round(([double][int]$state.facing_bet / [double][Math]::Max(1, [int]$effectivePot)), 4)
+          if ($betRatio -gt 0) {
+            $streetSizing.bet_sizes = @([double]$betRatio)
+          }
+          if ($null -eq $streetSizing.raise_sizes -or @($streetSizing.raise_sizes).Count -eq 0) {
+            $streetSizing.raise_sizes = @([double]([Math]::Max(0.75, ([double]$betRatio * 1.5))))
+          }
+        }
+      }
+    }
   }
   return $spot
 }
@@ -3193,9 +3256,26 @@ $lblCurrentChipsValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold",
   $lblCurrentChipsValue.Size = New-Object System.Drawing.Size(210, 22)
   $advicePanel.Controls.Add($lblCurrentChipsValue)
 
+$lblCurrentVillainChipsTitle = New-Object System.Windows.Forms.Label
+$lblCurrentVillainChipsTitle.Text = "Villain Stack"
+$lblCurrentVillainChipsTitle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblCurrentVillainChipsTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblCurrentVillainChipsTitle.Location = New-Object System.Drawing.Point(18, 364)
+$lblCurrentVillainChipsTitle.AutoSize = $true
+$advicePanel.Controls.Add($lblCurrentVillainChipsTitle)
+
+$lblCurrentVillainChipsValue = New-Object System.Windows.Forms.Label
+$lblCurrentVillainChipsValue.Text = "Villain Chips: 0"
+$lblCurrentVillainChipsValue.ForeColor = [System.Drawing.Color]::White
+$lblCurrentVillainChipsValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+$lblCurrentVillainChipsValue.Location = New-Object System.Drawing.Point(18, 384)
+$lblCurrentVillainChipsValue.Size = New-Object System.Drawing.Size(210, 22)
+$advicePanel.Controls.Add($lblCurrentVillainChipsValue)
+$script:lblCurrentVillainChipsValue = $lblCurrentVillainChipsValue
+
 $btnToggleVillainCards = New-Object System.Windows.Forms.Button
 $btnToggleVillainCards.Text = "Show Villain Cards"
-$btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, 366)
+$btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, 412)
 $btnToggleVillainCards.Size = New-Object System.Drawing.Size(210, 28)
 $btnToggleVillainCards.FlatStyle = "Flat"
 $btnToggleVillainCards.ForeColor = [System.Drawing.Color]::White
@@ -3208,10 +3288,61 @@ $lblVillainCardsValue = New-Object System.Windows.Forms.Label
 $lblVillainCardsValue.Text = "Villain Cards: Hidden"
 $lblVillainCardsValue.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
 $lblVillainCardsValue.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, 400)
+$lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, 446)
 $lblVillainCardsValue.Size = New-Object System.Drawing.Size(210, 32)
 $lblVillainCardsValue.AutoEllipsis = $true
 $advicePanel.Controls.Add($lblVillainCardsValue)
+
+$btnVillainActionMenu = New-Object System.Windows.Forms.Button
+$btnVillainActionMenu.Text = "Villain Action"
+$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 482)
+$btnVillainActionMenu.Size = New-Object System.Drawing.Size(210, 28)
+$btnVillainActionMenu.FlatStyle = "Flat"
+$btnVillainActionMenu.ForeColor = [System.Drawing.Color]::White
+$btnVillainActionMenu.BackColor = [System.Drawing.Color]::FromArgb(88, 56, 92)
+$advicePanel.Controls.Add($btnVillainActionMenu)
+$script:btnVillainActionMenu = $btnVillainActionMenu
+
+$villainActionMenu = New-Object System.Windows.Forms.ContextMenuStrip
+foreach ($villainActionSpec in @(
+  @{ text = "Check"; token = "CHECK" }
+  @{ text = "Bet"; token = "BET" }
+  @{ text = "Raise"; token = "RAISE" }
+  @{ text = "Fold"; token = "FOLD" }
+  @{ text = "All In"; token = "ALL IN" }
+)) {
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem
+  $item.Text = [string]$villainActionSpec.text
+  $capturedVillainToken = [string]$villainActionSpec.token
+  $item.Add_Click({ Invoke-VillainActionSelection -ActionToken $capturedVillainToken }.GetNewClosure())
+  [void]$villainActionMenu.Items.Add($item)
+}
+$btnVillainActionMenu.Add_Click({
+  $villainActionMenu.Show($btnVillainActionMenu, 0, $btnVillainActionMenu.Height)
+}.GetNewClosure())
+$script:villainActionMenu = $villainActionMenu
+
+$btnHeroWinsPot = New-Object System.Windows.Forms.Button
+$btnHeroWinsPot.Text = "Hero Wins"
+$btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, 518)
+$btnHeroWinsPot.Size = New-Object System.Drawing.Size(100, 26)
+$btnHeroWinsPot.FlatStyle = "Flat"
+$btnHeroWinsPot.ForeColor = [System.Drawing.Color]::White
+$btnHeroWinsPot.BackColor = [System.Drawing.Color]::FromArgb(46, 104, 72)
+$btnHeroWinsPot.Add_Click({ Award-PotToWinner -Winner "hero" -Reason "manual_settle_button" }.GetNewClosure())
+$advicePanel.Controls.Add($btnHeroWinsPot)
+$script:btnHeroWinsPot = $btnHeroWinsPot
+
+$btnVillainWinsPot = New-Object System.Windows.Forms.Button
+$btnVillainWinsPot.Text = "Villain Wins"
+$btnVillainWinsPot.Location = New-Object System.Drawing.Point(128, 518)
+$btnVillainWinsPot.Size = New-Object System.Drawing.Size(100, 26)
+$btnVillainWinsPot.FlatStyle = "Flat"
+$btnVillainWinsPot.ForeColor = [System.Drawing.Color]::White
+$btnVillainWinsPot.BackColor = [System.Drawing.Color]::FromArgb(112, 118, 126)
+$btnVillainWinsPot.Add_Click({ Award-PotToWinner -Winner "villain" -Reason "manual_settle_button" }.GetNewClosure())
+$advicePanel.Controls.Add($btnVillainWinsPot)
+$script:btnVillainWinsPot = $btnVillainWinsPot
 
 $numSmallBlind.Add_ValueChanged({
   if ($numBigBlind.Value -lt $numSmallBlind.Value) {
@@ -3242,8 +3373,8 @@ $numBuyIn.Add_ValueChanged({
 })
 
 $txtAdviceDetail = New-Object System.Windows.Forms.TextBox
-$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 438)
-$txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 132)
+$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 576)
+$txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 120)
 $txtAdviceDetail.Multiline = $true
 $txtAdviceDetail.ReadOnly = $true
 $txtAdviceDetail.ScrollBars = "Vertical"
@@ -3420,14 +3551,24 @@ function Update-MainLayout {
   $lblCurrentChipsTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 142))
   $lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 162))
   $lblCurrentChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
-  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 190))
+  $lblCurrentVillainChipsTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 190))
+  $lblCurrentVillainChipsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 210))
+  $lblCurrentVillainChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
+  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 238))
   $btnToggleVillainCards.Size = New-Object System.Drawing.Size($innerWidth, 28)
-  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 224))
+  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 272))
   $lblVillainCardsValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
-  $detailTopY = $stakesTopY + 264
+  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 308))
+  $btnVillainActionMenu.Size = New-Object System.Drawing.Size($innerWidth, 28)
+  $settleButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
+  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 344))
+  $btnHeroWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
+  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stakesTopY + 344))
+  $btnVillainWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
+  $detailTopY = $stakesTopY + 382
   $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
   $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
-  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
+  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(120, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
 }
 
 function Write-Log {
@@ -3599,6 +3740,11 @@ function Set-CheckCallButtonMode {
   }
 }
 
+function Update-CheckCallButtonModeFromState {
+  $mode = if ([int]$script:currentFacingBetAmount -gt 0) { "CALL" } else { "CHECK" }
+  Set-CheckCallButtonMode -ActionToken $mode
+}
+
 function Get-CheckCallButtonModeFromWeightedRows {
   param([Parameter(Mandatory = $true)]$WeightedRows)
 
@@ -3744,6 +3890,115 @@ function Convert-TextToChipAmount {
   return $null
 }
 
+function Maybe-RefreshAdviceAfterActionStateChange {
+  param(
+    [string]$StageLabel = "manual_state"
+  )
+  if ($isBusy) {
+    return
+  }
+  if ($script:heroFolded -or $script:villainFolded) {
+    return
+  }
+  if (-not (Get-HeroCardsReady)) {
+    return
+  }
+  if (Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)) {
+    [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel $StageLabel)
+    return
+  }
+  Try-AutoSendHeroCardsToEngine
+}
+
+function Award-PotToWinner {
+  param(
+    [Parameter(Mandatory = $true)][ValidateSet("hero", "villain")][string]$Winner,
+    [string]$Reason = "manual_settle"
+  )
+  $award = [int]([Math]::Max(0, $script:currentPotAmount))
+  if ($Winner -eq "hero") {
+    $script:currentHeroChips = [int]$script:currentHeroChips + $award
+  }
+  else {
+    $script:currentVillainChips = [int]$script:currentVillainChips + $award
+  }
+  $script:currentPotAmount = 0
+  Reset-StreetActionState
+  $script:heroFolded = $false
+  $script:villainFolded = $false
+  Update-TableStateDisplay
+  Write-Log ("Pot awarded to {0}: {1} chips." -f $Winner, [int]$award) -Type "hand_settled" -Data @{
+    winner = $Winner
+    amount = [int]$award
+    reason = $Reason
+    current_pot = [int]$script:currentPotAmount
+    current_hero_chips = [int]$script:currentHeroChips
+    current_villain_chips = [int]$script:currentVillainChips
+  }
+}
+
+function Invoke-VillainActionSelection {
+  param(
+    [Parameter(Mandatory = $true)][string]$ActionToken
+  )
+  $normalizedAction = ([string]$ActionToken).Trim().ToUpperInvariant()
+  if (-not $normalizedAction) {
+    return
+  }
+
+  $committedAmount = 0
+  $stakes = Get-StakeSettings
+  switch ($normalizedAction) {
+    "CHECK" {
+      $script:villainFolded = $false
+      Clear-FacingBetAmount
+    }
+    "FOLD" {
+      $script:villainFolded = $true
+      Clear-FacingBetAmount
+      Set-AdviceState -Primary "VILLAIN FOLDS" -Secondary "Pot awarded to hero."
+      Award-PotToWinner -Winner "hero" -Reason "villain_fold"
+      return
+    }
+    "ALL IN" {
+      $script:villainFolded = $false
+      $committedAmount = [int]([Math]::Max(0, $script:currentVillainChips))
+      if ($committedAmount -gt 0) {
+        $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
+      }
+    }
+    { $_ -in @("BET", "RAISE") } {
+      $script:villainFolded = $false
+      $defaultAmount = if ($normalizedAction -eq "RAISE" -and [int]$script:currentFacingBetAmount -gt 0) {
+        [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
+      }
+      else {
+        [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+      }
+      $maxAmount = [int]([Math]::Max(0, $script:currentVillainChips))
+      $enteredAmount = Prompt-ForChipAmount -Title ("Villain {0}" -f $normalizedAction) -Prompt ("Enter villain {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
+      if ($null -eq $enteredAmount) {
+        Write-Log ("Villain action canceled: {0}" -f $normalizedAction)
+        return
+      }
+      $committedAmount = [int]$enteredAmount
+      if ($committedAmount -gt 0) {
+        $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
+      }
+    }
+  }
+
+  Write-Log ("Villain action selected: {0}" -f $normalizedAction) -Type "villain_action_set" -Data @{
+    action = $normalizedAction
+    amount = [int]$committedAmount
+    current_pot = [int]$script:currentPotAmount
+    current_hero_chips = [int]$script:currentHeroChips
+    current_villain_chips = [int]$script:currentVillainChips
+    facing_bet = [int]$script:currentFacingBetAmount
+  }
+  Maybe-RefreshAdviceAfterActionStateChange -StageLabel "villain_action"
+}
+
 function Invoke-ManualActionSelection {
   param(
     [Parameter(Mandatory = $true)][string]$ActionToken
@@ -3755,12 +4010,14 @@ function Invoke-ManualActionSelection {
 
   $committedAmount = 0
   if ($normalizedAction -eq "ALL IN") {
+    $script:heroFolded = $false
     $committedAmount = [int]([Math]::Max(0, $script:currentHeroChips))
     if ($committedAmount -gt 0) {
       $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
     }
   }
   elseif ($normalizedAction -in @("CALL", "RAISE")) {
+    $script:heroFolded = $false
     $stakes = Get-StakeSettings
     $defaultAmount = if ($normalizedAction -eq "RAISE") {
       if ($script:lastRecommendedRaiseAmount -gt 0) {
@@ -3796,7 +4053,14 @@ function Invoke-ManualActionSelection {
     }
   }
   elseif ($normalizedAction -eq "FOLD") {
+    $script:heroFolded = $true
     Clear-FacingBetAmount
+    Set-AdviceState -Primary "FOLD" -Secondary "Pot awarded to villain."
+    Award-PotToWinner -Winner "villain" -Reason "hero_fold"
+    return
+  }
+  else {
+    $script:heroFolded = $false
   }
   $script:adviceActionPrimary = $normalizedAction
   if ($committedAmount -gt 0) {
@@ -3812,7 +4076,9 @@ function Invoke-ManualActionSelection {
     amount = [int]$committedAmount
     current_pot = [int]$script:currentPotAmount
     current_hero_chips = [int]$script:currentHeroChips
+    current_villain_chips = [int]$script:currentVillainChips
   }
+  Maybe-RefreshAdviceAfterActionStateChange -StageLabel "manual_action"
 }
 
 function Convert-AdviceActionTokenToLabel {
@@ -4066,7 +4332,7 @@ function Set-AdviceFromEngineResult {
   }
 
   $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
-  Set-CheckCallButtonMode -ActionToken (Get-CheckCallButtonModeFromWeightedRows -WeightedRows $sortedRows)
+  Update-CheckCallButtonModeFromState
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
@@ -4110,7 +4376,7 @@ function Set-AdviceFromEngineResult {
 }
 
 Set-AdviceState -Primary $advicePrimary -Secondary $adviceSecondary
-Set-CheckCallButtonMode -ActionToken "CHECK"
+Update-CheckCallButtonModeFromState
 
 function New-AdviceOverlayForm {
   $overlay = New-Object System.Windows.Forms.Form
@@ -4196,6 +4462,18 @@ function New-TableStateOverlayContextMenu {
     Start-NewHandPreserveChips
   }.GetNewClosure())
   [void]$menu.Items.Add($itemNewHand)
+  $itemHeroWins = New-Object System.Windows.Forms.ToolStripMenuItem
+  $itemHeroWins.Text = "Hero Wins Pot"
+  $itemHeroWins.Add_Click({
+    Award-PotToWinner -Winner "hero" -Reason "overlay_settle"
+  }.GetNewClosure())
+  [void]$menu.Items.Add($itemHeroWins)
+  $itemVillainWins = New-Object System.Windows.Forms.ToolStripMenuItem
+  $itemVillainWins.Text = "Villain Wins Pot"
+  $itemVillainWins.Add_Click({
+    Award-PotToWinner -Winner "villain" -Reason "overlay_settle"
+  }.GetNewClosure())
+  [void]$menu.Items.Add($itemVillainWins)
   return $menu
 }
 
@@ -4208,7 +4486,7 @@ function New-TableStateOverlayForm {
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
-  $overlay.Size = New-Object System.Drawing.Size(240, 112)
+  $overlay.Size = New-Object System.Drawing.Size(240, 134)
   $overlay.Location = $(if ($null -ne $script:savedStateOverlayLocation) {
     New-Object System.Drawing.Point([int]$script:savedStateOverlayLocation.X, [int]$script:savedStateOverlayLocation.Y)
   } else {
@@ -4245,11 +4523,19 @@ function New-TableStateOverlayForm {
   $chipsLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($chipsLabel)
 
+  $villainChipsLabel = New-Object System.Windows.Forms.Label
+  $villainChipsLabel.Text = "Villain Chips: 0"
+  $villainChipsLabel.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
+  $villainChipsLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $villainChipsLabel.Location = New-Object System.Drawing.Point(10, 78)
+  $villainChipsLabel.Size = New-Object System.Drawing.Size(220, 20)
+  $overlay.Controls.Add($villainChipsLabel)
+
   $villainLabel = New-Object System.Windows.Forms.Label
   $villainLabel.Text = "Villain Cards: Hidden"
   $villainLabel.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
   $villainLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-  $villainLabel.Location = New-Object System.Drawing.Point(10, 80)
+  $villainLabel.Location = New-Object System.Drawing.Point(10, 102)
   $villainLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($villainLabel)
 
@@ -4278,7 +4564,7 @@ function New-TableStateOverlayForm {
     Save-RoiState
   }.GetNewClosure()
 
-  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainLabel)) {
+  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainChipsLabel, $villainLabel)) {
     $ctl.ContextMenuStrip = $overlay.ContextMenuStrip
     $ctl.Add_MouseDown($dragHandlerDown)
     $ctl.Add_MouseMove($dragHandlerMove)
@@ -4287,6 +4573,7 @@ function New-TableStateOverlayForm {
 
   $script:stateOverlayPotLabel = $potLabel
   $script:stateOverlayChipsLabel = $chipsLabel
+  $script:stateOverlayVillainChipsLabel = $villainChipsLabel
   $script:stateOverlayVillainLabel = $villainLabel
   Update-TableStateDisplay
   return $overlay
@@ -6220,22 +6507,18 @@ function Reset-NewHandState {
     Set-SlotValueSource -Slot $slot -Source "none"
   }
   Reset-TableStateToCurrentStakes
-  Set-CheckCallButtonMode -ActionToken "CHECK"
+  Update-CheckCallButtonModeFromState
   Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
 }
 
 function Start-NewHandPreserveChips {
   $preservedChips = [int]$script:currentHeroChips
+  $preservedVillainChips = [int]$script:currentVillainChips
   $defaultState = Get-DefaultTableStateFromStakes
   Reset-NewHandState
-  if ($preservedChips -gt 0) {
-    $script:currentHeroChips = [int]$preservedChips
-  }
-  else {
-    $script:currentHeroChips = [int]$defaultState.hero_chips
-  }
+  $script:currentHeroChips = [int]$preservedChips
   $script:currentPotAmount = [int]$defaultState.starting_pot
-  Reset-HiddenVillainState -StartingChips ([int]$script:currentHeroChips)
+  Reset-HiddenVillainState -StartingChips ([int]$preservedVillainChips)
   Rebuild-DeckShoeState
   $txtLatest.Text = @(
     "run:   new_hand"
@@ -6246,9 +6529,10 @@ function Start-NewHandPreserveChips {
   ) -join "`r`n"
   Update-TableStateDisplay
   Refresh-RoiOverlays
-  Write-Log ("New hand started: cards cleared, hero chips preserved at {0}, pot reset to {1}." -f [int]$script:currentHeroChips, [int]$script:currentPotAmount) -Type "new_hand" -Data @{
+  Write-Log ("New hand started: cards cleared, stacks preserved (hero={0}, villain={1}), pot reset to {2}." -f [int]$script:currentHeroChips, [int]$script:currentVillainChips, [int]$script:currentPotAmount) -Type "new_hand" -Data @{
     current_pot = [int]$script:currentPotAmount
     current_hero_chips = [int]$script:currentHeroChips
+    current_villain_chips = [int]$script:currentVillainChips
   }
 }
 
