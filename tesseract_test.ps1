@@ -3050,7 +3050,7 @@ function New-ManualCardRankMenuItem {
   $item.Text = $capturedRank
   $item.Add_Click({
     Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token $capturedToken
-  })
+  }.GetNewClosure())
   return $item
 }
 
@@ -3102,21 +3102,21 @@ function New-RoiSlotContextMenu {
   $runItem.Text = "Run OCR"
   $runItem.Add_Click({
     Run-OcrSingleSlot -Slot $slotKey
-  })
+  }.GetNewClosure())
   [void]$menu.Items.Add($runItem)
 
   $repickItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $repickItem.Text = "Repick ROI"
   $repickItem.Add_Click({
     Repick-RoiForSlot -Key $slotKey
-  })
+  }.GetNewClosure())
   [void]$menu.Items.Add($repickItem)
 
   $clearItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $clearItem.Text = "Clear ROI"
   $clearItem.Add_Click({
     Clear-RoiForSlot -Key $slotKey
-  })
+  }.GetNewClosure())
   [void]$menu.Items.Add($clearItem)
 
   return $menu
