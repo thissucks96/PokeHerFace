@@ -1626,7 +1626,8 @@ function Get-VillainFacingBetAmount {
 }
 
 function Get-CurrentStreetName {
-  switch (Get-ValidBoardCardCount) {
+  $boardCount = Get-ValidBoardCardCount -Tokens @($lastBoardTokens)
+  switch ($boardCount) {
     0 { return "preflop" }
     3 { return "flop" }
     4 { return "turn" }
@@ -1890,7 +1891,7 @@ function Get-ScriptedVillainActionToken {
   $preflopRows = if ($villainCardsNow.Count -eq 2) { @(Build-PreflopHeuristicRootActions -HeroCards $villainCardsNow) } else { @() }
   $topPreflopToken = ""
   if ($preflopRows.Count -gt 0) {
-    $topRow = @($preflopRows | Sort-Object -Property @{ Expression = "avg_frequency"; Descending = $true })[0]
+    $topRow = @($preflopRows | Sort-Object -Property @{ Expression = { [double]$_.avg_frequency }; Descending = $true })[0]
     if ($null -ne $topRow) {
       $topPreflopToken = [string](Convert-ActionSummaryRowToToken -Row $topRow)
     }
@@ -5650,7 +5651,7 @@ function Normalize-AdviceWeightedRowsToHeroLegal {
       weight = [double]$tokenWeights[$key]
     })
   }
-  return @($resultRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  return @($resultRows | Sort-Object -Property @{ Expression = { [double]$_.weight }; Descending = $true }, @{ Expression = { [string]$_.token }; Descending = $false })
 }
 
 function Convert-TextToChipAmount {
@@ -6398,7 +6399,7 @@ function Set-AdviceFromEngineResult {
   if ($rowsForDecision.Count -le 0) {
     return
   }
-  $sortedRows = @($rowsForDecision | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  $sortedRows = @($rowsForDecision | Sort-Object -Property @{ Expression = { [double]$_.weight }; Descending = $true }, @{ Expression = { [string]$_.token }; Descending = $false })
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
@@ -9121,8 +9122,33 @@ function Poll-EngineJobs {
       $completedStage = if ($meta.ContainsKey("stage")) { [string]$meta.stage } else { "unknown" }
       $completedStrategy = if ($result.selected_strategy) { [string]$result.selected_strategy } else { "ok" }
       $script:engineLastResultSummary = ("{0}:{1} {2:N2}s" -f $completedStage, $completedStrategy, [double]$result.elapsed_sec)
-      Set-AdviceFromEngineResult -EngineResult $result
-      [void](Try-RunAutomaticVillainTurn)
+      try {
+        Set-AdviceFromEngineResult -EngineResult $result
+      }
+      catch {
+        Write-Log ("Engine advice apply error: {0}" -f $_.Exception.Message) -Type "engine_advice_apply_error" -Data @{
+          job_id = [int]$jobId
+          stage = $completedStage
+          strategy = $completedStrategy
+          response_path = if ($result.PSObject.Properties.Name -contains "response_path") { [string]$result.response_path } else { "" }
+        }
+        if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+          Write-Log ("Engine advice apply error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+        }
+      }
+      try {
+        [void](Try-RunAutomaticVillainTurn)
+      }
+      catch {
+        Write-Log ("Auto villain turn error after engine response: {0}" -f $_.Exception.Message) -Type "auto_villain_after_engine_error" -Data @{
+          job_id = [int]$jobId
+          stage = $completedStage
+          strategy = $completedStrategy
+        }
+        if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+          Write-Log ("Auto villain turn error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+        }
+      }
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
         $result.exploitability,
@@ -9392,6 +9418,9 @@ $engineJobTimer.Add_Tick({
   }
   catch {
     Write-Log ("Engine poll error: {0}" -f $_.Exception.Message)
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("Engine poll error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
     if ($enginePendingJobs.Count -eq 0) {
       $script:engineHandoffBusy = $false
     }
