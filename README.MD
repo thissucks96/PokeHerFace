@@ -324,6 +324,12 @@ Clickable OCR watcher test utility:
 .\tesseract_test.ps1
 ```
 
+No-engine startup variant:
+
+```powershell
+.\tesseract_test_noengine.ps1
+```
+
 - Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - `Set Card` -> rank (`A`..`2`) -> suit (spade/heart/diamond/club symbols) for manual card entry
@@ -331,6 +337,7 @@ Clickable OCR watcher test utility:
   - `Repick ROI`
   - `Clear ROI`
 - `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
+- `Run Engine` starts Ollama + bridge on demand (same action on both tester variants).
 - Fast testing controls:
   - `Run flop1` ... `Run river` for single-slot OCR checks (now also updates live hero/board profile state in the UI summary).
   - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved.

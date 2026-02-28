@@ -2245,7 +2245,7 @@ $form.Controls.Add($numInterval)
 $btnAutoStart = New-Object System.Windows.Forms.Button
 $btnAutoStart.Text = "Start Auto"
 $btnAutoStart.Location = New-Object System.Drawing.Point(610, 118)
-$btnAutoStart.Size = New-Object System.Drawing.Size(120, 34)
+$btnAutoStart.Size = New-Object System.Drawing.Size(80, 34)
 $btnAutoStart.FlatStyle = "Flat"
 $btnAutoStart.ForeColor = [System.Drawing.Color]::White
 $btnAutoStart.BackColor = [System.Drawing.Color]::FromArgb(30, 105, 68)
@@ -2253,18 +2253,27 @@ $form.Controls.Add($btnAutoStart)
 
 $btnAutoStop = New-Object System.Windows.Forms.Button
 $btnAutoStop.Text = "Stop Auto"
-$btnAutoStop.Location = New-Object System.Drawing.Point(740, 118)
-$btnAutoStop.Size = New-Object System.Drawing.Size(120, 34)
+$btnAutoStop.Location = New-Object System.Drawing.Point(695, 118)
+$btnAutoStop.Size = New-Object System.Drawing.Size(80, 34)
 $btnAutoStop.FlatStyle = "Flat"
 $btnAutoStop.ForeColor = [System.Drawing.Color]::White
 $btnAutoStop.BackColor = [System.Drawing.Color]::FromArgb(110, 30, 30)
 $btnAutoStop.Enabled = $false
 $form.Controls.Add($btnAutoStop)
 
+$btnRunEngine = New-Object System.Windows.Forms.Button
+$btnRunEngine.Text = "Run Engine"
+$btnRunEngine.Location = New-Object System.Drawing.Point(780, 118)
+$btnRunEngine.Size = New-Object System.Drawing.Size(95, 34)
+$btnRunEngine.FlatStyle = "Flat"
+$btnRunEngine.ForeColor = [System.Drawing.Color]::White
+$btnRunEngine.BackColor = [System.Drawing.Color]::FromArgb(46, 74, 118)
+$form.Controls.Add($btnRunEngine)
+
 $btnRestart = New-Object System.Windows.Forms.Button
-$btnRestart.Text = "Restart App"
-$btnRestart.Location = New-Object System.Drawing.Point(870, 118)
-$btnRestart.Size = New-Object System.Drawing.Size(90, 34)
+$btnRestart.Text = "Restart"
+$btnRestart.Location = New-Object System.Drawing.Point(880, 118)
+$btnRestart.Size = New-Object System.Drawing.Size(80, 34)
 $btnRestart.FlatStyle = "Flat"
 $btnRestart.ForeColor = [System.Drawing.Color]::White
 $btnRestart.BackColor = [System.Drawing.Color]::FromArgb(52, 64, 92)
@@ -4764,6 +4773,10 @@ $btnAutoStop.Add_Click({
   $btnAutoStart.Enabled = $true
   $btnAutoStop.Enabled = $false
   Write-Log "Auto OCR stopped."
+})
+
+$btnRunEngine.Add_Click({
+  Ensure-BackendsRunning
 })
 
 $btnRestart.Add_Click({
