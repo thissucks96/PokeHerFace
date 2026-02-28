@@ -567,11 +567,16 @@ function Format-CardSlotStatus {
   }
 
   $missingActions = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in $actionSlotOrder) {
+  foreach ($slot in @("fold_btn", "call_btn")) {
     $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
     if (-not (Test-RegionSelected -Rect $slotRect)) {
       [void]$missingActions.Add([string]$slot)
     }
+  }
+  $betRect = Convert-ToRectangleSafe -Value $cardRegions["bet_btn"]
+  $raiseRect = Convert-ToRectangleSafe -Value $cardRegions["raise_btn"]
+  if ((-not (Test-RegionSelected -Rect $betRect)) -and (-not (Test-RegionSelected -Rect $raiseRect))) {
+    [void]$missingActions.Add("raise_btn")
   }
 
   $boardStatus = if ($missingBoard.Count -eq 0) { "board ready" } else { ("board missing: {0}" -f ($missingBoard -join ", ")) }
@@ -2596,7 +2601,7 @@ $cmbCaptureMode.Enabled = $false
 $form.Controls.Add($cmbCaptureMode)
 
 $lblTarget = New-Object System.Windows.Forms.Label
-$lblTarget.Text = "ROI Target (Individual)"
+$lblTarget.Text = "ROI Target"
 $lblTarget.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $lblTarget.Location = New-Object System.Drawing.Point(320, 176)
@@ -2616,7 +2621,6 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("hero")
 [void]$cmbTarget.Items.Add("fold_btn")
 [void]$cmbTarget.Items.Add("call_btn")
-[void]$cmbTarget.Items.Add("bet_btn")
 [void]$cmbTarget.Items.Add("raise_btn")
 $cmbTarget.SelectedIndex = 0
 $cmbTarget.Enabled = $true
@@ -2639,7 +2643,7 @@ $adviceTitle.AutoSize = $true
 $advicePanel.Controls.Add($adviceTitle)
 
 $adviceSub = New-Object System.Windows.Forms.Label
-$adviceSub.Text = "Placeholder action output for live play."
+$adviceSub.Text = "Live action output for the current state."
 $adviceSub.ForeColor = [System.Drawing.Color]::FromArgb(180, 190, 205)
 $adviceSub.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $adviceSub.Location = New-Object System.Drawing.Point(18, 44)
@@ -2681,22 +2685,6 @@ $txtAdviceDetail.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
 $txtAdviceDetail.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
 $txtAdviceDetail.Text = $adviceSecondary
 $advicePanel.Controls.Add($txtAdviceDetail)
-
-$adviceGuideTitle = New-Object System.Windows.Forms.Label
-$adviceGuideTitle.Text = "Planned Outputs"
-$adviceGuideTitle.ForeColor = [System.Drawing.Color]::White
-$adviceGuideTitle.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$adviceGuideTitle.Location = New-Object System.Drawing.Point(18, 394)
-$adviceGuideTitle.AutoSize = $true
-$advicePanel.Controls.Add($adviceGuideTitle)
-
-$adviceGuide = New-Object System.Windows.Forms.Label
-$adviceGuide.Text = "FOLD`r`nCALL`r`nRAISE`r`nALL IN"
-$adviceGuide.ForeColor = [System.Drawing.Color]::FromArgb(195, 205, 220)
-$adviceGuide.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-$adviceGuide.Location = New-Object System.Drawing.Point(18, 424)
-$adviceGuide.Size = New-Object System.Drawing.Size(210, 120)
-$advicePanel.Controls.Add($adviceGuide)
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -2783,7 +2771,8 @@ function Update-MainLayout {
   $lblCaptureMode.Location = New-Object System.Drawing.Point($margin, $row2Y)
   $cmbCaptureMode.Location = New-Object System.Drawing.Point(110, ($row2Y - 3))
   $lblTarget.Location = New-Object System.Drawing.Point(320, $row2Y)
-  $cmbTarget.Location = New-Object System.Drawing.Point(455, ($row2Y - 3))
+  $cmbTarget.Location = New-Object System.Drawing.Point(405, ($row2Y - 3))
+  $cmbTarget.Size = New-Object System.Drawing.Size(170, 24)
   $btnSetHeroes.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnSetHeroes.Width), ($row2Y - 3))
   $btnResetRois.Location = New-Object System.Drawing.Point(($btnSetHeroes.Left - $gap - [int]$btnResetRois.Width), ($row2Y - 3))
   $btnTargets.Location = New-Object System.Drawing.Point(($btnResetRois.Left - $gap - [int]$btnTargets.Width), ($row2Y - 3))
@@ -2815,7 +2804,7 @@ function Update-MainLayout {
   $btnRunHero.Location = New-Object System.Drawing.Point(($lblEngineProfile.Left - $gap - [int]$btnRunHero.Width), $batchRowY)
   $btnRunFlopSet.Location = New-Object System.Drawing.Point(($btnRunHero.Left - $gap - [int]$btnRunFlopSet.Width), $batchRowY)
 
-  $hintY = $batchRowY + 34
+  $hintY = $batchRowY + 30
   $hint.Location = New-Object System.Drawing.Point($margin, $hintY)
   $hint.Size = New-Object System.Drawing.Size($leftWidth, 18)
 
@@ -2839,10 +2828,7 @@ function Update-MainLayout {
   $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
   $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
   $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
-  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - 360)))
-  $adviceGuideTitle.Location = New-Object System.Drawing.Point(18, ($txtAdviceDetail.Bottom + 16))
-  $adviceGuide.Location = New-Object System.Drawing.Point(18, ($adviceGuideTitle.Bottom + 12))
-  $adviceGuide.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(80, [int]($advicePanel.ClientSize.Height - $adviceGuide.Top - 20)))
+  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(220, [int]($advicePanel.ClientSize.Height - 230)))
 }
 
 function Write-Log {

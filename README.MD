@@ -371,6 +371,8 @@ No-engine startup variant:
 - The advice primary label now buckets engine output into clearer user actions (`CHECK`, `CALL`, `CALL ANY`, `FOLD`, `RAISE`) instead of only echoing the top raw token.
 - The header action controls now use `Fold`, `Call`, and `Raise` only; `Raise` is the single aggressive button and covers both bet/raise semantics in the UI.
 - The main tester window now reflows on resize: the left workspace expands/contracts, the advice panel stays pinned to the right, and the log/output panes scale with the window instead of colliding.
+- The target picker now only exposes the visible action language (`fold_btn`, `call_btn`, `raise_btn`); legacy `bet_btn` remains supported internally as a compatibility alias for older saved ROIs.
+- The advice panel was simplified: the low-value static "Planned Outputs" block was removed so the live advice detail gets more vertical space.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
     - Manual board assignment auto-queues a street solve once the board becomes complete for that street (3 cards = flop, 4 = turn, 5 = river), but only after hero cards are valid.
