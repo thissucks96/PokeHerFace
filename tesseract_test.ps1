@@ -3033,10 +3033,10 @@ function New-ManualCardSuitMenuItem {
   $capturedSuit = ([string]$SuitToken).ToUpperInvariant()
   $capturedToken = ("{0}{1}" -f [string]$RankToken, $capturedSuit).ToUpperInvariant()
   $displaySuit = switch ($capturedSuit) {
-    "S" { [string][char]0x2660 }
-    "H" { [string][char]0x2665 }
-    "D" { [string][char]0x2666 }
-    "C" { [string][char]0x2663 }
+    "S" { "Spade " + [string][char]0x2660 }
+    "H" { "Heart " + [string][char]0x2665 }
+    "D" { "Diamond " + [string][char]0x2666 }
+    "C" { "Club " + [string][char]0x2663 }
     default { $capturedSuit }
   }
   $item = New-Object System.Windows.Forms.ToolStripMenuItem
