@@ -2414,6 +2414,34 @@ function Compare-HandScore {
   return 0
 }
 
+function Get-HandCategoryName {
+  param([int]$Category)
+  switch ($Category) {
+    8 { return "STRAIGHT_FLUSH" }
+    7 { return "FOUR_OF_A_KIND" }
+    6 { return "FULL_HOUSE" }
+    5 { return "FLUSH" }
+    4 { return "STRAIGHT" }
+    3 { return "THREE_OF_A_KIND" }
+    2 { return "TWO_PAIR" }
+    1 { return "PAIR" }
+    0 { return "HIGH_CARD" }
+    default { return "UNKNOWN" }
+  }
+}
+
+function Format-HandScoreSummary {
+  param($Score)
+  if ($null -eq $Score) {
+    return "NONE"
+  }
+  $category = 0
+  try { $category = [int]$Score.category } catch { $category = -1 }
+  $values = @()
+  try { $values = @($Score.values) } catch { $values = @() }
+  return ("{0} ({1})" -f (Get-HandCategoryName -Category $category), (@($values) -join ","))
+}
+
 function Get-5CardHandScore {
   param([Parameter(Mandatory = $true)][string[]]$Cards)
   $parsed = foreach ($card in @($Cards)) {
@@ -2531,6 +2559,18 @@ function Resolve-ShowdownAndAwardPot {
   $heroScore = Get-BestSevenCardHandScore -Cards (@($heroCardsNow) + @($boardCards))
   $villainScore = Get-BestSevenCardHandScore -Cards (@($villainCardsNow) + @($boardCards))
   $cmp = Compare-HandScore -Left $heroScore -Right $villainScore
+  $heroSummary = Format-HandScoreSummary -Score $heroScore
+  $villainSummary = Format-HandScoreSummary -Score $villainScore
+  Write-Log ("Showdown eval: hero={0} ({1}) vs villain={2} ({3}) on board={4} -> cmp={5}" -f `
+    ($heroCardsNow -join " "), $heroSummary, ($villainCardsNow -join " "), $villainSummary, ($boardCards -join " "), $cmp) -Type "showdown_eval" -Data @{
+      board = @($boardCards)
+      hero_cards = @($heroCardsNow)
+      villain_cards = @($villainCardsNow)
+      hero_score = $heroSummary
+      villain_score = $villainSummary
+      compare_result = [int]$cmp
+      current_pot = [int]$script:currentPotAmount
+    }
   if ($cmp -gt 0) {
     Set-AdviceState -Primary "HERO WINS" -Secondary ("Showdown. Pot {0} awarded." -f [int]$script:currentPotAmount)
     Award-PotToWinner -Winner "hero" -Reason "showdown"
