@@ -4135,22 +4135,8 @@ $advicePanel.Controls.Add($btnVillainActionMenu)
 $script:btnVillainActionMenu = $btnVillainActionMenu
 
 $villainActionMenu = New-Object System.Windows.Forms.ContextMenuStrip
-foreach ($villainActionSpec in @(
-  @{ text = "Check"; token = "CHECK" }
-  @{ text = "Call"; token = "CALL" }
-  @{ text = "Bet"; token = "BET" }
-  @{ text = "Raise"; token = "RAISE" }
-  @{ text = "Fold"; token = "FOLD" }
-  @{ text = "All In"; token = "ALL IN" }
-)) {
-  $item = New-Object System.Windows.Forms.ToolStripMenuItem
-  $item.Text = [string]$villainActionSpec.text
-  $capturedVillainToken = [string]$villainActionSpec.token
-  $item.Add_Click({ Invoke-VillainActionSelection -ActionToken $capturedVillainToken }.GetNewClosure())
-  [void]$villainActionMenu.Items.Add($item)
-}
 $btnVillainActionMenu.Add_Click({
-  $villainActionMenu.Show($btnVillainActionMenu, 0, $btnVillainActionMenu.Height)
+  Show-VillainActionMenu
 }.GetNewClosure())
 $script:villainActionMenu = $villainActionMenu
 
@@ -4822,6 +4808,27 @@ function Get-HeroLegalActionTokensForSlot {
   }
 }
 
+function Get-HeroLegalActionTokens {
+  $tokens = New-Object System.Collections.Generic.List[string]
+  $checkCall = ([string]$script:checkCallButtonToken).Trim().ToUpperInvariant()
+  if ($checkCall -notin @("CHECK", "CALL")) {
+    $checkCall = "CHECK"
+  }
+  [void]$tokens.Add($checkCall)
+  [void]$tokens.Add("FOLD")
+  if ([int]$script:currentHeroChips -gt 0) {
+    $raiseToken = ([string]$script:raiseAllInButtonToken).Trim().ToUpperInvariant()
+    if ($raiseToken -eq "ALL IN") {
+      [void]$tokens.Add("ALL IN")
+    }
+    else {
+      [void]$tokens.Add("RAISE")
+      [void]$tokens.Add("ALL IN")
+    }
+  }
+  return @($tokens | Select-Object -Unique)
+}
+
 function Convert-TextToChipAmount {
   param([string]$Text)
   $value = ([string]$Text).Trim()
@@ -4872,6 +4879,40 @@ function Maybe-RefreshAdviceAfterActionStateChange {
   Try-AutoSendHeroCardsToEngine
 }
 
+function Show-VillainActionMenu {
+  if ($null -eq $script:btnVillainActionMenu) {
+    return
+  }
+  if ([string]$script:villainMode -ne "Manual") {
+    return
+  }
+  $legalTokens = @(Get-VillainLegalActionTokens)
+  if ($legalTokens.Count -le 0) {
+    return
+  }
+  if ($null -eq $script:villainActionMenu) {
+    $script:villainActionMenu = New-Object System.Windows.Forms.ContextMenuStrip
+  }
+  $menu = $script:villainActionMenu
+  $menu.Items.Clear()
+  $title = New-Object System.Windows.Forms.ToolStripMenuItem
+  $title.Text = "Villain Action"
+  $title.Enabled = $false
+  [void]$menu.Items.Add($title)
+  [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+  foreach ($token in @($legalTokens)) {
+    $capturedToken = [string]$token
+    $item = New-Object System.Windows.Forms.ToolStripMenuItem
+    $item.Text = $capturedToken
+    $item.Add_Click({
+      param($sender, $e)
+      Invoke-VillainActionSelection -ActionToken $capturedToken
+    }.GetNewClosure())
+    [void]$menu.Items.Add($item)
+  }
+  $menu.Show($script:btnVillainActionMenu, 0, $script:btnVillainActionMenu.Height)
+}
+
 function Award-PotToWinner {
   param(
     [Parameter(Mandatory = $true)][ValidateSet("hero", "villain")][string]$Winner,
@@ -4890,6 +4931,8 @@ function Award-PotToWinner {
   Reset-StreetActionState
   $script:heroFolded = $false
   $script:villainFolded = $false
+  $winnerLabel = if ($Winner -eq "hero") { "HERO WINS" } else { "VILLAIN WINS" }
+  Set-AdviceState -Primary $winnerLabel -Secondary ("Pot {0} awarded." -f [int]$award)
   Update-TableStateDisplay
   Prepare-NextHandBackendState
   Write-Log ("Pot awarded to {0}: {1} chips." -f $Winner, [int]$award) -Type "hand_settled" -Data @{
@@ -5009,6 +5052,21 @@ function Invoke-ManualActionSelection {
   if (-not $normalizedAction) {
     return
   }
+  if ($normalizedAction -in @("CHECK", "CALL")) {
+    $normalizedAction = ([string]$script:checkCallButtonToken).Trim().ToUpperInvariant()
+  }
+  elseif ($normalizedAction -in @("RAISE", "ALL IN")) {
+    $targetAggro = ([string]$script:raiseAllInButtonToken).Trim().ToUpperInvariant()
+    if ($normalizedAction -eq "RAISE" -and $targetAggro -eq "ALL IN") {
+      $normalizedAction = "ALL IN"
+    }
+  }
+  $legalTokens = @(Get-HeroLegalActionTokens)
+  if (-not ($legalTokens -contains $normalizedAction)) {
+    Write-Log ("Manual action ignored: illegal in current state ({0})." -f $normalizedAction)
+    Update-CheckCallButtonModeFromState
+    return
+  }
   if ($script:handResolved) {
     Write-Log "Manual action ignored: hand already resolved."
     return
@@ -5089,9 +5147,7 @@ function Invoke-ManualActionSelection {
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
   }
-  if (Try-RunAutomaticVillainTurn) {
-    return
-  }
+  if (Try-RunAutomaticVillainTurn) { return }
   Maybe-RefreshAdviceAfterActionStateChange -StageLabel "manual_action"
 }
 
@@ -5481,7 +5537,7 @@ function New-TableStateOverlayContextMenu {
   $itemNewHand.Text = "New Hand"
   $itemNewHand.Add_Click({
     param($sender, $e)
-    Start-NewHandPreserveChips
+    Invoke-NewHandCycle
   }.GetNewClosure())
   [void]$menu.Items.Add($itemNewHand)
   return $menu
@@ -7618,6 +7674,10 @@ function Start-NewHandPreserveChips {
   Try-AutoSendHeroCardsToEngine
 }
 
+function Invoke-NewHandCycle {
+  Start-NewHandPreserveChips
+}
+
 function Run-OcrHeroSet {
   if ($isBusy) {
     return
@@ -8314,8 +8374,8 @@ $btnRestart.Add_Click({
 
 $btnNewHand.Add_Click({
   param($sender, $e)
-  Start-NewHandPreserveChips
-})
+  Invoke-NewHandCycle
+}.GetNewClosure())
 
 $btnTargets.Add_Click({
   Toggle-RoiOverlays

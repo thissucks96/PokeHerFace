@@ -389,7 +389,7 @@ No-engine startup variant:
 - The right-side advice panel and floating `Table State` overlay now include a `Show/Hide Villain Cards` toggle for the hidden villain shell, so you can expose or hide the current hidden villain-card placeholders for debugging without adding full villain controls yet.
 - The tester now exposes the first visible one-villain controls:
   - live `Villain Stack` in the right panel and floating `Table State` overlay,
-  - a `Villain Action` menu (`Check`, `Bet`, `Raise`, `Fold`, `All In`) that updates pot, villain chips, and hero-facing bet state.
+  - a `Villain Action` menu that rebuilds from current legal actions only (for example, it will not offer `Check` when villain is facing a bet) and updates pot, villain chips, and hero-facing bet state.
 - The tester now also includes a `Villain Mode` selector:
   - `Manual` keeps the explicit `Villain Action` menu enabled,
   - `Scripted` auto-plays villain turns with a deterministic, easy-to-debug policy using the existing pot/stack state,
@@ -403,6 +403,7 @@ No-engine startup variant:
 - The action UI now exposes only the two combined action buckets:
   - `CHECK / CALL` dynamically becomes `Call` whenever a bet is being faced,
   - `RAISE / ALL IN` dynamically becomes `All In` when a normal raise is no longer legal (for example when the required raise reaches or exceeds the remaining stack).
+  - Hero manual actions are validated against that same live legality state, so stale `CHECK` clicks are remapped or rejected when hero is actually facing a bet.
 - `New Hand` now starts a real heads-up hand cycle while preserving both bankrolls:
   - it alternates who is `SB / BTN` and `BB`,
   - posts blinds automatically,
@@ -414,7 +415,8 @@ No-engine startup variant:
 - Pot settlement is now automatic:
   - folding awards the pot immediately,
   - completed river rounds run an automatic showdown and award the pot to the correct player,
-  - the final visible hand stays frozen on screen until you click `New Hand`, while the backend prepares a fresh shuffled deck for the next cycle.
+  - the final visible hand stays frozen on screen until you click `New Hand`, while the backend prepares a fresh shuffled deck for the next cycle,
+  - and winner settlement now overwrites stale action advice with `HERO WINS` / `VILLAIN WINS`.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - top-level `Random Card` for a legal non-duplicate assignment
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
