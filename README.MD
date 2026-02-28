@@ -56,6 +56,9 @@ This workspace is organized to keep the engine, neural models, hand history data
   - table-state panel/overlay now includes concise position text (`SB / BTN`, `BB`) and live `STATUS` messaging (for example `STATUS: VILLAIN RAISED TO 6`).
   - preflop auto-villain re-raise wars are now bounded with a per-street raise cap (`MAX_RAISES_PER_STREET`, default `4`) plus weighted aggressive fallback-to-call behavior, so hands reliably progress to the flop instead of looping on endless re-raises.
   - showdown resolution now emits explicit `showdown_eval` logs (board, both hole-card pairs, evaluated category/value vectors, compare result) so winner decisions are auditable when validating chop vs kicker outcomes.
+  - showdown advice now includes a readable hand-strength reason (for example `Two Pair ... with kicker`, `Full House ...`, `Royal Flush`) instead of only `HERO/VILLAIN WINS`.
+  - action-state refresh now runs as a guarded stabilization loop after each move, so auto-villain response + street progression resolves in one pass without requiring extra check/call clicks.
+  - the in-app log panel now uses action-aware coloring (`CHECK/CALL` green, `RAISE/ALL IN` red, `FOLD` gray, error paths red/orange) to make live state transitions easier to scan during playtesting.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,

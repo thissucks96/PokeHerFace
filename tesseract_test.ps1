@@ -368,6 +368,7 @@ $adviceActionSecondary = ""
 $adviceHasAction = $false
 $lastAdviceWeightedRows = @()
 $suppressHeroAutoSend = $false
+$stateRefreshBusy = $false
 $heroCards = @{
   hero1 = "??"
   hero2 = "??"
@@ -2430,6 +2431,101 @@ function Get-HandCategoryName {
   }
 }
 
+function Get-RankLabel {
+  param([int]$Rank)
+  switch ([int]$Rank) {
+    14 { return "Ace" }
+    13 { return "King" }
+    12 { return "Queen" }
+    11 { return "Jack" }
+    10 { return "Ten" }
+    9 { return "Nine" }
+    8 { return "Eight" }
+    7 { return "Seven" }
+    6 { return "Six" }
+    5 { return "Five" }
+    4 { return "Four" }
+    3 { return "Three" }
+    2 { return "Two" }
+    default { return "Unknown" }
+  }
+}
+
+function Format-HandScoreNarrative {
+  param($Score)
+  if ($null -eq $Score) {
+    return "No hand"
+  }
+  $category = 0
+  $values = @()
+  try { $category = [int]$Score.category } catch { $category = -1 }
+  try { $values = @($Score.values) } catch { $values = @() }
+  switch ($category) {
+    8 {
+      $hi = if ($values.Count -ge 1) { [int]$values[0] } else { 0 }
+      if ($hi -eq 14) { return "Royal Flush" }
+      return ("Straight Flush, {0}-high" -f (Get-RankLabel -Rank $hi))
+    }
+    7 {
+      if ($values.Count -ge 2) {
+        $quadLabel = Get-RankLabel -Rank ([int]$values[0])
+        $kickerLabel = Get-RankLabel -Rank ([int]$values[1])
+        return ("Four of a Kind, {0}s with {1} kicker" -f $quadLabel, $kickerLabel)
+      }
+      return "Four of a Kind"
+    }
+    6 {
+      if ($values.Count -ge 2) {
+        $tripLabel = Get-RankLabel -Rank ([int]$values[0])
+        $pairLabel = Get-RankLabel -Rank ([int]$values[1])
+        return ("Full House, {0}s full of {1}s" -f $tripLabel, $pairLabel)
+      }
+      return "Full House"
+    }
+    5 {
+      $hi = if ($values.Count -ge 1) { [int]$values[0] } else { 0 }
+      return ("Flush, {0}-high" -f (Get-RankLabel -Rank $hi))
+    }
+    4 {
+      $hi = if ($values.Count -ge 1) { [int]$values[0] } else { 0 }
+      return ("Straight, {0}-high" -f (Get-RankLabel -Rank $hi))
+    }
+    3 {
+      if ($values.Count -ge 3) {
+        $tripLabel = Get-RankLabel -Rank ([int]$values[0])
+        $kickerOne = Get-RankLabel -Rank ([int]$values[1])
+        $kickerTwo = Get-RankLabel -Rank ([int]$values[2])
+        return ("Three of a Kind, {0}s with {1}/{2} kickers" -f $tripLabel, $kickerOne, $kickerTwo)
+      }
+      return "Three of a Kind"
+    }
+    2 {
+      if ($values.Count -ge 3) {
+        $topPair = Get-RankLabel -Rank ([int]$values[0])
+        $bottomPair = Get-RankLabel -Rank ([int]$values[1])
+        $kickerLabel = Get-RankLabel -Rank ([int]$values[2])
+        return ("Two Pair, {0}s and {1}s with {2} kicker" -f $topPair, $bottomPair, $kickerLabel)
+      }
+      return "Two Pair"
+    }
+    1 {
+      if ($values.Count -ge 4) {
+        $pairLabel = Get-RankLabel -Rank ([int]$values[0])
+        $kickerOne = Get-RankLabel -Rank ([int]$values[1])
+        $kickerTwo = Get-RankLabel -Rank ([int]$values[2])
+        $kickerThree = Get-RankLabel -Rank ([int]$values[3])
+        return ("Pair of {0}s with {1}/{2}/{3} kickers" -f $pairLabel, $kickerOne, $kickerTwo, $kickerThree)
+      }
+      return "Pair"
+    }
+    0 {
+      $hi = if ($values.Count -ge 1) { [int]$values[0] } else { 0 }
+      return ("High Card {0}" -f (Get-RankLabel -Rank $hi))
+    }
+    default { return "Unknown hand" }
+  }
+}
+
 function Format-HandScoreSummary {
   param($Score)
   if ($null -eq $Score) {
@@ -2514,27 +2610,39 @@ function Get-5CardHandScore {
   return [pscustomobject]@{ category = 0; values = @($ranks) }
 }
 
-function Get-BestSevenCardHandScore {
+function Get-BestSevenCardHandResult {
   param([Parameter(Mandatory = $true)][string[]]$Cards)
   if ($Cards.Count -ne 7) {
-    throw "Get-BestSevenCardHandScore requires exactly 7 cards."
+    throw "Get-BestSevenCardHandResult requires exactly 7 cards."
   }
   $best = $null
+  $bestCards = @()
   for ($a = 0; $a -lt 3; $a++) {
     for ($b = $a + 1; $b -lt 4; $b++) {
       for ($c = $b + 1; $c -lt 5; $c++) {
         for ($d = $c + 1; $d -lt 6; $d++) {
           for ($e = $d + 1; $e -lt 7; $e++) {
-            $score = Get-5CardHandScore -Cards @($Cards[$a], $Cards[$b], $Cards[$c], $Cards[$d], $Cards[$e])
+            $candidateCards = @($Cards[$a], $Cards[$b], $Cards[$c], $Cards[$d], $Cards[$e])
+            $score = Get-5CardHandScore -Cards $candidateCards
             if ((Compare-HandScore -Left $score -Right $best) -gt 0) {
               $best = $score
+              $bestCards = @($candidateCards)
             }
           }
         }
       }
     }
   }
-  return $best
+  return [pscustomobject]@{
+    score = $best
+    cards = @($bestCards)
+  }
+}
+
+function Get-BestSevenCardHandScore {
+  param([Parameter(Mandatory = $true)][string[]]$Cards)
+  $result = Get-BestSevenCardHandResult -Cards $Cards
+  return $result.score
 }
 
 function Resolve-ShowdownAndAwardPot {
@@ -2556,27 +2664,35 @@ function Resolve-ShowdownAndAwardPot {
   if ($boardCards.Count -ne 5 -or $heroCardsNow.Count -ne 2 -or $villainCardsNow.Count -ne 2) {
     return $false
   }
-  $heroScore = Get-BestSevenCardHandScore -Cards (@($heroCardsNow) + @($boardCards))
-  $villainScore = Get-BestSevenCardHandScore -Cards (@($villainCardsNow) + @($boardCards))
+  $heroResult = Get-BestSevenCardHandResult -Cards (@($heroCardsNow) + @($boardCards))
+  $villainResult = Get-BestSevenCardHandResult -Cards (@($villainCardsNow) + @($boardCards))
+  $heroScore = $heroResult.score
+  $villainScore = $villainResult.score
   $cmp = Compare-HandScore -Left $heroScore -Right $villainScore
   $heroSummary = Format-HandScoreSummary -Score $heroScore
   $villainSummary = Format-HandScoreSummary -Score $villainScore
+  $heroNarrative = Format-HandScoreNarrative -Score $heroScore
+  $villainNarrative = Format-HandScoreNarrative -Score $villainScore
   Write-Log ("Showdown eval: hero={0} ({1}) vs villain={2} ({3}) on board={4} -> cmp={5}" -f `
     ($heroCardsNow -join " "), $heroSummary, ($villainCardsNow -join " "), $villainSummary, ($boardCards -join " "), $cmp) -Type "showdown_eval" -Data @{
       board = @($boardCards)
       hero_cards = @($heroCardsNow)
       villain_cards = @($villainCardsNow)
+      hero_best_five = @($heroResult.cards)
+      villain_best_five = @($villainResult.cards)
       hero_score = $heroSummary
       villain_score = $villainSummary
+      hero_narrative = $heroNarrative
+      villain_narrative = $villainNarrative
       compare_result = [int]$cmp
       current_pot = [int]$script:currentPotAmount
     }
   if ($cmp -gt 0) {
-    Set-AdviceState -Primary "HERO WINS" -Secondary ("Showdown. Pot {0} awarded." -f [int]$script:currentPotAmount)
+    Set-AdviceState -Primary "HERO WINS" -Secondary ("Showdown: {0} beats {1}. Pot {2} awarded." -f $heroNarrative, $villainNarrative, [int]$script:currentPotAmount)
     Award-PotToWinner -Winner "hero" -Reason "showdown"
   }
   elseif ($cmp -lt 0) {
-    Set-AdviceState -Primary "VILLAIN WINS" -Secondary ("Showdown. Pot {0} awarded." -f [int]$script:currentPotAmount)
+    Set-AdviceState -Primary "VILLAIN WINS" -Secondary ("Showdown: {0} beats {1}. Pot {2} awarded." -f $villainNarrative, $heroNarrative, [int]$script:currentPotAmount)
     Award-PotToWinner -Winner "villain" -Reason "showdown"
   }
   else {
@@ -2590,11 +2706,13 @@ function Resolve-ShowdownAndAwardPot {
     Update-TableStateDisplay
     Prepare-NextHandBackendState
     $script:adviceActionPrimary = "CHOP"
-    $script:adviceActionSecondary = "Showdown split pot."
+    $script:adviceActionSecondary = ("Showdown split pot. Both played: {0}" -f $heroNarrative)
     $script:adviceHasAction = $true
     Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
     Write-Log "Showdown split pot." -Type "hand_settled" -Data @{
       winner = "split"
+      hero_narrative = $heroNarrative
+      villain_narrative = $villainNarrative
       current_hero_chips = [int]$script:currentHeroChips
       current_villain_chips = [int]$script:currentVillainChips
     }
@@ -4662,15 +4780,18 @@ $logLabel.Location = New-Object System.Drawing.Point(20, 460)
 $logLabel.AutoSize = $true
 $form.Controls.Add($logLabel)
 
-$logBox = New-Object System.Windows.Forms.TextBox
+$logBox = New-Object System.Windows.Forms.RichTextBox
 $logBox.Location = New-Object System.Drawing.Point(20, 484)
 $logBox.Size = New-Object System.Drawing.Size(780, 210)
 $logBox.Multiline = $true
 $logBox.ScrollBars = "Vertical"
 $logBox.ReadOnly = $true
-$logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
+$logBox.Font = New-Object System.Drawing.Font("Consolas", 9.5)
 $logBox.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
 $logBox.ForeColor = [System.Drawing.Color]::FromArgb(225, 235, 245)
+$logBox.DetectUrls = $false
+$logBox.WordWrap = $false
+$logBox.HideSelection = $false
 $form.Controls.Add($logBox)
 
 function Update-MainLayout {
@@ -4829,15 +4950,94 @@ function Update-MainLayout {
   $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(120, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
 }
 
+function Apply-UiPolish {
+  $form.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
+  $advicePanel.BackColor = [System.Drawing.Color]::FromArgb(24, 31, 41)
+  $advicePanel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $txtLatest.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $txtAdviceDetail.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $logBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+
+  $buttonList = @(
+    $btnPick, $btnOnce, $btnRandomCard, $btnAutoStart, $btnAutoStop, $btnRunEngine, $btnNewHand, $btnRestart,
+    $btnTargets, $btnResetRois, $btnSetHeroes, $btnQuickToggle, $btnRunFlop1, $btnRunFlop2, $btnRunFlop3,
+    $btnRunTurn, $btnRunRiver, $btnRunFlopSet, $btnRunHero, $btnCheck, $btnFold, $btnRaise, $btnCall, $btnAllIn,
+    $btnToggleVillainCards, $btnVillainActionMenu
+  )
+  foreach ($btn in @($buttonList)) {
+    if ($null -eq $btn -or $btn.IsDisposed) { continue }
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btn.FlatAppearance.BorderSize = 1
+    $btn.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(92, 112, 142)
+    $btn.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(62, 82, 112)
+    $btn.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(48, 66, 94)
+    $btn.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9)
+    $btn.Cursor = [System.Windows.Forms.Cursors]::Hand
+  }
+
+  foreach ($input in @($cmbTarget, $cmbCaptureMode, $cmbEngineProfile, $cmbVillainMode, $cmbVillainStyle, $numSmallBlind, $numBigBlind, $numBuyIn, $numInterval)) {
+    if ($null -eq $input -or $input.IsDisposed) { continue }
+    $input.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $input.BackColor = [System.Drawing.Color]::FromArgb(235, 239, 246)
+  }
+}
+
 function Write-Log {
   param(
     [string]$Message,
     [string]$Type = "log",
     [hashtable]$Data = $null
   )
+  function Get-LogVisualColor {
+    param(
+      [string]$LineText,
+      [string]$LineType
+    )
+    $text = ([string]$LineText).ToUpperInvariant()
+    $evt = ([string]$LineType).ToLowerInvariant()
+
+    if ($text -match "\b(ERROR|FAILED|EXCEPTION|TIMEOUT)\b" -or $evt -in @("engine_job_failed", "engine_job_timeout")) {
+      return [System.Drawing.Color]::FromArgb(255, 112, 112)
+    }
+    if ($text -match "\b(ALL IN|RAISE)\b" -or $evt -in @("manual_action_set", "villain_action_set", "street_raise_cap")) {
+      return [System.Drawing.Color]::FromArgb(255, 132, 132)
+    }
+    if ($text -match "\b(FOLD)\b") {
+      return [System.Drawing.Color]::FromArgb(188, 196, 205)
+    }
+    if ($text -match "\b(CHECK|CALL)\b") {
+      return [System.Drawing.Color]::FromArgb(128, 232, 156)
+    }
+    if ($text -match "\b(WINS|AWARDED|SHOWDOWN)\b" -or $evt -eq "hand_settled") {
+      return [System.Drawing.Color]::FromArgb(255, 230, 160)
+    }
+    return [System.Drawing.Color]::FromArgb(225, 235, 245)
+  }
+
+  function Write-StyledLogLine {
+    param(
+      [string]$LineText,
+      [string]$LineType
+    )
+    if ($null -eq $logBox -or $logBox.IsDisposed) {
+      return
+    }
+    $lineColor = Get-LogVisualColor -LineText $LineText -LineType $LineType
+    $logBox.SelectionStart = $logBox.TextLength
+    $logBox.SelectionLength = 0
+    $logBox.SelectionColor = $lineColor
+    $logBox.SelectionFont = $logBox.Font
+    $logBox.AppendText("$LineText`r`n")
+    $logBox.SelectionColor = $logBox.ForeColor
+    $logBox.SelectionFont = $logBox.Font
+    $logBox.SelectionStart = $logBox.TextLength
+    $logBox.SelectionLength = 0
+    $logBox.ScrollToCaret()
+  }
+
   $stamp = (Get-Date).ToString("HH:mm:ss")
   $line = "[$stamp] $Message"
-  $logBox.AppendText("$line`r`n")
+  Write-StyledLogLine -LineText $line -LineType $Type
   try {
     Add-Content -Path $uiLogTextPath -Value $line -Encoding UTF8
   }
@@ -5402,6 +5602,11 @@ function Maybe-RefreshAdviceAfterActionStateChange {
   param(
     [string]$StageLabel = "manual_state"
   )
+  if ($script:stateRefreshBusy) {
+    return
+  }
+  $script:stateRefreshBusy = $true
+  try {
   if ($script:heroFolded -or $script:villainFolded) {
     return
   }
@@ -5411,14 +5616,22 @@ function Maybe-RefreshAdviceAfterActionStateChange {
   if (-not (Get-HeroCardsReady)) {
     return
   }
-  if (Try-AdvanceStreetIfRoundResolved) {
-    if ($script:handResolved) {
-      return
+  for ($pass = 0; $pass -lt 8; $pass++) {
+    if (Try-AdvanceStreetIfRoundResolved) {
+      if ($script:handResolved) {
+        return
+      }
+      continue
     }
+    if (Try-RunAutomaticVillainTurn) {
+      if ($script:handResolved) {
+        return
+      }
+      continue
+    }
+    break
   }
-  if (Try-RunAutomaticVillainTurn) {
-    return
-  }
+
   if ($isBusy) {
     return
   }
@@ -5427,6 +5640,10 @@ function Maybe-RefreshAdviceAfterActionStateChange {
     return
   }
   Try-AutoSendHeroCardsToEngine
+  }
+  finally {
+    $script:stateRefreshBusy = $false
+  }
 }
 
 function Show-VillainActionMenu {
@@ -9181,6 +9398,7 @@ $cmbEngineProfile.Add_SelectedIndexChanged({
 })
 
 $form.Add_Shown({
+  Apply-UiPolish
   Update-MainLayout
   Initialize-SessionLogs
   Write-Log ("Session logs: text={0}, jsonl={1}" -f $uiLogTextPath, $uiLogJsonlPath) -Type "session_start" -Data @{
