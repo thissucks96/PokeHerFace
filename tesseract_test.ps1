@@ -2196,15 +2196,25 @@ function Get-TableStatusText {
 
   $heroFacing = [int]([Math]::Max(0, $script:currentFacingBetAmount))
   $villainFacing = [int](Get-VillainFacingBetAmount)
+  $street = Get-CurrentStreetName
+  $stakes = Get-StakeSettings
+  $isBlindPostingState = ($street -eq "preflop") -and `
+    (-not [bool]$script:heroActedThisRound) -and `
+    (-not [bool]$script:villainActedThisRound) -and `
+    ([int]$script:currentHeroStreetCommit -eq [int]$stakes.small_blind) -and `
+    ([int]$script:currentVillainStreetCommit -eq [int]$stakes.big_blind)
   if (Test-IsHeroTurn) {
     if ($heroFacing -gt 0) {
-      return ("STATUS: VILLAIN RAISED TO {0}" -f $heroFacing)
+      if ($isBlindPostingState) {
+        return ("STATUS: PRE-FLOP (SB posted). TO CALL {0}." -f $heroFacing)
+      }
+      return ("STATUS: TO CALL {0}" -f $heroFacing)
     }
     return "STATUS: YOUR TURN"
   }
   if (Test-IsVillainTurn) {
     if ($villainFacing -gt 0) {
-      return ("STATUS: HERO RAISED TO {0}" -f $villainFacing)
+      return ("STATUS: VILLAIN TO CALL {0}" -f $villainFacing)
     }
     return "STATUS: VILLAIN TO ACT"
   }
