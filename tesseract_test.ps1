@@ -5627,7 +5627,6 @@ function Apply-PreflopHeuristicAdvice {
     "street: preflop"
     "source:preflop_heuristic"
   ) -join "`r`n"
-  [void](Try-RunAutomaticVillainTurn)
   return $true
 }
 
@@ -7689,6 +7688,19 @@ function Try-AutoSendHeroCardsToEngine {
       return
     }
     $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    $villainActed = Try-RunAutomaticVillainTurn
+    if ($villainActed) {
+      $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    }
+    $preflopSolveKey = ("preflop|{0}|{1}|sb={2}|fb={3}|hc={4}|vc={5}|ha={6}|va={7}" -f `
+      [string]$heroCards["hero1"], `
+      [string]$heroCards["hero2"], `
+      [int]([bool]$script:heroIsSmallBlind), `
+      [int]$script:currentFacingBetAmount, `
+      [int]$script:currentHeroStreetCommit, `
+      [int]$script:currentVillainStreetCommit, `
+      [int]([bool]$script:heroActedThisRound), `
+      [int]([bool]$script:villainActedThisRound))
     Write-Log ("Hero cards ready ({0}); applied immediate preflop advice and warmed backends. Full solve begins on flop." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
       hero1 = [string]$heroCards["hero1"]
       hero2 = [string]$heroCards["hero2"]
