@@ -413,6 +413,26 @@ Headless rapid-stage backend stress helper:
 
 This queues a synthetic rapid sequence (`flop` -> `turn` -> `river`) against the bridge with a short stagger and writes a timing report under `4_LLM_Bridge/examples/synthetic_hands/`.
 
+Passive-villain stateful backend harness (no OCR / no UI, structured JSON street progression):
+
+```powershell
+.\scripts\test_stateful_sim.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile normal
+```
+
+- Default run is now `30` hands (not `100`) so the reference benchmark stays usable while `normal` is still expensive.
+- The harness acts as a simple heads-up referee:
+  - hero and villain each get hole cards,
+  - villain checks when checked to and auto-calls any hero bet,
+  - hero gets one decision on flop / turn / river,
+  - showdown winner and net bb are recorded.
+- It writes a JSON report under `4_LLM_Bridge/examples/synthetic_hands/` with:
+  - per-hand street actions,
+  - per-street latency,
+  - strategy source usage,
+  - all-in counts / street distribution,
+  - aggregate `bb_100` in this simplified environment.
+- This is the current no-vision benchmark for validating backend decision flow before returning to OCR/live integration.
+
 ## Quick Start (WSL / Linux)
 
 ```bash
