@@ -2953,22 +2953,30 @@ function Set-AdviceFromEngineResult {
 
   $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
   $primaryToken = [string]$sortedRows[0].token
-  $detailParts = New-Object System.Collections.Generic.List[string]
-  foreach ($row in ($sortedRows | Select-Object -First 3)) {
-    [void]$detailParts.Add(("{0} {1:N2}" -f (Convert-AdviceActionTokenToLabel -Token ([string]$row.token)), [double]$row.weight))
+  $mixParts = New-Object System.Collections.Generic.List[string]
+  foreach ($row in ($sortedRows | Select-Object -First 2)) {
+    [void]$mixParts.Add(("{0} {1:N2}" -f (Convert-AdviceActionTokenToLabel -Token ([string]$row.token)), [double]$row.weight))
   }
+  $metaParts = New-Object System.Collections.Generic.List[string]
   if ($EngineResult.PSObject.Properties.Name -contains "selected_strategy" -and $EngineResult.selected_strategy) {
-    [void]$detailParts.Add(("via {0}" -f [string]$EngineResult.selected_strategy))
+    [void]$metaParts.Add(("via {0}" -f [string]$EngineResult.selected_strategy))
   }
   if ($EngineResult.PSObject.Properties.Name -contains "elapsed_sec" -and $null -ne $EngineResult.elapsed_sec) {
     try {
-      [void]$detailParts.Add(("{0:N2}s" -f [double]$EngineResult.elapsed_sec))
+      [void]$metaParts.Add(("{0:N2}s" -f [double]$EngineResult.elapsed_sec))
     }
     catch {}
   }
 
   $script:adviceActionPrimary = Convert-AdviceActionTokenToLabel -Token $primaryToken
-  $script:adviceActionSecondary = ($detailParts -join " | ")
+  $secondaryLines = New-Object System.Collections.Generic.List[string]
+  if ($mixParts.Count -gt 0) {
+    [void]$secondaryLines.Add(($mixParts -join " | "))
+  }
+  if ($metaParts.Count -gt 0) {
+    [void]$secondaryLines.Add(($metaParts -join " | "))
+  }
+  $script:adviceActionSecondary = ($secondaryLines -join "`r`n")
   $script:adviceHasAction = $true
   Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
 }
@@ -2984,7 +2992,7 @@ function New-AdviceOverlayForm {
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
-  $overlay.Size = New-Object System.Drawing.Size(260, 110)
+  $overlay.Size = New-Object System.Drawing.Size(320, 132)
   $overlay.Location = New-Object System.Drawing.Point(40, 40)
   $overlay.Tag = [pscustomobject]@{
     down = $false
@@ -2997,7 +3005,7 @@ function New-AdviceOverlayForm {
   $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(190, 205, 220)
   $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
   $titleLabel.Location = New-Object System.Drawing.Point(12, 10)
-  $titleLabel.Size = New-Object System.Drawing.Size(236, 18)
+  $titleLabel.Size = New-Object System.Drawing.Size(296, 34)
   $titleLabel.AutoEllipsis = $true
   $overlay.Controls.Add($titleLabel)
 
@@ -3005,8 +3013,8 @@ function New-AdviceOverlayForm {
   $valueLabel.Text = "WAIT"
   $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 235, 160)
   $valueLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 28, [System.Drawing.FontStyle]::Bold)
-  $valueLabel.Location = New-Object System.Drawing.Point(10, 34)
-  $valueLabel.Size = New-Object System.Drawing.Size(240, 56)
+  $valueLabel.Location = New-Object System.Drawing.Point(10, 50)
+  $valueLabel.Size = New-Object System.Drawing.Size(300, 64)
   $valueLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
   $overlay.Controls.Add($valueLabel)
 
