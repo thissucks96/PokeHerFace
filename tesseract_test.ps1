@@ -1891,7 +1891,7 @@ function Get-ScriptedVillainActionToken {
   $preflopRows = if ($villainCardsNow.Count -eq 2) { @(Build-PreflopHeuristicRootActions -HeroCards $villainCardsNow) } else { @() }
   $topPreflopToken = ""
   if ($preflopRows.Count -gt 0) {
-    $topRow = @($preflopRows | Sort-Object -Property @{ Expression = { [double]$_.avg_frequency }; Descending = $true })[0]
+    $topRow = @($preflopRows | Sort-Object -Property avg_frequency -Descending)[0]
     if ($null -ne $topRow) {
       $topPreflopToken = [string](Convert-ActionSummaryRowToToken -Row $topRow)
     }
@@ -2604,7 +2604,7 @@ function Get-5CardHandScore {
       rank = [int]$key
     }
   }
-  $countRows = @($countRows | Sort-Object -Property @{Expression="count";Descending=$true}, @{Expression="rank";Descending=$true})
+  $countRows = @($countRows | Sort-Object -Property count, rank -Descending)
   if ($isStraight -and $isFlush) {
     return [pscustomobject]@{ category = 8; values = @([int]$straightHigh) }
   }
@@ -5651,7 +5651,9 @@ function Normalize-AdviceWeightedRowsToHeroLegal {
       weight = [double]$tokenWeights[$key]
     })
   }
-  return @($resultRows | Sort-Object -Property @{ Expression = { [double]$_.weight }; Descending = $true }, @{ Expression = { [string]$_.token }; Descending = $false })
+  # Keep sorting simple/stable to avoid dynamic binder mismatches in mixed PS runtimes.
+  $sorted = @($resultRows | Sort-Object -Property token | Sort-Object -Property weight -Descending)
+  return @($sorted)
 }
 
 function Convert-TextToChipAmount {
@@ -6166,9 +6168,12 @@ function Convert-HoleCardsToStructuralCombo {
     }
     $normalizedCards += $token
   }
-  $ordered = @($normalizedCards | Sort-Object -Property @{ Expression = { Get-CardRankStrength -Token $_ }; Descending = $true }, @{ Expression = { [string]$_ }; Descending = $false })
-  if ($ordered.Count -ne 2) {
-    return ""
+  $ordered = @($normalizedCards)
+  if ($ordered.Count -ne 2) { return "" }
+  $leftRank = Get-CardRankStrength -Token $ordered[0]
+  $rightRank = Get-CardRankStrength -Token $ordered[1]
+  if (($rightRank -gt $leftRank) -or (($rightRank -eq $leftRank) -and ([string]$ordered[1] -lt [string]$ordered[0]))) {
+    $ordered = @($ordered[1], $ordered[0])
   }
   $rank1 = $ordered[0].Substring(0, 1).ToUpperInvariant()
   $rank2 = $ordered[1].Substring(0, 1).ToUpperInvariant()
@@ -6399,7 +6404,8 @@ function Set-AdviceFromEngineResult {
   if ($rowsForDecision.Count -le 0) {
     return
   }
-  $sortedRows = @($rowsForDecision | Sort-Object -Property @{ Expression = { [double]$_.weight }; Descending = $true }, @{ Expression = { [string]$_.token }; Descending = $false })
+  # Keep sorting simple/stable to avoid dynamic binder mismatches in mixed PS runtimes.
+  $sortedRows = @($rowsForDecision | Sort-Object -Property token | Sort-Object -Property weight -Descending)
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
@@ -9135,6 +9141,20 @@ function Poll-EngineJobs {
         if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
           Write-Log ("Engine advice apply error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
         }
+        $legalTokens = @(Get-HeroLegalActionTokens)
+        $fallbackPrimary = "WAIT"
+        if ($legalTokens -contains "CALL") { $fallbackPrimary = "CALL" }
+        elseif ($legalTokens -contains "CHECK") { $fallbackPrimary = "CHECK" }
+        elseif ($legalTokens -contains "FOLD") { $fallbackPrimary = "FOLD" }
+        elseif ($legalTokens -contains "RAISE") { $fallbackPrimary = "RAISE" }
+        elseif ($legalTokens -contains "ALL IN") { $fallbackPrimary = "ALL IN" }
+        $script:adviceActionPrimary = $fallbackPrimary
+        $script:adviceActionSecondary = "Fallback advice after engine parse error."
+        $script:adviceHasAction = ($fallbackPrimary -ne "WAIT")
+        try {
+          Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
+        }
+        catch {}
       }
       try {
         [void](Try-RunAutomaticVillainTurn)
