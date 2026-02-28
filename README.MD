@@ -372,6 +372,7 @@ No-engine startup variant:
 - Manual `CALL` / `RAISE` prompts now default to the last recommended engine amount when one is available, so the user can accept or edit the suggested size instead of retyping from scratch.
 - The header action controls now use `Check`, `Fold`, `Call`, `Raise`, and `All In`; `Raise` is the standard aggressive button while `All In` commits the entire remaining hero stack immediately.
 - The main tester window now reflows on resize: the left workspace expands/contracts, the advice panel stays pinned to the right, and the log/output panes scale with the window instead of colliding.
+- The manual action buttons were moved into the right-side advice panel so the header rows stay focused on capture/run controls instead of stacking every control in one strip.
 - The target picker now exposes the simplified live labels (`hero`, `pot`, `check`, `fold`, `call`, `raise`, `all_in`) while still mapping those controls back to the underlying ROI keys internally. Legacy `bet_btn` remains supported as a compatibility alias for older saved ROIs.
 - The advice panel was simplified: the low-value static "Planned Outputs" block was removed so the live advice detail gets more vertical space.
 - The advice panel now also includes editable stake controls for `SB`, `BB`, and `Buy-In`. The tester rescales engine payloads from the current template in big-blind units, so `minimum_bet`, `starting_pot`, `starting_stack`, and the local preflop raise size all follow the configured stakes instead of staying hardcoded at `1/2` blinds and `100` buy-in.

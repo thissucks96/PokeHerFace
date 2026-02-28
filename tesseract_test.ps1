@@ -2834,7 +2834,7 @@ $lblTarget.Enabled = $true
 
 $advicePanel = New-Object System.Windows.Forms.Panel
 $advicePanel.Location = New-Object System.Drawing.Point(960, 96)
-$advicePanel.Size = New-Object System.Drawing.Size(250, 598)
+$advicePanel.Size = New-Object System.Drawing.Size(270, 598)
 $advicePanel.BackColor = [System.Drawing.Color]::FromArgb(26, 32, 40)
 $advicePanel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
 $form.Controls.Add($advicePanel)
@@ -3010,6 +3010,10 @@ $txtAdviceDetail.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
 $txtAdviceDetail.Text = $adviceSecondary
 $advicePanel.Controls.Add($txtAdviceDetail)
 
+foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)) {
+  $advicePanel.Controls.Add($manualActionButton)
+}
+
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
 $latestLabel.ForeColor = [System.Drawing.Color]::White
@@ -3053,7 +3057,7 @@ function Update-MainLayout {
   $gap = 10
   $clientWidth = [Math]::Max([int]$form.ClientSize.Width, 1120)
   $clientHeight = [Math]::Max([int]$form.ClientSize.Height, 720)
-  $adviceWidth = 250
+  $adviceWidth = 270
   $adviceLeft = [int]($clientWidth - $adviceWidth - $margin)
   $leftRight = [int]($adviceLeft - $gap)
   $leftWidth = [Math]::Max(680, [int]($leftRight - $margin))
@@ -3063,19 +3067,6 @@ function Update-MainLayout {
   $regionLabel.Size = New-Object System.Drawing.Size($leftWidth, 20)
   $cardStatusLabel.Size = New-Object System.Drawing.Size($leftWidth, 18)
 
-  $actionButtons = @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)
-  $visibleActionButtons = @($actionButtons | Where-Object { $_.Visible })
-  $actionRowWidth = 0
-  if ($visibleActionButtons.Count -gt 0) {
-    $actionRowWidth = ($visibleActionButtons | Measure-Object -Property Width -Sum).Sum + (($visibleActionButtons.Count - 1) * $gap)
-  }
-  $actionStartX = [Math]::Max($adviceLeft, [int]($clientWidth - $margin - $actionRowWidth))
-  $cursorX = $actionStartX
-  foreach ($btn in $visibleActionButtons) {
-    $btn.Location = New-Object System.Drawing.Point($cursorX, 18)
-    $cursorX += [int]$btn.Width + $gap
-  }
-
   $row1Y = 136
   $x = $margin
   $btnPick.Location = New-Object System.Drawing.Point($x, $row1Y)
@@ -3083,28 +3074,30 @@ function Update-MainLayout {
   $btnOnce.Location = New-Object System.Drawing.Point($x, $row1Y)
   $x += [int]$btnOnce.Width + $gap
   $btnRandomCard.Location = New-Object System.Drawing.Point($x, $row1Y)
-  $x += [int]$btnRandomCard.Width + 20
-  $lblAuto.Location = New-Object System.Drawing.Point($x, ($row1Y + 7))
-  $x += 138
-  $numInterval.Location = New-Object System.Drawing.Point($x, ($row1Y + 4))
-
   $btnRestart.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnRestart.Width), $row1Y)
   $btnNewHand.Location = New-Object System.Drawing.Point(($btnRestart.Left - $gap - [int]$btnNewHand.Width), $row1Y)
   $btnRunEngine.Location = New-Object System.Drawing.Point(($btnNewHand.Left - $gap - [int]$btnRunEngine.Width), $row1Y)
-  $btnAutoStop.Location = New-Object System.Drawing.Point(($btnRunEngine.Left - $gap - [int]$btnAutoStop.Width), $row1Y)
-  $btnAutoStart.Location = New-Object System.Drawing.Point(($btnAutoStop.Left - $gap - [int]$btnAutoStart.Width), $row1Y)
 
   $row2Y = 176
-  $lblCaptureMode.Location = New-Object System.Drawing.Point($margin, $row2Y)
-  $cmbCaptureMode.Location = New-Object System.Drawing.Point(110, ($row2Y - 3))
-  $lblTarget.Location = New-Object System.Drawing.Point(320, $row2Y)
-  $cmbTarget.Location = New-Object System.Drawing.Point(405, ($row2Y - 3))
-  $cmbTarget.Size = New-Object System.Drawing.Size(180, 24)
-  $btnSetHeroes.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnSetHeroes.Width), ($row2Y - 3))
-  $btnResetRois.Location = New-Object System.Drawing.Point(($btnSetHeroes.Left - $gap - [int]$btnResetRois.Width), ($row2Y - 3))
-  $btnTargets.Location = New-Object System.Drawing.Point(($btnResetRois.Left - $gap - [int]$btnTargets.Width), ($row2Y - 3))
+  $lblCaptureMode.Location = New-Object System.Drawing.Point($margin, ($row2Y + 4))
+  $cmbCaptureMode.Location = New-Object System.Drawing.Point(88, $row2Y)
+  $cmbCaptureMode.Size = New-Object System.Drawing.Size(190, 24)
+  $lblTarget.Location = New-Object System.Drawing.Point(292, ($row2Y + 4))
+  $cmbTarget.Location = New-Object System.Drawing.Point(362, $row2Y)
+  $cmbTarget.Size = New-Object System.Drawing.Size(150, 24)
+  $lblAuto.Location = New-Object System.Drawing.Point(526, ($row2Y + 4))
+  $numInterval.Location = New-Object System.Drawing.Point(662, $row2Y)
+  $btnAutoStart.Location = New-Object System.Drawing.Point(742, ($row2Y - 1))
+  $btnAutoStop.Location = New-Object System.Drawing.Point(($btnAutoStart.Right + $gap), ($row2Y - 1))
 
-  $quickRowY = 210
+  $row3Y = 212
+  $btnTargets.Location = New-Object System.Drawing.Point($margin, $row3Y)
+  $btnResetRois.Location = New-Object System.Drawing.Point(($btnTargets.Right + $gap), $row3Y)
+  $btnSetHeroes.Location = New-Object System.Drawing.Point(($btnResetRois.Right + $gap), $row3Y)
+  $lblEngineProfile.Location = New-Object System.Drawing.Point(($btnSetHeroes.Right + 18), ($row3Y + 4))
+  $cmbEngineProfile.Location = New-Object System.Drawing.Point(($lblEngineProfile.Right + 8), ($row3Y + 1))
+
+  $quickRowY = 248
   $quickButtons = @($btnRunFlop1, $btnRunFlop2, $btnRunFlop3, $btnRunTurn, $btnRunRiver)
   $lblQuick.Visible = -not $quickSingleSlotHidden
   foreach ($ctl in $quickButtons) {
@@ -3125,13 +3118,11 @@ function Update-MainLayout {
     }
   }
 
-  $batchRowY = $(if ($quickSingleSlotHidden) { 210 } else { 244 })
-  $cmbEngineProfile.Location = New-Object System.Drawing.Point(($leftRight - [int]$cmbEngineProfile.Width), ($batchRowY + 1))
-  $lblEngineProfile.Location = New-Object System.Drawing.Point(($cmbEngineProfile.Left - 95), ($batchRowY + 4))
-  $btnRunHero.Location = New-Object System.Drawing.Point(($lblEngineProfile.Left - $gap - [int]$btnRunHero.Width), $batchRowY)
-  $btnRunFlopSet.Location = New-Object System.Drawing.Point(($btnRunHero.Left - $gap - [int]$btnRunFlopSet.Width), $batchRowY)
+  $batchRowY = $(if ($quickSingleSlotHidden) { 248 } else { 282 })
+  $btnRunFlopSet.Location = New-Object System.Drawing.Point($margin, $batchRowY)
+  $btnRunHero.Location = New-Object System.Drawing.Point(($btnRunFlopSet.Right + $gap), $batchRowY)
 
-  $hintY = $batchRowY + 30
+  $hintY = $batchRowY + 36
   $hint.Location = New-Object System.Drawing.Point($margin, $hintY)
   $hint.Size = New-Object System.Drawing.Size($leftWidth, 18)
 
@@ -3155,17 +3146,39 @@ function Update-MainLayout {
   $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
   $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
   $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
+  $manualActionButtons = @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)
+  $manualActionButtonWidth = [Math]::Max(76, [int](($innerWidth - (2 * $gap)) / 3))
+  foreach ($btn in $manualActionButtons) {
+    $btn.Size = New-Object System.Drawing.Size($manualActionButtonWidth, 28)
+  }
+  $btnCheck.Location = New-Object System.Drawing.Point(18, 176)
+  $btnFold.Location = New-Object System.Drawing.Point(($btnCheck.Right + $gap), 176)
+  $btnCall.Location = New-Object System.Drawing.Point(($btnFold.Right + $gap), 176)
+  $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
+  $btnAllIn.Location = New-Object System.Drawing.Point(($btnRaise.Right + $gap), 214)
+
+  $stakesTopY = 258
+  $stakesTitle.Location = New-Object System.Drawing.Point(18, $stakesTopY)
+  $lblSmallBlind.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 28))
+  $numSmallBlind.Location = New-Object System.Drawing.Point(44, ($stakesTopY + 24))
   $stakesControlWidth = [Math]::Max(56, [int](($innerWidth - 72) / 2))
   $numSmallBlind.Size = New-Object System.Drawing.Size($stakesControlWidth, 24)
-  $lblBigBlind.Location = New-Object System.Drawing.Point(($numSmallBlind.Right + 16), 204)
-  $numBigBlind.Location = New-Object System.Drawing.Point(($lblBigBlind.Right + 6), 200)
+  $lblBigBlind.Location = New-Object System.Drawing.Point(($numSmallBlind.Right + 16), ($stakesTopY + 28))
+  $numBigBlind.Location = New-Object System.Drawing.Point(($lblBigBlind.Right + 6), ($stakesTopY + 24))
   $numBigBlind.Size = New-Object System.Drawing.Size([Math]::Max(56, [int]($innerWidth - ($numBigBlind.Left - 18))), 24)
+  $lblBuyIn.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 60))
+  $numBuyIn.Location = New-Object System.Drawing.Point(72, ($stakesTopY + 56))
   $numBuyIn.Size = New-Object System.Drawing.Size([Math]::Max(96, [int]($innerWidth - 54)), 24)
+  $lblCurrentPotTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 96))
+  $lblCurrentPotValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 116))
   $lblCurrentPotValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
+  $lblCurrentChipsTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 142))
+  $lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 162))
   $lblCurrentChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
-  $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, 370)
-  $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 394)
-  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - 414)))
+  $detailTopY = $stakesTopY + 200
+  $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
+  $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
+  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
 }
 
 function Write-Log {
