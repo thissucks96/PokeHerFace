@@ -6437,23 +6437,27 @@ function Set-AdviceFromEngineResult {
     }
 
     $sortedRows = New-Object System.Collections.Generic.List[object]
-    $remaining = New-Object System.Collections.Generic.List[object]
-    foreach ($entry in @($rowsForDecision)) { [void]$remaining.Add($entry) }
-    while ($remaining.Count -gt 0) {
-      $bestIndex = 0
-      $bestWeight = [double]$remaining[0].weight
-      $bestToken = [string]$remaining[0].token
-      for ($i = 1; $i -lt $remaining.Count; $i++) {
-        $currentWeight = [double]$remaining[$i].weight
-        $currentToken = [string]$remaining[$i].token
-        if (($currentWeight -gt $bestWeight) -or (($currentWeight -eq $bestWeight) -and ($currentToken -lt $bestToken))) {
+    $rowCount = [int]$rowsForDecision.Count
+    $usedIndexes = @{}
+    for ($pick = 0; $pick -lt $rowCount; $pick++) {
+      $bestIndex = -1
+      $bestWeight = [double]::NegativeInfinity
+      $bestToken = ""
+      for ($i = 0; $i -lt $rowCount; $i++) {
+        if ($usedIndexes.ContainsKey($i)) { continue }
+        $candidate = $rowsForDecision[$i]
+        if ($null -eq $candidate) { continue }
+        $currentWeight = [double]$candidate.weight
+        $currentToken = [string]$candidate.token
+        if (($bestIndex -lt 0) -or ($currentWeight -gt $bestWeight) -or (($currentWeight -eq $bestWeight) -and ($currentToken -lt $bestToken))) {
           $bestIndex = $i
           $bestWeight = $currentWeight
           $bestToken = $currentToken
         }
       }
-      [void]$sortedRows.Add($remaining[$bestIndex])
-      $remaining.RemoveAt($bestIndex)
+      if ($bestIndex -lt 0) { break }
+      [void]$sortedRows.Add($rowsForDecision[$bestIndex])
+      $usedIndexes[$bestIndex] = $true
     }
 
     Update-CheckCallButtonModeFromState
