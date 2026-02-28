@@ -4854,6 +4854,18 @@ function Update-CheckCallButtonModeFromState {
   $allInOnly = $villainAllIn -or ($requiredRaiseAmount -ge [int]$script:currentHeroChips)
   $raiseMode = if ($allInOnly) { "ALL IN" } else { "RAISE" }
   Set-RaiseAllInButtonMode -ActionToken $raiseMode
+
+  $heroTurn = Test-IsHeroTurn
+  $legalTokens = @()
+  if ($heroTurn) {
+    $legalTokens = @(Get-HeroLegalActionTokens)
+  }
+  $canCheckCall = $heroTurn -and (("CHECK" -in $legalTokens) -or ("CALL" -in $legalTokens))
+  if ($null -ne $script:btnCheck) { $script:btnCheck.Enabled = [bool]$canCheckCall }
+  if ($null -ne $script:btnCall) { $script:btnCall.Enabled = [bool]$canCheckCall }
+  if ($null -ne $script:btnFold) { $script:btnFold.Enabled = [bool]($heroTurn -and ("FOLD" -in $legalTokens)) }
+  if ($null -ne $script:btnRaise) { $script:btnRaise.Enabled = [bool]($heroTurn -and (("RAISE" -in $legalTokens) -or ("ALL IN" -in $legalTokens))) }
+  if ($null -ne $script:btnAllIn) { $script:btnAllIn.Enabled = [bool]($heroTurn -and ("ALL IN" -in $legalTokens)) }
   Update-VillainActionControlState
 }
 
@@ -7794,10 +7806,32 @@ function Try-AutoSendHeroCardsToEngine {
     if ($preflopSolveKey -eq $lastHeroAutoSendKey) {
       return
     }
-    $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
-    $villainActed = Try-RunAutomaticVillainTurn
-    if ($villainActed) {
+    $villainActed = $false
+    if (Test-IsVillainTurn) {
+      $villainActed = Try-RunAutomaticVillainTurn
+    }
+    if ((-not $villainActed) -and (Test-IsVillainTurn)) {
+      $script:adviceHasAction = $false
+      $script:adviceActionPrimary = ""
+      $script:adviceActionSecondary = ""
+      Set-AdviceState -Primary "WAIT" -Secondary "Villain to act preflop."
+      Write-Log ("Hero cards ready ({0}); waiting for villain action preflop." -f (Get-HeroCardsText)) -Type "hero_wait_villain_preflop" -Data @{
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+        stage_key = $heroStageKey
+        preflop_key = $preflopSolveKey
+      }
+      $script:lastHeroAutoSendKey = $preflopSolveKey
+      Update-CheckCallButtonModeFromState
+      return
+    }
+    if (Test-IsHeroTurn) {
       $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    }
+    if ($villainActed) {
+      if (Test-IsHeroTurn) {
+        $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+      }
     }
     $preflopSolveKey = ("preflop|{0}|{1}|sb={2}|fb={3}|hc={4}|vc={5}|ha={6}|va={7}" -f `
       [string]$heroCards["hero1"], `
