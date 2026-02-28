@@ -2225,7 +2225,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     neural_elapsed = 0.0
     neural_applied = False
     neural_timeout_effective = 0
-    if NEURAL_BRAIN_ENABLED:
+    if NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE in {"shadow", "prefer"}:
         neural_budget_remaining = max(0.0, request_deadline - time.perf_counter())
         if neural_budget_remaining >= 1.0:
             neural_timeout_effective = int(max(1, min(NEURAL_BRAIN_TIMEOUT_SEC, int(math.ceil(neural_budget_remaining)))))
@@ -2246,6 +2246,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                     neural_applied = True
         else:
             neural_error = "global_budget_exhausted_before_neural_stage"
+    elif NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE == "prefer_on_fast_failover":
+        neural_error = "skipped_non_failover_neural_stage"
 
     lock_confidence = _avg_lock_confidence(node_lock)
     lock_quality_score = (

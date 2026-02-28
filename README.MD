@@ -499,12 +499,19 @@ No-engine startup variant:
   - `ENGINE_SPOT_TEMPLATE_PATH` (default `4_LLM_Bridge/examples/spot.sample.json`)
   - `ENGINE_OCR_OUT_DIR` (default `5_Vision_Extraction/out/flop_engine`)
   - `ENGINE_LLM_PRESET` (default `local_qwen3_coder_30b`)
-  - `ENGINE_RUNTIME_PROFILE` (`fast`/`normal`, default `fast`)
+  - `ENGINE_RUNTIME_PROFILE` (`fast`/`fast_live`/`normal`, default `fast`)
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
   - `ENGINE_JOB_MAX_AGE_SEC` (default `max(120, ENGINE_SOLVER_TIMEOUT_SEC+45)`) for stale background-job cleanup
   - `ENGINE_PRIORITY_ROUTING` (`1`/`0`, default `1`) enables stage-priority queue routing.
   - `ENGINE_PRIORITY_HOLD_SEC` (default `1.5`) keeps higher-priority active jobs from being preempted by lower-priority updates for a short hold window.
+  - `ENGINE_NEURAL_ENABLED` (`0`/`1`, default `0`) toggles bridge neural adapter usage from the tester launcher.
+  - `ENGINE_NEURAL_MODE` (`shadow`/`prefer`/`prefer_on_fast_failover`, default `prefer_on_fast_failover`).
+    - `prefer_on_fast_failover` now runs neural only on failover paths (does not add latency to normal baseline solves).
+  - `ENGINE_NEURAL_TIMEOUT_SEC` (default `2`)
+  - `ENGINE_NEURAL_CFR_ITERS` (default `120`)
+  - `ENGINE_NEURAL_CFR_SKIP_ITERS` (default `60`)
+  - `ENGINE_NEURAL_PYTHON` (optional; defaults to `.venv/Scripts/python.exe` when present)
   - `BACKEND_AUTOSTART` (`1`/`0`, default `1`)
   - `OLLAMA_VISION_KEEP_ALIVE` (default `0s`; unloads vision model after each OCR call to free VRAM for solver/LLM work)
   - `POKE_OCR_PARALLEL` (`1`/`0`, default `1`) enables parallel slot OCR for staged board/hero passes.

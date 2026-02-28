@@ -188,6 +188,46 @@ $engineSolverTimeoutSec = 180
 if ($env:ENGINE_SOLVER_TIMEOUT_SEC -and [int]::TryParse([string]$env:ENGINE_SOLVER_TIMEOUT_SEC, [ref]$engineSolverTimeoutSec)) {
   if ($engineSolverTimeoutSec -lt 30) { $engineSolverTimeoutSec = 30 }
 }
+$engineNeuralEnabled = $false
+if ($env:ENGINE_NEURAL_ENABLED -and ([string]$env:ENGINE_NEURAL_ENABLED).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $engineNeuralEnabled = $true
+}
+$engineNeuralMode = if ($env:ENGINE_NEURAL_MODE) { ([string]$env:ENGINE_NEURAL_MODE).Trim().ToLowerInvariant() } else { "prefer_on_fast_failover" }
+if ($engineNeuralMode -notin @("shadow", "prefer", "prefer_on_fast_failover")) {
+  $engineNeuralMode = "prefer_on_fast_failover"
+}
+$engineNeuralTimeoutSec = 2
+if ($env:ENGINE_NEURAL_TIMEOUT_SEC) {
+  $parsedNeuralTimeout = 0
+  if ([int]::TryParse([string]$env:ENGINE_NEURAL_TIMEOUT_SEC, [ref]$parsedNeuralTimeout) -and $parsedNeuralTimeout -ge 1 -and $parsedNeuralTimeout -le 15) {
+    $engineNeuralTimeoutSec = [int]$parsedNeuralTimeout
+  }
+}
+$engineNeuralCfrIters = 120
+if ($env:ENGINE_NEURAL_CFR_ITERS) {
+  $parsedNeuralIters = 0
+  if ([int]::TryParse([string]$env:ENGINE_NEURAL_CFR_ITERS, [ref]$parsedNeuralIters) -and $parsedNeuralIters -ge 1) {
+    $engineNeuralCfrIters = [int]$parsedNeuralIters
+  }
+}
+$engineNeuralCfrSkipIters = 60
+if ($env:ENGINE_NEURAL_CFR_SKIP_ITERS) {
+  $parsedNeuralSkip = 0
+  if ([int]::TryParse([string]$env:ENGINE_NEURAL_CFR_SKIP_ITERS, [ref]$parsedNeuralSkip) -and $parsedNeuralSkip -ge 0) {
+    $engineNeuralCfrSkipIters = [int]$parsedNeuralSkip
+  }
+}
+if ($engineNeuralCfrSkipIters -ge $engineNeuralCfrIters) {
+  $engineNeuralCfrSkipIters = [int]([Math]::Max(0, $engineNeuralCfrIters - 1))
+}
+$engineNeuralPython = if ($env:ENGINE_NEURAL_PYTHON) { ([string]$env:ENGINE_NEURAL_PYTHON).Trim() } else { "" }
+if ([string]::IsNullOrWhiteSpace($engineNeuralPython)) {
+  $preferredNeuralPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+  if (Test-Path $preferredNeuralPython) {
+    $engineNeuralPython = $preferredNeuralPython
+  }
+}
+$neuralStatusLabel = if ($engineNeuralEnabled) { "ON/{0}" -f $engineNeuralMode } else { "OFF" }
 $engineJobMaxAgeSec = [int]([Math]::Max(120, $engineSolverTimeoutSec + 45))
 if ($env:ENGINE_JOB_MAX_AGE_SEC) {
   $parsedMaxAge = 0
@@ -2550,7 +2590,12 @@ function Build-EngineSpotPayload {
     if (-not ($spot.PSObject.Properties.Name -contains "active_node_path")) {
       $spot | Add-Member -NotePropertyName active_node_path -NotePropertyValue "" -Force
     }
-    $spot.active_node_path = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+    if ($spot -is [System.Collections.IDictionary]) {
+      $spot["active_node_path"] = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+    }
+    else {
+      $spot.active_node_path = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+    }
     $spot.remove_donk_bets = $false
     $streetKey = switch ($BoardCards.Count) {
       3 { "flop" }
@@ -3711,7 +3756,7 @@ $status.AutoSize = $false
 $status.AutoEllipsis = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
 $parallelLabel = if ($ocrParallelEnabled) { ("parallel({0})" -f [int]$ocrParallelMaxWorkers) } else { "sequential" }
-$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant())
+$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6} | neural: {7}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant(), $neuralStatusLabel)
 $status.Text = ("{0} | Engine: idle" -f $statusBaseText)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
@@ -6006,6 +6051,19 @@ function Ensure-BackendsRunning {
       else {
         Write-Log ("Starting bridge server at {0} using {1}..." -f $bridgeHealthEndpoint, $pyCmd.label)
         try {
+          $env:NEURAL_BRAIN_ENABLED = if ($engineNeuralEnabled) { "1" } else { "0" }
+          $env:NEURAL_BRAIN_MODE = [string]$engineNeuralMode
+          $env:NEURAL_BRAIN_TIMEOUT_SEC = [string]$engineNeuralTimeoutSec
+          $env:NEURAL_BRAIN_CFR_ITERS = [string]$engineNeuralCfrIters
+          $env:NEURAL_BRAIN_CFR_SKIP_ITERS = [string]$engineNeuralCfrSkipIters
+          if (-not [string]::IsNullOrWhiteSpace($engineNeuralPython)) {
+            $env:NEURAL_BRAIN_PYTHON = [string]$engineNeuralPython
+          }
+          else {
+            Remove-Item Env:\NEURAL_BRAIN_PYTHON -ErrorAction SilentlyContinue
+          }
+          Write-Log ("Neural bridge mode: enabled={0}, mode={1}, timeout={2}s, cfr={3}/{4}" -f `
+            $(if ($engineNeuralEnabled) { "yes" } else { "no" }), $engineNeuralMode, [int]$engineNeuralTimeoutSec, [int]$engineNeuralCfrIters, [int]$engineNeuralCfrSkipIters) -Type "neural_bridge_config"
           $args = @()
           $args += $pyCmd.prefix
           $args += @($bridgeScript)
@@ -8666,8 +8724,8 @@ $cmbEngineProfile.Add_SelectedIndexChanged({
   $selected = [string]$cmbEngineProfile.SelectedItem
   if (-not [string]::IsNullOrWhiteSpace($selected)) {
     $script:engineRuntimeProfile = $selected.ToLowerInvariant()
-    $script:statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6}" -f `
-      $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant())
+    $script:statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6} | neural: {7}" -f `
+      $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant(), $neuralStatusLabel)
     Write-Log ("Engine runtime profile set to: {0}" -f $engineRuntimeProfile.ToUpperInvariant()) -Type "engine_runtime_profile" -Data @{
       runtime_profile = $engineRuntimeProfile
     }
