@@ -257,6 +257,13 @@ $backendAutoStart = $true
 if ($env:BACKEND_AUTOSTART -and ([string]$env:BACKEND_AUTOSTART).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
   $backendAutoStart = $false
 }
+# Temporary operating mode: disable all screen capture/OCR paths by default.
+# Set POKERBOT_ENABLE_SCREEN_CAPTURE=1 to re-enable full OCR capture behavior.
+$script:screenCaptureEnabled = $false
+if ($env:POKERBOT_ENABLE_SCREEN_CAPTURE -and ([string]$env:POKERBOT_ENABLE_SCREEN_CAPTURE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $script:screenCaptureEnabled = $true
+}
+$screenCaptureStatusLabel = if ($script:screenCaptureEnabled) { "enabled" } else { "disabled/manual-only" }
 $uiSessionId = (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
 $uiLogRoot = Join-Path $PSScriptRoot "5_Vision_Extraction\out\ui_session_logs"
 $uiLogTextPath = Join-Path $uiLogRoot ("session_{0}.log" -f $uiSessionId)
@@ -1508,6 +1515,9 @@ function Capture-RegionImage {
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region,
     [Parameter(Mandatory = $true)][string]$Path
   )
+  if (-not [bool]$script:screenCaptureEnabled) {
+    throw "Capture-RegionImage blocked: screen capture/OCR is disabled (manual mode)."
+  }
   $Region = Convert-ToRectangleSafe -Value $Region
   if ($Region.Width -le 0 -or $Region.Height -le 0) {
     throw "Capture-RegionImage received an empty/invalid region."
@@ -2929,6 +2939,14 @@ function Get-CardPresenceSignalFromRegion {
   param(
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region
   )
+  if (-not [bool]$script:screenCaptureEnabled) {
+    return [pscustomobject]@{
+      likely_card = $false
+      white_ratio = 0.0
+      green_ratio = 0.0
+      sampled = 0
+    }
+  }
 
   $Region = Convert-ToRectangleSafe -Value $Region
   if ($Region.Width -le 0 -or $Region.Height -le 0) {
@@ -3019,6 +3037,9 @@ function Get-BestOcrForRegion {
     [Parameter(Mandatory = $true)][string]$TmpDir,
     [Parameter(Mandatory = $true)][string]$Tag
   )
+  if (-not [bool]$script:screenCaptureEnabled) {
+    return $null
+  }
   $Region = Convert-ToRectangleSafe -Value $Region
   if ($Region.Width -le 0 -or $Region.Height -le 0) {
     return $null
@@ -3155,6 +3176,9 @@ function Get-CardSuitHintFromRegionColor {
   param(
     [Parameter(Mandatory = $true)][System.Drawing.Rectangle]$Region
   )
+  if (-not [bool]$script:screenCaptureEnabled) {
+    return $null
+  }
 
   $Region = Convert-ToRectangleSafe -Value $Region
   if ($Region.Width -le 0 -or $Region.Height -le 0) {
@@ -4059,7 +4083,7 @@ $status.AutoSize = $false
 $status.AutoEllipsis = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
 $parallelLabel = if ($ocrParallelEnabled) { ("parallel({0})" -f [int]$ocrParallelMaxWorkers) } else { "sequential" }
-$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6} | neural: {7}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant(), $neuralStatusLabel)
+$statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | capture: {3} | card mode: {4} | ocr: {5} | bridge: {6} | profile: {7} | neural: {8}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $screenCaptureStatusLabel, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant(), $neuralStatusLabel)
 $status.Text = ("{0} | Engine: idle" -f $statusBaseText)
 $status.ForeColor = [System.Drawing.Color]::FromArgb(140, 220, 170)
 $form.Controls.Add($status)
@@ -6982,6 +7006,10 @@ function Repick-RoiForSlot {
   param(
     [Parameter(Mandatory = $true)][string]$Key
   )
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log ("Repick skipped for {0}: screen capture/OCR is disabled (manual mode)." -f $Key)
+    return
+  }
   if (-not ($allSlotOrder -contains $Key)) {
     return
   }
@@ -7239,6 +7267,7 @@ function Populate-RoiSlotContextMenuItems {
 
     $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
     $runItem.Text = "Run OCR"
+    $runItem.Enabled = [bool]$script:screenCaptureEnabled
     $runItem.Add_Click({
       Run-OcrSingleSlot -Slot $SlotKey
     }.GetNewClosure())
@@ -7248,6 +7277,7 @@ function Populate-RoiSlotContextMenuItems {
     [void]$Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
     $runItem.Text = "Run OCR"
+    $runItem.Enabled = [bool]$script:screenCaptureEnabled
     $runItem.Add_Click({
       Run-OcrSingleSlot -Slot $SlotKey
     }.GetNewClosure())
@@ -7266,6 +7296,7 @@ function Populate-RoiSlotContextMenuItems {
 
   $repickItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $repickItem.Text = "Repick ROI"
+  $repickItem.Enabled = [bool]$script:screenCaptureEnabled
   $repickItem.Add_Click({
     Repick-RoiForSlot -Key $SlotKey
   }.GetNewClosure())
@@ -7893,6 +7924,10 @@ function Run-OcrSingleSlot {
     [switch]$FastMode
   )
 
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log ("Single-slot OCR skipped [{0}]: screen capture/OCR is disabled (manual mode)." -f $Slot)
+    return
+  }
   if ($isBusy) {
     return
   }
@@ -8471,6 +8506,10 @@ function Run-OcrBoardSetAndQueueEngine {
     [Parameter(Mandatory = $true)][string]$StageLabel,
     [Parameter(Mandatory = $true)][string[]]$Slots
   )
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log ("{0} OCR skipped: screen capture/OCR is disabled (manual mode)." -f $StageLabel)
+    return
+  }
   if ($isBusy) {
     return
   }
@@ -8771,6 +8810,10 @@ function Request-NewHandCycle {
 }
 
 function Run-OcrHeroSet {
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log "Run Hero skipped: screen capture/OCR is disabled (manual mode)."
+    return
+  }
   if ($isBusy) {
     return
   }
@@ -9069,6 +9112,10 @@ function Poll-EngineJobs {
 }
 
 function Run-Ocr {
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log "OCR skipped: screen capture/OCR is disabled (manual mode)."
+    return
+  }
   if ($isBusy) {
     return
   }
@@ -9243,6 +9290,27 @@ function Run-Ocr {
   }
 }
 
+function Update-ScreenCaptureControlState {
+  $captureEnabled = [bool]$script:screenCaptureEnabled
+  foreach ($ctl in @(
+      $btnPick,
+      $btnOnce,
+      $btnAutoStart,
+      $btnAutoStop,
+      $btnRunFlop1,
+      $btnRunFlop2,
+      $btnRunFlop3,
+      $btnRunTurn,
+      $btnRunRiver,
+      $btnRunFlopSet,
+      $btnRunHero
+    )) {
+    if ($null -ne $ctl) {
+      $ctl.Enabled = $captureEnabled
+    }
+  }
+}
+
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = [int]($numInterval.Value * 1000)
 $timer.Add_Tick({
@@ -9269,6 +9337,10 @@ $engineJobTimer.Add_Tick({
 })
 
 $btnPick.Add_Click({
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log "Pick ROI skipped: screen capture/OCR is disabled (manual mode)."
+    return
+  }
   Write-Log "Selecting OCR rectangle..."
   $didClone = $false
   foreach ($key in @($overlayForms.Keys)) {
@@ -9385,6 +9457,10 @@ $btnQuickToggle.Add_Click({
 })
 
 $btnAutoStart.Add_Click({
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log "Auto OCR skipped: screen capture/OCR is disabled (manual mode)."
+    return
+  }
   if (-not (Test-OllamaEndpoint)) {
     [void][System.Windows.Forms.MessageBox]::Show(
       ("Ollama endpoint not reachable at {0}. Start ollama serve first." -f $ollamaHost),
@@ -9505,8 +9581,8 @@ $cmbEngineProfile.Add_SelectedIndexChanged({
   $selected = [string]$cmbEngineProfile.SelectedItem
   if (-not [string]::IsNullOrWhiteSpace($selected)) {
     $script:engineRuntimeProfile = $selected.ToLowerInvariant()
-    $script:statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6} | neural: {7}" -f `
-      $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant(), $neuralStatusLabel)
+    $script:statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | capture: {3} | card mode: {4} | ocr: {5} | bridge: {6} | profile: {7} | neural: {8}" -f `
+      $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $screenCaptureStatusLabel, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant(), $neuralStatusLabel)
     Write-Log ("Engine runtime profile set to: {0}" -f $engineRuntimeProfile.ToUpperInvariant()) -Type "engine_runtime_profile" -Data @{
       runtime_profile = $engineRuntimeProfile
     }
@@ -9534,6 +9610,7 @@ $form.Add_Shown({
   $cardStatusLabel.Text = Format-CardSlotStatus
   Update-TargetsButtonText
   Reset-TableStateToCurrentStakes
+  Update-ScreenCaptureControlState
   Refresh-RoiOverlays
   if ($null -eq $adviceOverlay -or $adviceOverlay.IsDisposed) {
     $script:adviceOverlay = New-AdviceOverlayForm
@@ -9558,7 +9635,15 @@ $form.Add_Shown({
     }
   }
   Ensure-BackendsRunning
-  Write-Log "Ready. Select target, pick each ROI, then run OCR."
+  if (-not [bool]$script:screenCaptureEnabled) {
+    Write-Log "Screen capture/OCR is disabled (manual mode). Set POKERBOT_ENABLE_SCREEN_CAPTURE=1 to re-enable."
+  }
+  if ([bool]$script:screenCaptureEnabled) {
+    Write-Log "Ready. Select target, pick each ROI, then run OCR."
+  }
+  else {
+    Write-Log "Ready. Screen capture/OCR disabled; use manual cards/actions and engine state flow."
+  }
   $timer.Start()
   $engineJobTimer.Start()
 })
