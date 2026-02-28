@@ -5027,19 +5027,9 @@ function Invoke-ManualActionSelection {
     $script:heroFolded = $false
     $script:heroActedThisRound = $true
     $stakes = Get-StakeSettings
-    $defaultAmount = if ($normalizedAction -eq "RAISE") {
-      if ($script:lastRecommendedRaiseAmount -gt 0) {
-        [int]$script:lastRecommendedRaiseAmount
-      }
-      elseif ([int]$script:currentFacingBetAmount -gt 0) {
-        [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
-      }
-      else {
-        [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
-      }
-    }
-    else {
-      if ([int]$script:currentFacingBetAmount -gt 0) {
+    $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
+    if ($normalizedAction -eq "CALL") {
+      $committedAmount = if ([int]$script:currentFacingBetAmount -gt 0) {
         [int]$script:currentFacingBetAmount
       }
       elseif ($script:lastRecommendedCallAmount -gt 0) {
@@ -5048,14 +5038,25 @@ function Invoke-ManualActionSelection {
       else {
         [int]$stakes.big_blind
       }
+      $committedAmount = [int]([Math]::Min($maxAmount, [Math]::Max(0, $committedAmount)))
     }
-    $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
-    $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount -BasePotAmount $(if ($normalizedAction -eq "RAISE") { [int]$script:currentPotAmount } else { 0 })
-    if ($null -eq $enteredAmount) {
-      Write-Log ("Manual action canceled: {0}" -f $normalizedAction)
-      return
+    else {
+      $defaultAmount = if ($script:lastRecommendedRaiseAmount -gt 0) {
+        [int]$script:lastRecommendedRaiseAmount
+      }
+      elseif ([int]$script:currentFacingBetAmount -gt 0) {
+        [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
+      }
+      else {
+        [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+      }
+      $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount -BasePotAmount ([int]$script:currentPotAmount)
+      if ($null -eq $enteredAmount) {
+        Write-Log ("Manual action canceled: {0}" -f $normalizedAction)
+        return
+      }
+      $committedAmount = [int]$enteredAmount
     }
-    $committedAmount = [int]$enteredAmount
     if ($committedAmount -gt 0) {
       $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
     }
