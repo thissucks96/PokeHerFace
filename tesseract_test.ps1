@@ -176,6 +176,8 @@ $engineQueueSkipNoChangeCount = 0
 $engineQueuePrioritySkipCount = 0
 $engineQueueCompletedCount = 0
 $engineLastResultSummary = "none"
+$advicePrimary = "WAIT"
+$adviceSecondary = "No actionable advice yet."
 $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
@@ -190,6 +192,11 @@ $managedOllamaStartedByUi = $false
 $managedBridgeStartedByUi = $false
 $autoEnabled = $false
 $overlayVisible = $true
+$adviceOverlay = $null
+$adviceOverlayTitleLabel = $null
+$adviceOverlayValueLabel = $null
+$lblAdviceValue = $null
+$txtAdviceDetail = $null
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
 $playerSlotOrder = @("hero1", "hero2")
 $actionSlotOrder = @("fold_btn", "call_btn", "bet_btn", "raise_btn")
@@ -2263,8 +2270,8 @@ $form.Text = "Poker Board Vision Tester"
 $form.StartPosition = "CenterScreen"
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
 $form.KeyPreview = $true
-$form.Size = New-Object System.Drawing.Size(980, 700)
-$form.MinimumSize = New-Object System.Drawing.Size(980, 700)
+$form.Size = New-Object System.Drawing.Size(1240, 790)
+$form.MinimumSize = New-Object System.Drawing.Size(1240, 790)
 $form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
 
 $title = New-Object System.Windows.Forms.Label
@@ -2278,7 +2285,9 @@ $form.Controls.Add($title)
 $status = New-Object System.Windows.Forms.Label
 $status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $status.Location = New-Object System.Drawing.Point(20, 44)
-$status.AutoSize = $true
+$status.Size = New-Object System.Drawing.Size(780, 18)
+$status.AutoSize = $false
+$status.AutoEllipsis = $true
 $modeLabel = if ($rankOnlyMode) { "rank-only" } else { "rank+suit" }
 $parallelLabel = if ($ocrParallelEnabled) { ("parallel({0})" -f [int]$ocrParallelMaxWorkers) } else { "sequential" }
 $statusBaseText = ("Local Vision: {0} @ {1} (keep_alive={2}) | card mode: {3} | ocr: {4} | bridge: {5} | profile: {6}" -f $ollamaVisionModel, $ollamaHost, $ollamaVisionKeepAlive, $modeLabel, $parallelLabel, $bridgeSolveEndpoint, $engineRuntimeProfile.ToUpperInvariant())
@@ -2288,8 +2297,10 @@ $form.Controls.Add($status)
 
 $engineStatusLine = New-Object System.Windows.Forms.Label
 $engineStatusLine.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$engineStatusLine.Location = New-Object System.Drawing.Point(20, 58)
-$engineStatusLine.AutoSize = $true
+$engineStatusLine.Location = New-Object System.Drawing.Point(20, 64)
+$engineStatusLine.Size = New-Object System.Drawing.Size(780, 18)
+$engineStatusLine.AutoSize = $false
+$engineStatusLine.AutoEllipsis = $true
 $engineStatusLine.Text = "Engine queue: idle"
 $engineStatusLine.ForeColor = [System.Drawing.Color]::FromArgb(165, 190, 210)
 $form.Controls.Add($engineStatusLine)
@@ -2298,21 +2309,25 @@ $regionLabel = New-Object System.Windows.Forms.Label
 $regionLabel.Text = "Selected: none"
 $regionLabel.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $regionLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$regionLabel.Location = New-Object System.Drawing.Point(20, 74)
-$regionLabel.AutoSize = $true
+$regionLabel.Location = New-Object System.Drawing.Point(20, 86)
+$regionLabel.Size = New-Object System.Drawing.Size(780, 20)
+$regionLabel.AutoSize = $false
+$regionLabel.AutoEllipsis = $true
 $form.Controls.Add($regionLabel)
 
 $cardStatusLabel = New-Object System.Windows.Forms.Label
 $cardStatusLabel.Text = "Set board (5), hero, and action targets."
 $cardStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $cardStatusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$cardStatusLabel.Location = New-Object System.Drawing.Point(20, 94)
-$cardStatusLabel.AutoSize = $true
+$cardStatusLabel.Location = New-Object System.Drawing.Point(20, 108)
+$cardStatusLabel.Size = New-Object System.Drawing.Size(780, 18)
+$cardStatusLabel.AutoSize = $false
+$cardStatusLabel.AutoEllipsis = $true
 $form.Controls.Add($cardStatusLabel)
 
 $btnPick = New-Object System.Windows.Forms.Button
 $btnPick.Text = "Pick ROI"
-$btnPick.Location = New-Object System.Drawing.Point(20, 118)
+$btnPick.Location = New-Object System.Drawing.Point(20, 136)
 $btnPick.Size = New-Object System.Drawing.Size(190, 34)
 $btnPick.FlatStyle = "Flat"
 $btnPick.ForeColor = [System.Drawing.Color]::White
@@ -2321,7 +2336,7 @@ $form.Controls.Add($btnPick)
 
 $btnOnce = New-Object System.Windows.Forms.Button
 $btnOnce.Text = "Run OCR Once"
-$btnOnce.Location = New-Object System.Drawing.Point(220, 118)
+$btnOnce.Location = New-Object System.Drawing.Point(220, 136)
 $btnOnce.Size = New-Object System.Drawing.Size(140, 34)
 $btnOnce.FlatStyle = "Flat"
 $btnOnce.ForeColor = [System.Drawing.Color]::White
@@ -2332,12 +2347,12 @@ $lblAuto = New-Object System.Windows.Forms.Label
 $lblAuto.Text = "Auto OCR interval (sec)"
 $lblAuto.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblAuto.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblAuto.Location = New-Object System.Drawing.Point(380, 125)
+$lblAuto.Location = New-Object System.Drawing.Point(380, 143)
 $lblAuto.AutoSize = $true
 $form.Controls.Add($lblAuto)
 
 $numInterval = New-Object System.Windows.Forms.NumericUpDown
-$numInterval.Location = New-Object System.Drawing.Point(520, 122)
+$numInterval.Location = New-Object System.Drawing.Point(520, 140)
 $numInterval.Size = New-Object System.Drawing.Size(70, 30)
 $numInterval.Minimum = 1
 $numInterval.Maximum = 60
@@ -2347,7 +2362,7 @@ $form.Controls.Add($numInterval)
 
 $btnAutoStart = New-Object System.Windows.Forms.Button
 $btnAutoStart.Text = "Start Auto"
-$btnAutoStart.Location = New-Object System.Drawing.Point(610, 118)
+$btnAutoStart.Location = New-Object System.Drawing.Point(610, 136)
 $btnAutoStart.Size = New-Object System.Drawing.Size(80, 34)
 $btnAutoStart.FlatStyle = "Flat"
 $btnAutoStart.ForeColor = [System.Drawing.Color]::White
@@ -2356,7 +2371,7 @@ $form.Controls.Add($btnAutoStart)
 
 $btnAutoStop = New-Object System.Windows.Forms.Button
 $btnAutoStop.Text = "Stop Auto"
-$btnAutoStop.Location = New-Object System.Drawing.Point(695, 118)
+$btnAutoStop.Location = New-Object System.Drawing.Point(695, 136)
 $btnAutoStop.Size = New-Object System.Drawing.Size(80, 34)
 $btnAutoStop.FlatStyle = "Flat"
 $btnAutoStop.ForeColor = [System.Drawing.Color]::White
@@ -2366,7 +2381,7 @@ $form.Controls.Add($btnAutoStop)
 
 $btnRunEngine = New-Object System.Windows.Forms.Button
 $btnRunEngine.Text = "Run Engine"
-$btnRunEngine.Location = New-Object System.Drawing.Point(780, 118)
+$btnRunEngine.Location = New-Object System.Drawing.Point(780, 136)
 $btnRunEngine.Size = New-Object System.Drawing.Size(95, 34)
 $btnRunEngine.FlatStyle = "Flat"
 $btnRunEngine.ForeColor = [System.Drawing.Color]::White
@@ -2375,7 +2390,7 @@ $form.Controls.Add($btnRunEngine)
 
 $btnRestart = New-Object System.Windows.Forms.Button
 $btnRestart.Text = "Restart"
-$btnRestart.Location = New-Object System.Drawing.Point(880, 118)
+$btnRestart.Location = New-Object System.Drawing.Point(880, 136)
 $btnRestart.Size = New-Object System.Drawing.Size(80, 34)
 $btnRestart.FlatStyle = "Flat"
 $btnRestart.ForeColor = [System.Drawing.Color]::White
@@ -2384,7 +2399,7 @@ $form.Controls.Add($btnRestart)
 
 $btnTargets = New-Object System.Windows.Forms.Button
 $btnTargets.Text = "Targets: On (F8)"
-$btnTargets.Location = New-Object System.Drawing.Point(610, 156)
+$btnTargets.Location = New-Object System.Drawing.Point(610, 176)
 $btnTargets.Size = New-Object System.Drawing.Size(120, 26)
 $btnTargets.FlatStyle = "Flat"
 $btnTargets.ForeColor = [System.Drawing.Color]::White
@@ -2393,7 +2408,7 @@ $form.Controls.Add($btnTargets)
 
 $btnResetRois = New-Object System.Windows.Forms.Button
 $btnResetRois.Text = "Reset ROIs"
-$btnResetRois.Location = New-Object System.Drawing.Point(740, 156)
+$btnResetRois.Location = New-Object System.Drawing.Point(740, 176)
 $btnResetRois.Size = New-Object System.Drawing.Size(120, 26)
 $btnResetRois.FlatStyle = "Flat"
 $btnResetRois.ForeColor = [System.Drawing.Color]::White
@@ -2402,7 +2417,7 @@ $form.Controls.Add($btnResetRois)
 
 $btnSetHeroes = New-Object System.Windows.Forms.Button
 $btnSetHeroes.Text = "Set Heroes ROI"
-$btnSetHeroes.Location = New-Object System.Drawing.Point(870, 156)
+$btnSetHeroes.Location = New-Object System.Drawing.Point(870, 176)
 $btnSetHeroes.Size = New-Object System.Drawing.Size(90, 26)
 $btnSetHeroes.FlatStyle = "Flat"
 $btnSetHeroes.ForeColor = [System.Drawing.Color]::White
@@ -2413,13 +2428,13 @@ $lblEngineProfile = New-Object System.Windows.Forms.Label
 $lblEngineProfile.Text = "Engine Profile"
 $lblEngineProfile.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblEngineProfile.Location = New-Object System.Drawing.Point(620, 214)
+$lblEngineProfile.Location = New-Object System.Drawing.Point(610, 214)
 $lblEngineProfile.AutoSize = $true
 $form.Controls.Add($lblEngineProfile)
 
 $cmbEngineProfile = New-Object System.Windows.Forms.ComboBox
 $cmbEngineProfile.DropDownStyle = "DropDownList"
-$cmbEngineProfile.Location = New-Object System.Drawing.Point(710, 211)
+$cmbEngineProfile.Location = New-Object System.Drawing.Point(700, 211)
 $cmbEngineProfile.Size = New-Object System.Drawing.Size(100, 24)
 $cmbEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbEngineProfile.Items.Add("fast")
@@ -2433,13 +2448,13 @@ $lblQuick = New-Object System.Windows.Forms.Label
 $lblQuick.Text = "Quick Test (single slot)"
 $lblQuick.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblQuick.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblQuick.Location = New-Object System.Drawing.Point(20, 186)
+$lblQuick.Location = New-Object System.Drawing.Point(20, 214)
 $lblQuick.AutoSize = $true
 $form.Controls.Add($lblQuick)
 
 $btnRunFlop1 = New-Object System.Windows.Forms.Button
 $btnRunFlop1.Text = "Run flop1"
-$btnRunFlop1.Location = New-Object System.Drawing.Point(170, 182)
+$btnRunFlop1.Location = New-Object System.Drawing.Point(170, 210)
 $btnRunFlop1.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunFlop1.FlatStyle = "Flat"
 $btnRunFlop1.ForeColor = [System.Drawing.Color]::White
@@ -2448,7 +2463,7 @@ $form.Controls.Add($btnRunFlop1)
 
 $btnRunFlop2 = New-Object System.Windows.Forms.Button
 $btnRunFlop2.Text = "Run flop2"
-$btnRunFlop2.Location = New-Object System.Drawing.Point(266, 182)
+$btnRunFlop2.Location = New-Object System.Drawing.Point(266, 210)
 $btnRunFlop2.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunFlop2.FlatStyle = "Flat"
 $btnRunFlop2.ForeColor = [System.Drawing.Color]::White
@@ -2457,7 +2472,7 @@ $form.Controls.Add($btnRunFlop2)
 
 $btnRunFlop3 = New-Object System.Windows.Forms.Button
 $btnRunFlop3.Text = "Run flop3"
-$btnRunFlop3.Location = New-Object System.Drawing.Point(362, 182)
+$btnRunFlop3.Location = New-Object System.Drawing.Point(362, 210)
 $btnRunFlop3.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunFlop3.FlatStyle = "Flat"
 $btnRunFlop3.ForeColor = [System.Drawing.Color]::White
@@ -2466,7 +2481,7 @@ $form.Controls.Add($btnRunFlop3)
 
 $btnRunTurn = New-Object System.Windows.Forms.Button
 $btnRunTurn.Text = "Run Turn+E"
-$btnRunTurn.Location = New-Object System.Drawing.Point(458, 182)
+$btnRunTurn.Location = New-Object System.Drawing.Point(458, 210)
 $btnRunTurn.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunTurn.FlatStyle = "Flat"
 $btnRunTurn.ForeColor = [System.Drawing.Color]::White
@@ -2475,7 +2490,7 @@ $form.Controls.Add($btnRunTurn)
 
 $btnRunRiver = New-Object System.Windows.Forms.Button
 $btnRunRiver.Text = "Run River+E"
-$btnRunRiver.Location = New-Object System.Drawing.Point(554, 182)
+$btnRunRiver.Location = New-Object System.Drawing.Point(554, 210)
 $btnRunRiver.Size = New-Object System.Drawing.Size(90, 28)
 $btnRunRiver.FlatStyle = "Flat"
 $btnRunRiver.ForeColor = [System.Drawing.Color]::White
@@ -2484,7 +2499,7 @@ $form.Controls.Add($btnRunRiver)
 
 $btnRunFlopSet = New-Object System.Windows.Forms.Button
 $btnRunFlopSet.Text = "Run Flop (1-3)"
-$btnRunFlopSet.Location = New-Object System.Drawing.Point(650, 182)
+$btnRunFlopSet.Location = New-Object System.Drawing.Point(650, 210)
 $btnRunFlopSet.Size = New-Object System.Drawing.Size(140, 28)
 $btnRunFlopSet.FlatStyle = "Flat"
 $btnRunFlopSet.ForeColor = [System.Drawing.Color]::White
@@ -2493,7 +2508,7 @@ $form.Controls.Add($btnRunFlopSet)
 
 $btnRunHero = New-Object System.Windows.Forms.Button
 $btnRunHero.Text = "Run Hero"
-$btnRunHero.Location = New-Object System.Drawing.Point(796, 182)
+$btnRunHero.Location = New-Object System.Drawing.Point(796, 210)
 $btnRunHero.Size = New-Object System.Drawing.Size(160, 28)
 $btnRunHero.FlatStyle = "Flat"
 $btnRunHero.ForeColor = [System.Drawing.Color]::White
@@ -2502,7 +2517,7 @@ $form.Controls.Add($btnRunHero)
 
 $btnFold = New-Object System.Windows.Forms.Button
 $btnFold.Text = "Fold"
-$btnFold.Location = New-Object System.Drawing.Point(610, 78)
+$btnFold.Location = New-Object System.Drawing.Point(840, 18)
 $btnFold.Size = New-Object System.Drawing.Size(84, 28)
 $btnFold.FlatStyle = "Flat"
 $btnFold.ForeColor = [System.Drawing.Color]::White
@@ -2512,7 +2527,7 @@ $form.Controls.Add($btnFold)
 
 $btnCall = New-Object System.Windows.Forms.Button
 $btnCall.Text = "Call"
-$btnCall.Location = New-Object System.Drawing.Point(700, 78)
+$btnCall.Location = New-Object System.Drawing.Point(930, 18)
 $btnCall.Size = New-Object System.Drawing.Size(84, 28)
 $btnCall.FlatStyle = "Flat"
 $btnCall.ForeColor = [System.Drawing.Color]::White
@@ -2522,7 +2537,7 @@ $form.Controls.Add($btnCall)
 
 $btnBet = New-Object System.Windows.Forms.Button
 $btnBet.Text = "Bet"
-$btnBet.Location = New-Object System.Drawing.Point(790, 78)
+$btnBet.Location = New-Object System.Drawing.Point(1020, 18)
 $btnBet.Size = New-Object System.Drawing.Size(84, 28)
 $btnBet.FlatStyle = "Flat"
 $btnBet.ForeColor = [System.Drawing.Color]::White
@@ -2532,7 +2547,7 @@ $form.Controls.Add($btnBet)
 
 $btnRaise = New-Object System.Windows.Forms.Button
 $btnRaise.Text = "Raise"
-$btnRaise.Location = New-Object System.Drawing.Point(880, 78)
+$btnRaise.Location = New-Object System.Drawing.Point(1110, 18)
 $btnRaise.Size = New-Object System.Drawing.Size(84, 28)
 $btnRaise.FlatStyle = "Flat"
 $btnRaise.ForeColor = [System.Drawing.Color]::White
@@ -2544,21 +2559,23 @@ $hint = New-Object System.Windows.Forms.Label
 $hint.Text = "Flow: select target -> pick ROI -> run OCR (flop/turn/river/hero)."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
 $hint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$hint.Location = New-Object System.Drawing.Point(20, 214)
-$hint.AutoSize = $true
+$hint.Location = New-Object System.Drawing.Point(20, 244)
+$hint.Size = New-Object System.Drawing.Size(780, 18)
+$hint.AutoSize = $false
+$hint.AutoEllipsis = $true
 $form.Controls.Add($hint)
 
 $lblCaptureMode = New-Object System.Windows.Forms.Label
 $lblCaptureMode.Text = "Mode"
 $lblCaptureMode.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblCaptureMode.Location = New-Object System.Drawing.Point(20, 160)
+$lblCaptureMode.Location = New-Object System.Drawing.Point(20, 176)
 $lblCaptureMode.AutoSize = $true
 $form.Controls.Add($lblCaptureMode)
 
 $cmbCaptureMode = New-Object System.Windows.Forms.ComboBox
 $cmbCaptureMode.DropDownStyle = "DropDownList"
-$cmbCaptureMode.Location = New-Object System.Drawing.Point(110, 157)
+$cmbCaptureMode.Location = New-Object System.Drawing.Point(110, 173)
 $cmbCaptureMode.Size = New-Object System.Drawing.Size(190, 24)
 $cmbCaptureMode.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbCaptureMode.Items.Add("Individual Card ROIs")
@@ -2570,13 +2587,13 @@ $lblTarget = New-Object System.Windows.Forms.Label
 $lblTarget.Text = "ROI Target (Individual)"
 $lblTarget.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblTarget.Location = New-Object System.Drawing.Point(320, 160)
+$lblTarget.Location = New-Object System.Drawing.Point(320, 176)
 $lblTarget.AutoSize = $true
 $form.Controls.Add($lblTarget)
 
 $cmbTarget = New-Object System.Windows.Forms.ComboBox
 $cmbTarget.DropDownStyle = "DropDownList"
-$cmbTarget.Location = New-Object System.Drawing.Point(455, 157)
+$cmbTarget.Location = New-Object System.Drawing.Point(455, 173)
 $cmbTarget.Size = New-Object System.Drawing.Size(140, 24)
 $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("flop1")
@@ -2594,17 +2611,93 @@ $cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
 $lblTarget.Enabled = $true
 
+$advicePanel = New-Object System.Windows.Forms.Panel
+$advicePanel.Location = New-Object System.Drawing.Point(960, 96)
+$advicePanel.Size = New-Object System.Drawing.Size(250, 598)
+$advicePanel.BackColor = [System.Drawing.Color]::FromArgb(26, 32, 40)
+$advicePanel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$form.Controls.Add($advicePanel)
+
+$adviceTitle = New-Object System.Windows.Forms.Label
+$adviceTitle.Text = "ADVICE"
+$adviceTitle.ForeColor = [System.Drawing.Color]::White
+$adviceTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 14, [System.Drawing.FontStyle]::Bold)
+$adviceTitle.Location = New-Object System.Drawing.Point(18, 16)
+$adviceTitle.AutoSize = $true
+$advicePanel.Controls.Add($adviceTitle)
+
+$adviceSub = New-Object System.Windows.Forms.Label
+$adviceSub.Text = "Placeholder action output for live play."
+$adviceSub.ForeColor = [System.Drawing.Color]::FromArgb(180, 190, 205)
+$adviceSub.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$adviceSub.Location = New-Object System.Drawing.Point(18, 44)
+$adviceSub.Size = New-Object System.Drawing.Size(210, 32)
+$adviceSub.AutoEllipsis = $true
+$advicePanel.Controls.Add($adviceSub)
+
+$lblAdviceValue = New-Object System.Windows.Forms.Label
+$lblAdviceValue.Text = $advicePrimary
+$lblAdviceValue.ForeColor = [System.Drawing.Color]::FromArgb(255, 235, 160)
+$lblAdviceValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 24, [System.Drawing.FontStyle]::Bold)
+$lblAdviceValue.Location = New-Object System.Drawing.Point(18, 84)
+$lblAdviceValue.Size = New-Object System.Drawing.Size(210, 60)
+$lblAdviceValue.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+$advicePanel.Controls.Add($lblAdviceValue)
+
+$adviceDivider = New-Object System.Windows.Forms.Label
+$adviceDivider.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+$adviceDivider.Location = New-Object System.Drawing.Point(18, 160)
+$adviceDivider.Size = New-Object System.Drawing.Size(210, 2)
+$advicePanel.Controls.Add($adviceDivider)
+
+$adviceMetaTitle = New-Object System.Windows.Forms.Label
+$adviceMetaTitle.Text = "Advice Detail"
+$adviceMetaTitle.ForeColor = [System.Drawing.Color]::White
+$adviceMetaTitle.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$adviceMetaTitle.Location = New-Object System.Drawing.Point(18, 176)
+$adviceMetaTitle.AutoSize = $true
+$advicePanel.Controls.Add($adviceMetaTitle)
+
+$txtAdviceDetail = New-Object System.Windows.Forms.TextBox
+$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 202)
+$txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 176)
+$txtAdviceDetail.Multiline = $true
+$txtAdviceDetail.ReadOnly = $true
+$txtAdviceDetail.ScrollBars = "Vertical"
+$txtAdviceDetail.Font = New-Object System.Drawing.Font("Consolas", 10)
+$txtAdviceDetail.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
+$txtAdviceDetail.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
+$txtAdviceDetail.Text = $adviceSecondary
+$advicePanel.Controls.Add($txtAdviceDetail)
+
+$adviceGuideTitle = New-Object System.Windows.Forms.Label
+$adviceGuideTitle.Text = "Planned Outputs"
+$adviceGuideTitle.ForeColor = [System.Drawing.Color]::White
+$adviceGuideTitle.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$adviceGuideTitle.Location = New-Object System.Drawing.Point(18, 394)
+$adviceGuideTitle.AutoSize = $true
+$advicePanel.Controls.Add($adviceGuideTitle)
+
+$adviceGuide = New-Object System.Windows.Forms.Label
+$adviceGuide.Text = "FOLD`r`nCALL`r`nBET / RAISE`r`nALL IN"
+$adviceGuide.ForeColor = [System.Drawing.Color]::FromArgb(195, 205, 220)
+$adviceGuide.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$adviceGuide.Location = New-Object System.Drawing.Point(18, 424)
+$adviceGuide.Size = New-Object System.Drawing.Size(210, 120)
+$advicePanel.Controls.Add($adviceGuide)
+Set-AdviceState -Primary $advicePrimary -Secondary $adviceSecondary
+
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
 $latestLabel.ForeColor = [System.Drawing.Color]::White
 $latestLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$latestLabel.Location = New-Object System.Drawing.Point(20, 236)
+$latestLabel.Location = New-Object System.Drawing.Point(20, 274)
 $latestLabel.AutoSize = $true
 $form.Controls.Add($latestLabel)
 
 $txtLatest = New-Object System.Windows.Forms.TextBox
-$txtLatest.Location = New-Object System.Drawing.Point(20, 260)
-$txtLatest.Size = New-Object System.Drawing.Size(936, 160)
+$txtLatest.Location = New-Object System.Drawing.Point(20, 298)
+$txtLatest.Size = New-Object System.Drawing.Size(780, 150)
 $txtLatest.Multiline = $true
 $txtLatest.ScrollBars = "Vertical"
 $txtLatest.ReadOnly = $true
@@ -2617,13 +2710,13 @@ $logLabel = New-Object System.Windows.Forms.Label
 $logLabel.Text = "Log"
 $logLabel.ForeColor = [System.Drawing.Color]::White
 $logLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$logLabel.Location = New-Object System.Drawing.Point(20, 428)
+$logLabel.Location = New-Object System.Drawing.Point(20, 460)
 $logLabel.AutoSize = $true
 $form.Controls.Add($logLabel)
 
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(20, 452)
-$logBox.Size = New-Object System.Drawing.Size(936, 222)
+$logBox.Location = New-Object System.Drawing.Point(20, 484)
+$logBox.Size = New-Object System.Drawing.Size(780, 210)
 $logBox.Multiline = $true
 $logBox.ScrollBars = "Vertical"
 $logBox.ReadOnly = $true
@@ -2751,6 +2844,103 @@ function Test-TcpPortOpen {
   finally {
     try { $client.Close() } catch {}
   }
+}
+
+function Set-AdviceState {
+  param(
+    [Parameter(Mandatory = $true)][string]$Primary,
+    [string]$Secondary = ""
+  )
+  $script:advicePrimary = ([string]$Primary).Trim().ToUpperInvariant()
+  if (-not $script:advicePrimary) {
+    $script:advicePrimary = "WAIT"
+  }
+  $script:adviceSecondary = ([string]$Secondary).Trim()
+  if (-not $script:adviceSecondary) {
+    $script:adviceSecondary = "No actionable advice yet."
+  }
+  if ($null -ne $lblAdviceValue) {
+    $lblAdviceValue.Text = $script:advicePrimary
+  }
+  if ($null -ne $txtAdviceDetail) {
+    $txtAdviceDetail.Text = $script:adviceSecondary
+  }
+  if ($null -ne $adviceOverlayValueLabel) {
+    $adviceOverlayValueLabel.Text = $script:advicePrimary
+  }
+  if ($null -ne $adviceOverlayTitleLabel) {
+    $adviceOverlayTitleLabel.Text = ("Advice: {0}" -f $script:adviceSecondary)
+  }
+}
+
+function New-AdviceOverlayForm {
+  $overlay = New-Object System.Windows.Forms.Form
+  $overlay.FormBorderStyle = "None"
+  $overlay.StartPosition = "Manual"
+  $overlay.ShowInTaskbar = $false
+  $overlay.TopMost = $true
+  $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+  $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
+  $overlay.Opacity = 0.92
+  $overlay.Size = New-Object System.Drawing.Size(260, 110)
+  $overlay.Location = New-Object System.Drawing.Point(40, 40)
+  $overlay.Tag = [pscustomobject]@{
+    down = $false
+    offsetX = 0
+    offsetY = 0
+  }
+
+  $titleLabel = New-Object System.Windows.Forms.Label
+  $titleLabel.Text = "Advice: No actionable advice yet."
+  $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(190, 205, 220)
+  $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $titleLabel.Location = New-Object System.Drawing.Point(12, 10)
+  $titleLabel.Size = New-Object System.Drawing.Size(236, 18)
+  $titleLabel.AutoEllipsis = $true
+  $overlay.Controls.Add($titleLabel)
+
+  $valueLabel = New-Object System.Windows.Forms.Label
+  $valueLabel.Text = "WAIT"
+  $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 235, 160)
+  $valueLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 28, [System.Drawing.FontStyle]::Bold)
+  $valueLabel.Location = New-Object System.Drawing.Point(10, 34)
+  $valueLabel.Size = New-Object System.Drawing.Size(240, 56)
+  $valueLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+  $overlay.Controls.Add($valueLabel)
+
+  $dragHandlerDown = {
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+      $state = $overlay.Tag
+      $state.down = $true
+      $state.offsetX = [int]$e.X
+      $state.offsetY = [int]$e.Y
+    }
+  }.GetNewClosure()
+  $dragHandlerMove = {
+    param($sender, $e)
+    $state = $overlay.Tag
+    if ($state.down) {
+      $overlay.Left = [int]($overlay.Left + $e.X - $state.offsetX)
+      $overlay.Top = [int]($overlay.Top + $e.Y - $state.offsetY)
+    }
+  }.GetNewClosure()
+  $dragHandlerUp = {
+    param($sender, $e)
+    $state = $overlay.Tag
+    $state.down = $false
+  }.GetNewClosure()
+
+  foreach ($ctl in @($overlay, $titleLabel, $valueLabel)) {
+    $ctl.Add_MouseDown($dragHandlerDown)
+    $ctl.Add_MouseMove($dragHandlerMove)
+    $ctl.Add_MouseUp($dragHandlerUp)
+  }
+
+  $script:adviceOverlayTitleLabel = $titleLabel
+  $script:adviceOverlayValueLabel = $valueLabel
+  Set-AdviceState -Primary $script:advicePrimary -Secondary $script:adviceSecondary
+  return $overlay
 }
 
 function Test-BridgeEndpoint {
@@ -2950,6 +3140,7 @@ function Update-EngineButtonState {
   $engineText = ""
   if ($engineHandoffBusy -or $hasJobs) {
     $engineText = ("Engine: BUSY ({0} job{1})" -f [int]$enginePendingJobs.Count, $(if ([int]$enginePendingJobs.Count -eq 1) { "" } else { "s" }))
+    Set-AdviceState -Primary "THINKING" -Secondary "Engine job in progress. Wait for the current calculation to finish."
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
     $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
@@ -2967,6 +3158,7 @@ function Update-EngineButtonState {
   }
   else {
     $engineText = ("Engine: idle (last {0})" -f [string]$engineLastResultSummary)
+    Set-AdviceState -Primary "WAIT" -Secondary ("Engine idle. Last result: {0}" -f [string]$engineLastResultSummary)
     $btnRunFlopSet.BackColor = [System.Drawing.Color]::FromArgb(24, 104, 78)
     $btnRunTurn.BackColor = [System.Drawing.Color]::FromArgb(96, 78, 36)
     $btnRunRiver.BackColor = [System.Drawing.Color]::FromArgb(96, 66, 36)
@@ -5197,6 +5389,12 @@ $form.Add_Shown({
   $cardStatusLabel.Text = Format-CardSlotStatus
   Update-TargetsButtonText
   Refresh-RoiOverlays
+  if ($null -eq $adviceOverlay -or $adviceOverlay.IsDisposed) {
+    $script:adviceOverlay = New-AdviceOverlayForm
+  }
+  if ($null -ne $adviceOverlay -and -not $adviceOverlay.Visible) {
+    $adviceOverlay.Show()
+  }
   Ensure-BackendsRunning
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
@@ -5231,6 +5429,16 @@ $form.Add_FormClosing({
   }
   catch {
     Write-Log ("Shutdown warning during close: {0}" -f $_.Exception.Message)
+  }
+  if ($null -ne $adviceOverlay) {
+    try {
+      if (-not $adviceOverlay.IsDisposed) {
+        $adviceOverlay.Close()
+        $adviceOverlay.Dispose()
+      }
+    }
+    catch {}
+    $script:adviceOverlay = $null
   }
   Save-RoiState
   Close-RoiOverlays

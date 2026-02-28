@@ -332,6 +332,7 @@ No-engine startup variant:
 
 - Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
 - Board and hero overlays now render the assigned card token in the center of the box (for example `A♠`) while keeping the slot label in the corner.
+- The tester UI includes a dedicated `ADVICE` panel plus a draggable floating advice overlay that auto-opens on startup. It currently shows placeholder guidance (`WAIT` / `THINKING`) until decision output is wired in.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
     - Manual board assignment auto-queues a street solve once the board becomes complete for that street (3 cards = flop, 4 = turn, 5 = river), but only after hero cards are valid.
