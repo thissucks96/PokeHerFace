@@ -5645,14 +5645,7 @@ function New-TableStateOverlayContextMenu {
   $itemNewHand.Text = "New Hand"
   $itemNewHand.Add_Click({
     param($sender, $e)
-    if ($null -ne $form -and -not $form.IsDisposed) {
-      $action = [System.Action]{
-        Invoke-NewHandCycle
-      }.GetNewClosure()
-      [void]$form.BeginInvoke($action)
-      return
-    }
-    Invoke-NewHandCycle
+    Request-NewHandCycle
   }.GetNewClosure())
   [void]$menu.Items.Add($itemNewHand)
   return $menu
@@ -7814,6 +7807,17 @@ function Invoke-NewHandCycle {
   Start-NewHandPreserveChips
 }
 
+function Request-NewHandCycle {
+  if ($null -ne $form -and -not $form.IsDisposed) {
+    $action = [System.Action]{
+      Invoke-NewHandCycle
+    }.GetNewClosure()
+    [void]$form.BeginInvoke($action)
+    return
+  }
+  Invoke-NewHandCycle
+}
+
 function Run-OcrHeroSet {
   if ($isBusy) {
     return
@@ -8510,7 +8514,7 @@ $btnRestart.Add_Click({
 
 $btnNewHand.Add_Click({
   param($sender, $e)
-  Invoke-NewHandCycle
+  Request-NewHandCycle
 }.GetNewClosure())
 
 $btnTargets.Add_Click({
