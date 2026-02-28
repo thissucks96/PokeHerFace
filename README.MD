@@ -455,7 +455,7 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
 - The harness acts as a simple heads-up referee:
   - hero and villain each get hole cards,
   - passive mode: villain checks when checked to and auto-calls any hero bet,
-  - aggressive mode (`-Aggressive`): villain leads 75% pot into hero each street and still auto-calls any raise,
+  - aggressive mode (`-Aggressive`): hero is forced OOP for that test path, then villain bets with the first configured bet size for the active runtime profile after hero checks, and still auto-calls any raise,
   - hero gets one decision on flop / turn / river,
   - showdown winner and net bb are recorded.
 - It now makes the full simplified `shark_cli` spot contract explicit for every decision:
@@ -471,6 +471,7 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
   - donk-bet removal,
   - strategy compression,
   - fixed bet sizing tree.
+- In aggressive mode, the harness now sends `active_node_path`, preserves donk-bet branches and caller bet sizing for that test path, and the bridge prefers `active_node_actions` over `root_actions` when the solver finds the requested node.
 - It writes a JSON report under `4_LLM_Bridge/examples/synthetic_hands/` with:
   - top-level `scenario` block (full harness assumptions),
   - per-hand street actions,

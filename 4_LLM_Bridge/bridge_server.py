@@ -655,12 +655,11 @@ def _to_float_or_none(value: Any) -> Optional[float]:
     return None
 
 
-def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
+def _normalize_action_summary_tokens(action_items: Any) -> list[str]:
     allowed: list[str] = []
-    root_actions = result_payload.get("root_actions", [])
-    if not isinstance(root_actions, list):
+    if not isinstance(action_items, list):
         return allowed
-    for item in root_actions:
+    for item in action_items:
         if not isinstance(item, dict):
             continue
         action = str(item.get("action", "")).strip().lower()
@@ -683,6 +682,16 @@ def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
         seen.add(action)
         unique.append(action)
     return unique
+
+
+def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
+    active_found = bool(result_payload.get("active_node_found"))
+    active_actions = result_payload.get("active_node_actions", [])
+    if active_found:
+        normalized = _normalize_action_summary_tokens(active_actions)
+        if normalized:
+            return normalized
+    return _normalize_action_summary_tokens(result_payload.get("root_actions", []))
 
 
 def _extract_node_lock_catalog(result_payload: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -882,6 +891,7 @@ def _parse_sizing_env(raw: str, fallback: list[float]) -> list[float]:
 def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     tuned = dict(spot)
     changes: Dict[str, Any] = {}
+    preserve_donk_tree = bool(str(tuned.get("active_node_path", "")).strip())
 
     iterations = _to_float_or_none(tuned.get("iterations"))
     if iterations is not None:
@@ -929,7 +939,7 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
         tuned["compress_strategy"] = True
         if old is not True:
             changes["compress_strategy"] = {"from": old, "to": True}
-    if FAST_SPOT_FORCE_REMOVE_DONK_BETS:
+    if FAST_SPOT_FORCE_REMOVE_DONK_BETS and not preserve_donk_tree:
         old = tuned.get("remove_donk_bets")
         tuned["remove_donk_bets"] = True
         if old is not True:
@@ -942,10 +952,13 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
         "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
         "river": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
     }
-    old_bet_sizing = tuned.get("bet_sizing")
-    tuned["bet_sizing"] = target_bet_sizing
-    if old_bet_sizing != target_bet_sizing:
-        changes["bet_sizing"] = "reduced_to_fast_profile"
+    if preserve_donk_tree and isinstance(tuned.get("bet_sizing"), dict):
+        changes["bet_sizing"] = "preserved_for_active_node_path"
+    else:
+        old_bet_sizing = tuned.get("bet_sizing")
+        tuned["bet_sizing"] = target_bet_sizing
+        if old_bet_sizing != target_bet_sizing:
+            changes["bet_sizing"] = "reduced_to_fast_profile"
 
     summary = {
         "profile": "fast",
@@ -964,6 +977,7 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
 def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     tuned = dict(spot)
     changes: Dict[str, Any] = {}
+    preserve_donk_tree = bool(str(tuned.get("active_node_path", "")).strip())
 
     iterations = _to_float_or_none(tuned.get("iterations"))
     if iterations is not None:
@@ -1011,7 +1025,7 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         tuned["compress_strategy"] = True
         if old is not True:
             changes["compress_strategy"] = {"from": old, "to": True}
-    if FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS:
+    if FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS and not preserve_donk_tree:
         old = tuned.get("remove_donk_bets")
         tuned["remove_donk_bets"] = True
         if old is not True:
@@ -1024,10 +1038,13 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
         "river": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
     }
-    old_bet_sizing = tuned.get("bet_sizing")
-    tuned["bet_sizing"] = target_bet_sizing
-    if old_bet_sizing != target_bet_sizing:
-        changes["bet_sizing"] = "reduced_to_fast_live_profile"
+    if preserve_donk_tree and isinstance(tuned.get("bet_sizing"), dict):
+        changes["bet_sizing"] = "preserved_for_active_node_path"
+    else:
+        old_bet_sizing = tuned.get("bet_sizing")
+        tuned["bet_sizing"] = target_bet_sizing
+        if old_bet_sizing != target_bet_sizing:
+            changes["bet_sizing"] = "reduced_to_fast_live_profile"
 
     summary = {
         "profile": "fast_live",

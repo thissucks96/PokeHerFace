@@ -27,6 +27,16 @@ DEFAULT_BET_SIZING = {
     "turn": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]},
     "river": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0]},
 }
+FAST_BET_SIZING = {
+    "flop": {"bet_sizes": [0.5], "raise_sizes": [1.0]},
+    "turn": {"bet_sizes": [0.5], "raise_sizes": [1.0]},
+    "river": {"bet_sizes": [0.5], "raise_sizes": [1.0]},
+}
+FAST_LIVE_BET_SIZING = {
+    "flop": {"bet_sizes": [0.25], "raise_sizes": [0.75]},
+    "turn": {"bet_sizes": [0.25], "raise_sizes": [0.75]},
+    "river": {"bet_sizes": [0.25], "raise_sizes": [0.75]},
+}
 DEFAULT_LEGAL_ACTIONS = ["check", "bet_33", "bet_75", "all_in"]
 PASSIVE_VILLAIN_POLICY = {
     "checked_to": "check",
@@ -129,6 +139,7 @@ def _build_engine_spot(
     pot: int,
     hero_stack: int,
     scenario: Dict[str, Any],
+    active_node_path: str = "",
 ) -> Dict[str, Any]:
     hero_exact_combo = _combo_range_from_hole_cards(hero_cards)
 
@@ -148,7 +159,24 @@ def _build_engine_spot(
         "raise_cap": int(scenario["raise_cap"]),
         "compress_strategy": bool(scenario["compress_strategy"]),
         "bet_sizing": scenario["bet_sizing"],
+        "active_node_path": active_node_path,
     }
+
+
+def _scenario_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[float]]]:
+    profile = str(runtime_profile or "").strip().lower()
+    if profile == "fast":
+        return json.loads(json.dumps(FAST_BET_SIZING))
+    if profile == "fast_live":
+        return json.loads(json.dumps(FAST_LIVE_BET_SIZING))
+    return json.loads(json.dumps(DEFAULT_BET_SIZING))
+
+
+def _aggressive_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[float]]]:
+    profile = str(runtime_profile or "").strip().lower()
+    if profile in {"fast", "fast_live"}:
+        return json.loads(json.dumps(FAST_BET_SIZING))
+    return json.loads(json.dumps(DEFAULT_BET_SIZING))
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -183,17 +211,17 @@ def main() -> int:
         "villain_policy": active_policy,
         "legal_actions": active_legal_actions,
         "villain_range": DEFAULT_VILLAIN_RANGE,
-        "in_position_player": 2 if args.oop else 1,
+        "in_position_player": 2 if args.aggressive else (2 if args.oop else 1),
         "starting_stack_bb": args.starting_stack_bb,
         "starting_pot_bb": args.starting_pot_bb,
         "minimum_bet": args.minimum_bet_bb,
         "all_in_threshold": args.all_in_threshold,
         "iterations": args.iterations,
         "thread_count": args.thread_count,
-        "remove_donk_bets": not args.allow_donk_bets,
+        "remove_donk_bets": False if args.aggressive else not args.allow_donk_bets,
         "raise_cap": args.raise_cap,
         "compress_strategy": not args.disable_compress_strategy,
-        "bet_sizing": DEFAULT_BET_SIZING,
+        "bet_sizing": _aggressive_bet_sizing(args.runtime_profile) if args.aggressive else _scenario_bet_sizing(args.runtime_profile),
     }
 
     results = []
@@ -248,12 +276,25 @@ def main() -> int:
             current_board = full_board[:board_count]
             base_pot = pot
             villain_bet = 0
+            lead_sizes = scenario["bet_sizing"].get(street_name, {}).get("bet_sizes", [0.75])
+            lead_ratio = float(lead_sizes[0]) if lead_sizes else 0.75
             if args.aggressive:
-                villain_bet = max(int(scenario["minimum_bet"]), int(round(base_pot * 0.75)))
+                villain_bet = max(int(scenario["minimum_bet"]), int(round(base_pot * lead_ratio)))
                 villain_bet = min(hero_stack, villain_bet)
             decision_pot = pot + villain_bet
             decision_stack = hero_stack
-            spot = _build_engine_spot(hero_hole, current_board, decision_pot, decision_stack, scenario)
+            active_node_path = ""
+            if args.aggressive and villain_bet > 0:
+                active_node_path = f"root/p1:check/p2:bet:{villain_bet}"
+            solve_pot = base_pot if active_node_path else decision_pot
+            spot = _build_engine_spot(
+                hero_hole,
+                current_board,
+                solve_pot,
+                decision_stack,
+                scenario,
+                active_node_path=active_node_path,
+            )
             
             payload = {
                 "spot": spot,
@@ -284,6 +325,8 @@ def main() -> int:
             metrics = resp_json.get("metrics", {})
             result_block = resp_json.get("result", {}) or {}
             action_map = result_block.get("root_actions", [])
+            if bool(result_block.get("active_node_found")) and isinstance(result_block.get("active_node_actions"), list):
+                action_map = result_block.get("active_node_actions", [])
             strat_source = str(resp_json.get("selected_strategy") or result_block.get("selected_strategy") or "unknown")
             strategy_source_counts[strat_source] = strategy_source_counts.get(strat_source, 0) + 1
             total_latency_by_street[street_name].append(t_elapsed)
@@ -306,7 +349,7 @@ def main() -> int:
             else:
                  best_freq = -1.0
                  for a in action_map:
-                     freq = float(a.get("frequency", 0))
+                     freq = float(a.get("avg_frequency", a.get("frequency", 0)))
                      if freq > best_freq:
                          best_freq = freq
                          action_base = a.get("action", "check")
@@ -392,6 +435,7 @@ def main() -> int:
                     "remove_donk_bets": spot["remove_donk_bets"],
                     "raise_cap": spot["raise_cap"],
                     "compress_strategy": spot["compress_strategy"],
+                    "active_node_path": spot["active_node_path"],
                 },
                 "villain_bet": villain_bet,
                 "pot": pot,
