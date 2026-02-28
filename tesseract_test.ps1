@@ -5894,6 +5894,20 @@ function Invoke-VillainActionSelection {
     current_villain_chips = [int]$script:currentVillainChips
     facing_bet = [int]$script:currentFacingBetAmount
   }
+
+  # Preflop safeguard: when villain acts and it immediately becomes hero's turn,
+  # publish hero preflop advice directly here (independent of auto-send lock timing).
+  if ((Get-CurrentStreetName) -eq "preflop" -and (Get-HeroCardsReady) -and (Test-IsHeroTurn)) {
+    $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    Write-Log ("Preflop advice refreshed after villain action: facing_bet={0}, hero_commit={1}, villain_commit={2}." -f `
+      [int]$script:currentFacingBetAmount, [int]$script:currentHeroStreetCommit, [int]$script:currentVillainStreetCommit) -Type "hero_preflop_refresh_post_villain" -Data @{
+      hero1 = [string]$heroCards["hero1"]
+      hero2 = [string]$heroCards["hero2"]
+      facing_bet = [int]$script:currentFacingBetAmount
+      hero_commit = [int]$script:currentHeroStreetCommit
+      villain_commit = [int]$script:currentVillainStreetCommit
+    }
+  }
   Maybe-RefreshAdviceAfterActionStateChange -StageLabel "villain_action"
 }
 
