@@ -1596,6 +1596,19 @@ function Test-IsVillainTurn {
   return $false
 }
 
+function Test-IsHeroTurn {
+  if ($script:handResolved -or $script:heroFolded -or $script:villainFolded) {
+    return $false
+  }
+  if ([int]$script:currentHeroChips -le 0) {
+    return $false
+  }
+  if ([int]$script:activeVillainCount -le 0) {
+    return $true
+  }
+  return (-not (Test-IsVillainTurn))
+}
+
 function Set-VillainMode {
   param([string]$Mode)
   $normalized = ([string]$Mode).Trim()
@@ -2201,7 +2214,8 @@ function Get-5CardHandScore {
   $parsed = @($parsed | Sort-Object -Property rank -Descending)
   $ranks = @($parsed | ForEach-Object { [int]$_.rank })
   $suits = @($parsed | ForEach-Object { [string]$_.suit })
-  $isFlush = (($suits | Select-Object -Unique).Count -eq 1)
+  $uniqueSuits = @($suits | Select-Object -Unique)
+  $isFlush = ($uniqueSuits.Count -eq 1)
   $uniqueRanks = @($ranks | Select-Object -Unique)
   $straightHigh = 0
   $isStraight = $false
@@ -4867,6 +4881,10 @@ function Get-HeroLegalActionTokensForSlot {
     [Parameter(Mandatory = $true)][string]$Slot
   )
 
+  if (-not (Test-IsHeroTurn)) {
+    return @()
+  }
+
   $slotKey = ([string]$Slot).ToLowerInvariant()
   switch ($slotKey) {
     "check_btn" { return @([string]$script:checkCallButtonToken) }
@@ -4900,6 +4918,9 @@ function Get-HeroLegalActionTokens {
     return @()
   }
   if ([int]$script:currentHeroChips -le 0) {
+    return @()
+  }
+  if (-not (Test-IsHeroTurn)) {
     return @()
   }
   $tokens = New-Object System.Collections.Generic.List[string]
@@ -5246,7 +5267,6 @@ function Invoke-ManualActionSelection {
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
   }
-  if (Try-RunAutomaticVillainTurn) { return }
   Maybe-RefreshAdviceAfterActionStateChange -StageLabel "manual_action"
 }
 
