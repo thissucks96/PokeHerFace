@@ -195,6 +195,7 @@ $managedOllamaStartedByUi = $false
 $managedBridgeStartedByUi = $false
 $autoEnabled = $false
 $overlayVisible = $true
+$quickSingleSlotHidden = $false
 $adviceOverlay = $null
 $adviceOverlayTitleLabel = $null
 $adviceOverlayValueLabel = $null
@@ -2274,7 +2275,7 @@ $form.StartPosition = "CenterScreen"
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
 $form.KeyPreview = $true
 $form.Size = New-Object System.Drawing.Size(1240, 790)
-$form.MinimumSize = New-Object System.Drawing.Size(1240, 790)
+$form.MinimumSize = New-Object System.Drawing.Size(1120, 760)
 $form.BackColor = [System.Drawing.Color]::FromArgb(20, 24, 30)
 
 $title = New-Object System.Windows.Forms.Label
@@ -2456,6 +2457,15 @@ $lblQuick.Location = New-Object System.Drawing.Point(20, 214)
 $lblQuick.AutoSize = $true
 $form.Controls.Add($lblQuick)
 
+$btnQuickToggle = New-Object System.Windows.Forms.Button
+$btnQuickToggle.Text = "Hide Quick Tests"
+$btnQuickToggle.Location = New-Object System.Drawing.Point(150, 210)
+$btnQuickToggle.Size = New-Object System.Drawing.Size(120, 28)
+$btnQuickToggle.FlatStyle = "Flat"
+$btnQuickToggle.ForeColor = [System.Drawing.Color]::White
+$btnQuickToggle.BackColor = [System.Drawing.Color]::FromArgb(52, 64, 92)
+$form.Controls.Add($btnQuickToggle)
+
 $btnRunFlop1 = New-Object System.Windows.Forms.Button
 $btnRunFlop1.Text = "Run flop1"
 $btnRunFlop1.Location = New-Object System.Drawing.Point(170, 210)
@@ -2540,13 +2550,14 @@ $btnCall.Add_Click({ Write-Log "Placeholder action clicked: CALL (no-op)." })
 $form.Controls.Add($btnCall)
 
 $btnBet = New-Object System.Windows.Forms.Button
-$btnBet.Text = "Bet"
+$btnBet.Text = "Raise"
 $btnBet.Location = New-Object System.Drawing.Point(1020, 18)
 $btnBet.Size = New-Object System.Drawing.Size(84, 28)
 $btnBet.FlatStyle = "Flat"
 $btnBet.ForeColor = [System.Drawing.Color]::White
-$btnBet.BackColor = [System.Drawing.Color]::FromArgb(38, 120, 68)
-$btnBet.Add_Click({ Write-Log "Placeholder action clicked: BET (no-op)." })
+$btnBet.BackColor = [System.Drawing.Color]::FromArgb(152, 48, 48)
+$btnBet.Visible = $false
+$btnBet.Add_Click({ Write-Log "Placeholder action clicked: RAISE (no-op)." })
 $form.Controls.Add($btnBet)
 
 $btnRaise = New-Object System.Windows.Forms.Button
@@ -2728,6 +2739,115 @@ $logBox.BackColor = [System.Drawing.Color]::FromArgb(14, 18, 23)
 $logBox.ForeColor = [System.Drawing.Color]::FromArgb(225, 235, 245)
 $form.Controls.Add($logBox)
 
+function Update-MainLayout {
+  $margin = 20
+  $gap = 10
+  $clientWidth = [Math]::Max([int]$form.ClientSize.Width, 1120)
+  $clientHeight = [Math]::Max([int]$form.ClientSize.Height, 720)
+  $adviceWidth = 250
+  $adviceLeft = [int]($clientWidth - $adviceWidth - $margin)
+  $leftRight = [int]($adviceLeft - $gap)
+  $leftWidth = [Math]::Max(680, [int]($leftRight - $margin))
+
+  $status.Size = New-Object System.Drawing.Size($leftWidth, 18)
+  $engineStatusLine.Size = New-Object System.Drawing.Size($leftWidth, 18)
+  $regionLabel.Size = New-Object System.Drawing.Size($leftWidth, 20)
+  $cardStatusLabel.Size = New-Object System.Drawing.Size($leftWidth, 18)
+
+  $actionButtons = @($btnFold, $btnCall, $btnRaise)
+  $visibleActionButtons = @($actionButtons | Where-Object { $_.Visible })
+  $actionRowWidth = 0
+  if ($visibleActionButtons.Count -gt 0) {
+    $actionRowWidth = ($visibleActionButtons | Measure-Object -Property Width -Sum).Sum + (($visibleActionButtons.Count - 1) * $gap)
+  }
+  $actionStartX = [Math]::Max($adviceLeft, [int]($clientWidth - $margin - $actionRowWidth))
+  $cursorX = $actionStartX
+  foreach ($btn in $visibleActionButtons) {
+    $btn.Location = New-Object System.Drawing.Point($cursorX, 18)
+    $cursorX += [int]$btn.Width + $gap
+  }
+
+  $row1Y = 136
+  $x = $margin
+  $btnPick.Location = New-Object System.Drawing.Point($x, $row1Y)
+  $x += [int]$btnPick.Width + $gap
+  $btnOnce.Location = New-Object System.Drawing.Point($x, $row1Y)
+  $x += [int]$btnOnce.Width + 20
+  $lblAuto.Location = New-Object System.Drawing.Point($x, ($row1Y + 7))
+  $x += 138
+  $numInterval.Location = New-Object System.Drawing.Point($x, ($row1Y + 4))
+
+  $btnRestart.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnRestart.Width), $row1Y)
+  $btnRunEngine.Location = New-Object System.Drawing.Point(($btnRestart.Left - $gap - [int]$btnRunEngine.Width), $row1Y)
+  $btnAutoStop.Location = New-Object System.Drawing.Point(($btnRunEngine.Left - $gap - [int]$btnAutoStop.Width), $row1Y)
+  $btnAutoStart.Location = New-Object System.Drawing.Point(($btnAutoStop.Left - $gap - [int]$btnAutoStart.Width), $row1Y)
+
+  $row2Y = 176
+  $lblCaptureMode.Location = New-Object System.Drawing.Point($margin, $row2Y)
+  $cmbCaptureMode.Location = New-Object System.Drawing.Point(110, ($row2Y - 3))
+  $lblTarget.Location = New-Object System.Drawing.Point(320, $row2Y)
+  $cmbTarget.Location = New-Object System.Drawing.Point(455, ($row2Y - 3))
+  $btnSetHeroes.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnSetHeroes.Width), ($row2Y - 3))
+  $btnResetRois.Location = New-Object System.Drawing.Point(($btnSetHeroes.Left - $gap - [int]$btnResetRois.Width), ($row2Y - 3))
+  $btnTargets.Location = New-Object System.Drawing.Point(($btnResetRois.Left - $gap - [int]$btnTargets.Width), ($row2Y - 3))
+
+  $quickRowY = 210
+  $quickButtons = @($btnRunFlop1, $btnRunFlop2, $btnRunFlop3, $btnRunTurn, $btnRunRiver)
+  $lblQuick.Visible = -not $quickSingleSlotHidden
+  foreach ($ctl in $quickButtons) {
+    $ctl.Visible = -not $quickSingleSlotHidden
+  }
+  $btnQuickToggle.Text = $(if ($quickSingleSlotHidden) { "Show Quick Tests" } else { "Hide Quick Tests" })
+  $quickCursorX = $margin
+  if (-not $quickSingleSlotHidden) {
+    $lblQuick.Location = New-Object System.Drawing.Point($quickCursorX, ($quickRowY + 4))
+    $quickCursorX += 140
+  }
+  $btnQuickToggle.Location = New-Object System.Drawing.Point($quickCursorX, $quickRowY)
+  $quickCursorX += [int]$btnQuickToggle.Width + $gap
+  if (-not $quickSingleSlotHidden) {
+    foreach ($ctl in $quickButtons) {
+      $ctl.Location = New-Object System.Drawing.Point($quickCursorX, $quickRowY)
+      $quickCursorX += [int]$ctl.Width + 6
+    }
+  }
+
+  $batchRowY = $(if ($quickSingleSlotHidden) { 210 } else { 244 })
+  $cmbEngineProfile.Location = New-Object System.Drawing.Point(($leftRight - [int]$cmbEngineProfile.Width), ($batchRowY + 1))
+  $lblEngineProfile.Location = New-Object System.Drawing.Point(($cmbEngineProfile.Left - 95), ($batchRowY + 4))
+  $btnRunHero.Location = New-Object System.Drawing.Point(($lblEngineProfile.Left - $gap - [int]$btnRunHero.Width), $batchRowY)
+  $btnRunFlopSet.Location = New-Object System.Drawing.Point(($btnRunHero.Left - $gap - [int]$btnRunFlopSet.Width), $batchRowY)
+
+  $hintY = $batchRowY + 34
+  $hint.Location = New-Object System.Drawing.Point($margin, $hintY)
+  $hint.Size = New-Object System.Drawing.Size($leftWidth, 18)
+
+  $latestLabelY = $hintY + 26
+  $latestLabel.Location = New-Object System.Drawing.Point($margin, $latestLabelY)
+  $latestY = $latestLabelY + 24
+  $logLabelY = [int]($clientHeight - 290)
+  $latestHeight = [Math]::Max(130, [int]($logLabelY - $latestY - 12))
+  $txtLatest.Location = New-Object System.Drawing.Point($margin, $latestY)
+  $txtLatest.Size = New-Object System.Drawing.Size($leftWidth, $latestHeight)
+
+  $logLabel.Location = New-Object System.Drawing.Point($margin, $logLabelY)
+  $logY = $logLabelY + 24
+  $logHeight = [Math]::Max(170, [int]($clientHeight - $logY - 26))
+  $logBox.Location = New-Object System.Drawing.Point($margin, $logY)
+  $logBox.Size = New-Object System.Drawing.Size($leftWidth, $logHeight)
+
+  $advicePanel.Location = New-Object System.Drawing.Point($adviceLeft, 96)
+  $advicePanel.Size = New-Object System.Drawing.Size($adviceWidth, [Math]::Max(520, [int]($clientHeight - 116)))
+  $innerWidth = [Math]::Max(180, [int]($advicePanel.ClientSize.Width - 36))
+  $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
+  $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
+  $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
+  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - 360)))
+  $adviceGuideTitle.Location = New-Object System.Drawing.Point(18, ($txtAdviceDetail.Bottom + 16))
+  $adviceGuide.Location = New-Object System.Drawing.Point(18, ($adviceGuideTitle.Bottom + 12))
+  $adviceGuide.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(80, [int]($advicePanel.ClientSize.Height - $adviceGuide.Top - 20)))
+}
+
 function Write-Log {
   param(
     [string]$Message,
@@ -2903,7 +3023,7 @@ function Get-ActionTokenForSlot {
   switch (([string]$Slot).ToLowerInvariant()) {
     "fold_btn" { return "FOLD" }
     "call_btn" { return "CALL" }
-    "bet_btn" { return "BET" }
+    "bet_btn" { return "RAISE" }
     "raise_btn" { return "RAISE" }
     default { return "" }
   }
@@ -5512,6 +5632,11 @@ $btnRunHero.Add_Click({
   Run-OcrHeroSet
 })
 
+$btnQuickToggle.Add_Click({
+  $script:quickSingleSlotHidden = -not $quickSingleSlotHidden
+  Update-MainLayout
+})
+
 $btnAutoStart.Add_Click({
   if (-not (Test-OllamaEndpoint)) {
     [void][System.Windows.Forms.MessageBox]::Show(
@@ -5638,6 +5763,7 @@ $cmbEngineProfile.Add_SelectedIndexChanged({
 })
 
 $form.Add_Shown({
+  Update-MainLayout
   Initialize-SessionLogs
   Write-Log ("Session logs: text={0}, jsonl={1}" -f $uiLogTextPath, $uiLogJsonlPath) -Type "session_start" -Data @{
     log_text_path = $uiLogTextPath
@@ -5664,6 +5790,10 @@ $form.Add_Shown({
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
   $timer.Start()
   $engineJobTimer.Start()
+})
+
+$form.Add_Resize({
+  Update-MainLayout
 })
 
 $form.Add_KeyDown({
