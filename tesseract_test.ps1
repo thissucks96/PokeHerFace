@@ -4160,11 +4160,11 @@ function Try-AutoSendHeroCardsToEngine {
   }
 
   $heroStageKey = ("{0}|{1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
+  $boardReadyNow = Get-BoardReadyFromTokens -Tokens $lastBoardTokens
   if ($heroStageKey -ne $lastHeroStageKey) {
     if ($enginePendingJobs.Count -gt 0) {
       Stop-AllEngineJobs -Reason "new_hand_hero_staged"
     }
-    Reset-BoardAssignmentState
     $script:lastHeroAutoSendKey = ""
     $script:engineLastQueuedStateHash = ""
     $script:engineLastCompletedStateHash = ""
@@ -4172,15 +4172,23 @@ function Try-AutoSendHeroCardsToEngine {
     $script:engineLastCompletedLogicalKey = ""
     Ensure-BackendsRunning
     $script:lastHeroStageKey = $heroStageKey
-    Write-Log ("Hero cards staged for next hand ({0}); waiting for flop before first solve." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
+    if (-not $boardReadyNow) {
+      Write-Log ("Hero cards staged for next hand ({0}); waiting for flop before first solve." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+        stage_key = $heroStageKey
+      }
+      return
+    }
+    Write-Log ("Hero cards completed with board already ready ({0}); queuing immediate solve." -f (Get-BoardTokensText)) -Type "hero_prestaged_board_ready" -Data @{
       hero1 = [string]$heroCards["hero1"]
       hero2 = [string]$heroCards["hero2"]
+      board = @($lastBoardTokens)
       stage_key = $heroStageKey
     }
-    return
   }
 
-  if (-not (Get-BoardReadyFromTokens -Tokens $lastBoardTokens)) {
+  if (-not $boardReadyNow) {
     Write-Log ("Hero cards ready ({0}) but board not ready; auto-send waiting for flop/turn/river capture." -f (Get-HeroCardsText)) -Type "hero_waiting_board"
     return
   }

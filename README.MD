@@ -344,7 +344,7 @@ No-engine startup variant:
 - `Run Engine` starts Ollama + bridge on demand (same action on both tester variants).
 - Fast testing controls:
   - `Run flop1` ... `Run river` for single-slot OCR checks (now also updates live hero/board profile state in the UI summary).
-  - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved. Once both hero cards are valid, the tester treats that as a new hand boundary: it clears stale board/engine state, warms the backends, and stages the hand while waiting for flop.
+  - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved. Once both hero cards are valid, the tester warms the backends and stages the hand. If the flop/board is already complete, it immediately queues the first solve; otherwise it waits for the board.
   - `Run Flop (1-3)` for atomic flop capture. When all three flop cards are valid, that is the first actual solve request for the staged hand and it automatically uses the cached hero cards.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
   - `Engine Profile` dropdown (`fast`/`normal`) controls runtime profile sent to bridge `/solve` for each queued engine job.
