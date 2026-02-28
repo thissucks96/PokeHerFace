@@ -355,6 +355,14 @@ $showVillainCards = $false
 $villainMode = "Scripted"
 $villainStyle = "Tight"
 $autoVillainBusy = $false
+$streetRaiseCount = 0
+$maxRaisesPerStreet = 4
+$parsedMaxRaisesPerStreet = 0
+if ($env:MAX_RAISES_PER_STREET -and [int]::TryParse([string]$env:MAX_RAISES_PER_STREET, [ref]$parsedMaxRaisesPerStreet)) {
+  if ($parsedMaxRaisesPerStreet -ge 1 -and $parsedMaxRaisesPerStreet -le 12) {
+    $maxRaisesPerStreet = [int]$parsedMaxRaisesPerStreet
+  }
+}
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
@@ -1569,6 +1577,7 @@ function Get-CurrentGameStateSnapshot {
     active_villains = [int]$script:activeVillainCount
     hero_folded = [bool]$script:heroFolded
     villain_folded = [bool]$script:villainFolded
+    street_raise_count = [int]$script:streetRaiseCount
   }
 }
 
@@ -1725,6 +1734,7 @@ function Get-VillainStyleWeightMultiplier {
 function Get-VillainLegalActionTokens {
   $tokens = New-Object System.Collections.Generic.List[string]
   $villainChips = [int]([Math]::Max(0, $script:currentVillainChips))
+  $raiseCapReached = Get-IsStreetRaiseCapReached
   if ($script:handResolved -or $script:heroFolded -or $script:villainFolded -or $villainChips -le 0) {
     return @()
   }
@@ -1737,24 +1747,28 @@ function Get-VillainLegalActionTokens {
     }
     else {
       [void]$tokens.Add("CALL")
-      $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
-      if ($raiseBase -ge $villainChips) {
-        [void]$tokens.Add("ALL IN")
-      }
-      else {
-        [void]$tokens.Add("RAISE")
+      if (-not $raiseCapReached) {
+        $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
+        if ($raiseBase -ge $villainChips) {
+          [void]$tokens.Add("ALL IN")
+        }
+        else {
+          [void]$tokens.Add("RAISE")
+        }
       }
     }
     return @($tokens | Select-Object -Unique)
   }
 
   [void]$tokens.Add("CHECK")
-  $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
-  if ($raiseBase -ge $villainChips) {
-    [void]$tokens.Add("ALL IN")
-  }
-  elseif ($villainChips -gt 0) {
-    [void]$tokens.Add("RAISE")
+  if (-not $raiseCapReached) {
+    $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
+    if ($raiseBase -ge $villainChips) {
+      [void]$tokens.Add("ALL IN")
+    }
+    elseif ($villainChips -gt 0) {
+      [void]$tokens.Add("RAISE")
+    }
   }
   return @($tokens | Select-Object -Unique)
 }
@@ -1872,11 +1886,19 @@ function Get-ScriptedVillainActionToken {
     if (($legal -contains "ALL IN") -and ($facingGap -ge $jamThreshold)) {
       return "ALL IN"
     }
-    if (($topPreflopToken -like "raise*") -and ($legal -contains "RAISE")) {
-      return "RAISE"
-    }
-    if (($legal -contains "RAISE") -and ([int]$script:currentVillainChips -gt ([int]$facingGap + [int]$stakes.big_blind))) {
-      return "RAISE"
+    if (($legal -contains "RAISE") -and (-not (Get-IsStreetRaiseCapReached))) {
+      $potNow = [int]([Math]::Max(1, $script:currentPotAmount))
+      $gapRatio = [double]$facingGap / [double]$potNow
+      $raiseThreshold = 65
+      if ($gapRatio -ge 0.50) { $raiseThreshold = 45 }
+      if ($gapRatio -ge 1.00) { $raiseThreshold = 25 }
+      $roll = [int](Get-Random -Minimum 0 -Maximum 100)
+      if (($topPreflopToken -like "raise*") -and ($roll -lt [int]([Math]::Min(92, ($raiseThreshold + 15))))) {
+        return "RAISE"
+      }
+      if ($roll -lt $raiseThreshold) {
+        return "RAISE"
+      }
     }
     if ($legal -contains "CALL") { return "CALL" }
     if ($legal -contains "ALL IN") { return "ALL IN" }
@@ -1970,8 +1992,41 @@ function Reset-StreetActionState {
   $script:currentVillainStreetCommit = 0
   $script:heroActedThisRound = $false
   $script:villainActedThisRound = $false
+  $script:streetRaiseCount = 0
   Update-CheckCallButtonModeFromState
   Update-TableStateDisplay
+}
+
+function Get-IsStreetRaiseCapReached {
+  $cap = [int]([Math]::Max(1, $script:maxRaisesPerStreet))
+  return ([int]$script:streetRaiseCount -ge $cap)
+}
+
+function Register-StreetRaiseAction {
+  param(
+    [Parameter(Mandatory = $true)][string]$Actor,
+    [Parameter(Mandatory = $true)][string]$Action,
+    [int]$Amount = 0
+  )
+
+  $token = ([string]$Action).Trim().ToUpperInvariant()
+  if ($token -notin @("RAISE", "ALL IN")) {
+    return
+  }
+  if ([int]$Amount -le 0) {
+    return
+  }
+  $script:streetRaiseCount = [int]$script:streetRaiseCount + 1
+  if (Get-IsStreetRaiseCapReached) {
+    Write-Log ("Street raise cap reached ({0}); further re-raises disabled until next street." -f [int]$script:maxRaisesPerStreet) -Type "street_raise_cap" -Data @{
+      actor = [string]$Actor
+      action = $token
+      amount = [int]$Amount
+      street = (Get-CurrentStreetName)
+      street_raise_count = [int]$script:streetRaiseCount
+      max_raises_per_street = [int]$script:maxRaisesPerStreet
+    }
+  }
 }
 
 function Clear-FacingBetAmount {
@@ -5444,6 +5499,7 @@ function Invoke-VillainActionSelection {
       $committedAmount = [int]([Math]::Max(0, $script:currentVillainChips))
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
+        Register-StreetRaiseAction -Actor "villain" -Action "ALL IN" -Amount $committedAmount
       }
       else {
         Update-TableStateDisplay
@@ -5484,6 +5540,7 @@ function Invoke-VillainActionSelection {
       }
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
+        Register-StreetRaiseAction -Actor "villain" -Action "RAISE" -Amount $committedAmount
       }
       else {
         Update-TableStateDisplay
@@ -5537,6 +5594,7 @@ function Invoke-ManualActionSelection {
     $committedAmount = [int]([Math]::Max(0, $script:currentHeroChips))
     if ($committedAmount -gt 0) {
       $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
+      Register-StreetRaiseAction -Actor "hero" -Action "ALL IN" -Amount $committedAmount
     }
   }
   elseif ($normalizedAction -in @("CALL", "RAISE")) {
@@ -5575,6 +5633,9 @@ function Invoke-ManualActionSelection {
     }
     if ($committedAmount -gt 0) {
       $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
+      if ($normalizedAction -eq "RAISE") {
+        Register-StreetRaiseAction -Actor "hero" -Action "RAISE" -Amount $committedAmount
+      }
     }
   }
   elseif ($normalizedAction -eq "FOLD") {
@@ -7992,8 +8053,8 @@ function Try-AutoSendHeroCardsToEngine {
       }
     }
     else {
-      Write-Log ("Preflop state updated ({0}): facing_bet={1}, hero_commit={2}, villain_commit={3}." -f `
-        (Get-HeroCardsText), [int]$script:currentFacingBetAmount, [int]$script:currentHeroStreetCommit, [int]$script:currentVillainStreetCommit) -Type "hero_preflop_refresh" -Data @{
+      Write-Log ("Preflop state updated ({0}): facing_bet={1}, hero_commit={2}, villain_commit={3}, street_raises={4}." -f `
+        (Get-HeroCardsText), [int]$script:currentFacingBetAmount, [int]$script:currentHeroStreetCommit, [int]$script:currentVillainStreetCommit, [int]$script:streetRaiseCount) -Type "hero_preflop_refresh" -Data @{
         hero1 = [string]$heroCards["hero1"]
         hero2 = [string]$heroCards["hero2"]
         stage_key = $heroStageKey
@@ -8001,6 +8062,8 @@ function Try-AutoSendHeroCardsToEngine {
         facing_bet = [int]$script:currentFacingBetAmount
         hero_commit = [int]$script:currentHeroStreetCommit
         villain_commit = [int]$script:currentVillainStreetCommit
+        street_raise_count = [int]$script:streetRaiseCount
+        max_raises_per_street = [int]$script:maxRaisesPerStreet
       }
     }
     $script:lastHeroAutoSendKey = $preflopSolveKey

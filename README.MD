@@ -54,6 +54,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - heads-up turn-state flow now resets per street on auto-deal transitions (flop/turn/river), preventing stale action flags from carrying into the next street.
   - tester payloads now inject exact hero combo class into `spot.hero_range` (for example `A4s`, `KQo`, `44`) when hero hole cards are known, instead of always solving from a broad hero range.
   - table-state panel/overlay now includes concise position text (`SB / BTN`, `BB`) and live `STATUS` messaging (for example `STATUS: VILLAIN RAISED TO 6`).
+  - preflop auto-villain re-raise wars are now bounded with a per-street raise cap (`MAX_RAISES_PER_STREET`, default `4`) plus weighted aggressive fallback-to-call behavior, so hands reliably progress to the flop instead of looping on endless re-raises.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,
