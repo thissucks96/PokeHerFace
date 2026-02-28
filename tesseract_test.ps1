@@ -6477,9 +6477,17 @@ function Set-AdviceFromEngineResult {
       try { [void]$metaParts.Add(("{0:N2}s" -f [double]$EngineResult.elapsed_sec)) } catch {}
     }
 
-    $sortedRowsArray = @($sortedRows)
+    $sortedRowsArrayList = New-Object System.Collections.ArrayList
+    foreach ($sortedRow in $sortedRows) {
+      if ($null -eq $sortedRow) { continue }
+      [void]$sortedRowsArrayList.Add([pscustomobject]@{
+        token = [string]$sortedRow.token
+        weight = [double]$sortedRow.weight
+      })
+    }
+    $sortedRowsArray = $sortedRowsArrayList.ToArray()
     $script:adviceActionPrimary = Get-AdviceDecisionPrimary -WeightedRows $sortedRowsArray
-    $script:lastAdviceWeightedRows = @($sortedRowsArray)
+    $script:lastAdviceWeightedRows = $sortedRowsArray
 
     $secondaryLines = New-Object System.Collections.Generic.List[string]
     if ($mixParts.Count -gt 0) { [void]$secondaryLines.Add(($mixParts -join " | ")) }
