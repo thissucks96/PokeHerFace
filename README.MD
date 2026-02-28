@@ -290,6 +290,8 @@ Bridge runtime profile budgets (`POST /solve`):
     - `FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC` (default `3`)
     - `FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC` (default `2`)
     - `FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC` (default `1`)
+  - active-node baseline cap:
+    - `FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC` (default `4`) only applies when `spot.active_node_path` is present, so non-root decision tests can get a slightly larger budget without slowing all root-level `fast_live` solves.
   - compact live mini-solve spot profile:
     - `FAST_LIVE_SPOT_MAX_ITERATIONS` (default `1`)
     - `FAST_LIVE_SPOT_MAX_THREADS` (default `2`)

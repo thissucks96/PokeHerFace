@@ -153,6 +153,10 @@ try:
 except ValueError:
     FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC = 1
 try:
+    FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC", "4"))
+except ValueError:
+    FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC = 4
+try:
     FAST_LIVE_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_LLM_TIMEOUT_SEC", "1"))
 except ValueError:
     FAST_LIVE_LLM_TIMEOUT_SEC = 1
@@ -862,6 +866,15 @@ def _resolve_stage_budgets(runtime_profile: str, request_timeout: int, spot: Opt
             street_cap = FAST_BASELINE_TIMEOUT_RIVER_SEC if runtime_profile == "fast" else FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC
         if isinstance(street_cap, int):
             baseline_timeout = _stage_budget_value(baseline_timeout, street_cap, min_floor=min_floor)
+    if runtime_profile == "fast_live" and isinstance(spot, dict):
+        active_node_path = str(spot.get("active_node_path", "")).strip()
+        if active_node_path:
+            active_node_timeout = _stage_budget_value(
+                request_timeout,
+                FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC,
+                min_floor=min_floor,
+            )
+            baseline_timeout = max(baseline_timeout, active_node_timeout)
     llm_timeout = _stage_budget_value(request_timeout, llm_cap, min_floor=min_floor)
     locked_timeout = _stage_budget_value(request_timeout, locked_cap, min_floor=min_floor)
     locked_total_timeout = _stage_budget_value(request_timeout, locked_total_cap, min_floor=min_floor)
@@ -1364,6 +1377,7 @@ def health() -> Dict[str, Any]:
         "fast_live_baseline_timeout_flop_sec": FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC,
         "fast_live_baseline_timeout_turn_sec": FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC,
         "fast_live_baseline_timeout_river_sec": FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC,
+        "fast_live_active_node_timeout_sec": FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC,
         "fast_live_llm_timeout_sec": FAST_LIVE_LLM_TIMEOUT_SEC,
         "fast_live_locked_timeout_sec": FAST_LIVE_LOCKED_TIMEOUT_SEC,
         "fast_live_locked_stage_total_sec": FAST_LIVE_LOCKED_STAGE_TOTAL_SEC,
