@@ -26,7 +26,7 @@ param (
     [ValidateSet("fast", "fast_live", "normal")]
     [string]$RuntimeProfile = "fast",
     [int]$Hands = 20,
-    [string]$OutputDir = "$PSScriptRoot\..\4_LLM_Bridge\examples\synthetic_hands",
+    [string]$OutputDir = "",
     [int]$TimeoutSec = 60
 )
 
@@ -35,10 +35,22 @@ $ErrorActionPreference = "Stop"
 $workspaceRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $bridgeServerDir = Join-Path $workspaceRoot "4_LLM_Bridge"
 $simScript = Join-Path $bridgeServerDir "run_stateful_sim.py"
+$defaultOutputDir = Join-Path $workspaceRoot "4_LLM_Bridge\examples\synthetic_hands"
+
+if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+    $OutputDir = $defaultOutputDir
+} elseif (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
+    $OutputDir = Join-Path $workspaceRoot $OutputDir
+}
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
 if (-not (Test-Path $simScript)) {
     Write-Error "Cannot find stateful simulator python script: $simScript"
     exit 1
+}
+
+if (-not (Test-Path $OutputDir)) {
+    $null = New-Item -ItemType Directory -Path $OutputDir -Force
 }
 
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd_HHmmss")
