@@ -6338,53 +6338,82 @@ function Set-AdviceFromEngineResult {
     [Parameter(Mandatory = $true)]$EngineResult
   )
 
-  $rawRows = @()
-  if ($EngineResult.PSObject.Properties.Name -contains "root_actions" -and $null -ne $EngineResult.root_actions) {
-    $rawRows = @($EngineResult.root_actions)
-  }
-  if ($rawRows.Count -eq 0) {
-    return
-  }
+  try {
+    $rawRows = @()
+    if ($null -ne $EngineResult -and ($EngineResult.PSObject.Properties.Name -contains "root_actions") -and $null -ne $EngineResult.root_actions) {
+      $rawRows = @($EngineResult.root_actions)
+    }
+    if ($rawRows.Count -eq 0) {
+      return
+    }
 
-  $weightedRows = New-Object System.Collections.Generic.List[object]
-  $script:lastRecommendedCallAmount = 0
-  $script:lastRecommendedRaiseAmount = 0
-  foreach ($row in $rawRows) {
-    if ($null -eq $row) {
-      continue
-    }
-    $token = Convert-ActionSummaryRowToToken -Row $row
-    $token = Normalize-AdviceTokenForCurrentHeroState -Token $token
-    if (-not $token) {
-      continue
-    }
-    $weight = 0.0
-    if ($row.PSObject.Properties.Name -contains "avg_frequency" -and $null -ne $row.avg_frequency) {
-      try { $weight = [double]$row.avg_frequency } catch { $weight = 0.0 }
-    }
-    elseif ($row.PSObject.Properties.Name -contains "frequency" -and $null -ne $row.frequency) {
-      try { $weight = [double]$row.frequency } catch { $weight = 0.0 }
-    }
-    if ($weight -le 0.0) {
-      continue
-    }
-    [void]$weightedRows.Add([pscustomobject]@{
-      token = $token
-      weight = [double]$weight
-    })
-  }
-  if ($weightedRows.Count -eq 0) {
-    return
-  }
-
-  $rowsForDecision = @($weightedRows)
-  if (Test-IsHeroTurn) {
-    $normalizedRows = @(Normalize-AdviceWeightedRowsToHeroLegal -WeightedRows $rowsForDecision)
-    if ($normalizedRows.Count -gt 0) {
-      $rowsForDecision = @($normalizedRows)
-    }
-    else {
+    $script:lastRecommendedCallAmount = 0
+    $script:lastRecommendedRaiseAmount = 0
+    $heroTurn = [bool](Test-IsHeroTurn)
+    $legalTokens = @()
+    if ($heroTurn) {
       $legalTokens = @(Get-HeroLegalActionTokens)
+    }
+
+    $tokenWeights = @{}
+    foreach ($row in $rawRows) {
+      if ($null -eq $row) { continue }
+      $tokenRaw = [string](Convert-ActionSummaryRowToToken -Row $row)
+      $tokenRaw = [string](Normalize-AdviceTokenForCurrentHeroState -Token $tokenRaw)
+      if (-not $tokenRaw) { continue }
+
+      $weight = 0.0
+      if ($row.PSObject.Properties.Name -contains "avg_frequency" -and $null -ne $row.avg_frequency) {
+        try { $weight = [double]$row.avg_frequency } catch { $weight = 0.0 }
+      }
+      elseif ($row.PSObject.Properties.Name -contains "frequency" -and $null -ne $row.frequency) {
+        try { $weight = [double]$row.frequency } catch { $weight = 0.0 }
+      }
+      if ($weight -le 0.0) { continue }
+
+      $token = ([string]$tokenRaw).Trim().ToLowerInvariant()
+      if (-not $token) { continue }
+
+      if ($heroTurn -and $legalTokens.Count -gt 0) {
+        if ($token -eq "check" -and ($legalTokens -contains "CALL") -and (-not ($legalTokens -contains "CHECK"))) {
+          $token = "call"
+        }
+        elseif (($token -eq "call" -or $token -like "call:*") -and ($legalTokens -contains "CHECK") -and (-not ($legalTokens -contains "CALL"))) {
+          $token = "check"
+        }
+        elseif (($token -eq "bet" -or $token -eq "raise" -or $token -like "bet:*" -or $token -like "raise:*") -and (-not ($legalTokens -contains "RAISE")) -and ($legalTokens -contains "ALL IN")) {
+          $token = "all in"
+        }
+
+        $tokenHead = $token
+        if ($tokenHead -like "*:*") {
+          $tokenHead = $tokenHead.Split(":")[0]
+        }
+        $tokenHead = $tokenHead.Trim().ToUpperInvariant()
+        if (($tokenHead -eq "BET") -or ($tokenHead -eq "RAISE")) { $tokenHead = "RAISE" }
+        if (($tokenHead -eq "ALLIN") -or ($tokenHead -eq "ALL IN")) { $tokenHead = "ALL IN" }
+        if ($tokenHead -and (-not ($legalTokens -contains $tokenHead))) {
+          continue
+        }
+      }
+
+      if (-not $tokenWeights.ContainsKey($token)) {
+        $tokenWeights[$token] = 0.0
+      }
+      $tokenWeights[$token] = [double]$tokenWeights[$token] + [double]$weight
+
+      $amount = [int](Get-AmountFromActionToken -Token $token)
+      if ($amount -gt 0) {
+        if ($script:lastRecommendedCallAmount -le 0 -and $token -like "call:*") {
+          $script:lastRecommendedCallAmount = [int]$amount
+        }
+        if ($script:lastRecommendedRaiseAmount -le 0 -and ($token -like "bet:*" -or $token -like "raise:*")) {
+          $script:lastRecommendedRaiseAmount = [int]$amount
+        }
+      }
+    }
+
+    if ($tokenWeights.Count -eq 0 -and $heroTurn) {
       $fallbackToken = ""
       if ($legalTokens -contains "CALL") { $fallbackToken = "call" }
       elseif ($legalTokens -contains "CHECK") { $fallbackToken = "check" }
@@ -6392,67 +6421,78 @@ function Set-AdviceFromEngineResult {
       elseif ($legalTokens -contains "RAISE") { $fallbackToken = "raise" }
       elseif ($legalTokens -contains "ALL IN") { $fallbackToken = "all in" }
       if ($fallbackToken) {
-        $rowsForDecision = @(
-          [pscustomobject]@{
-            token = [string]$fallbackToken
-            weight = 1.0
-          }
-        )
+        $tokenWeights[$fallbackToken] = 1.0
       }
     }
-  }
-  if ($rowsForDecision.Count -le 0) {
-    return
-  }
-  # Keep sorting simple/stable to avoid dynamic binder mismatches in mixed PS runtimes.
-  $sortedRows = @($rowsForDecision | Sort-Object -Property token | Sort-Object -Property weight -Descending)
-  foreach ($row in $sortedRows) {
-    $amount = Get-AmountFromActionToken -Token ([string]$row.token)
-    if ($amount -le 0) {
-      continue
+    if ($tokenWeights.Count -eq 0) {
+      return
     }
-    $tokenLower = ([string]$row.token).Trim().ToLowerInvariant()
-    if ($script:lastRecommendedCallAmount -le 0 -and $tokenLower -like "call:*") {
-      $script:lastRecommendedCallAmount = [int]$amount
-    }
-    if ($script:lastRecommendedRaiseAmount -le 0 -and ($tokenLower -like "bet:*" -or $tokenLower -like "raise:*")) {
-      $script:lastRecommendedRaiseAmount = [int]$amount
-    }
-  }
-  Update-CheckCallButtonModeFromState
-  $primaryToken = [string]$sortedRows[0].token
-  $mixParts = New-Object System.Collections.Generic.List[string]
-  foreach ($row in ($sortedRows | Select-Object -First 2)) {
-    [void]$mixParts.Add(("{0} {1:N2}" -f (Convert-AdviceActionTokenToLabel -Token ([string]$row.token)), [double]$row.weight))
-  }
-  $metaParts = New-Object System.Collections.Generic.List[string]
-  if ($EngineResult.PSObject.Properties.Name -contains "selected_strategy" -and $EngineResult.selected_strategy) {
-    [void]$metaParts.Add(("via {0}" -f [string]$EngineResult.selected_strategy))
-  }
-  if ($EngineResult.PSObject.Properties.Name -contains "elapsed_sec" -and $null -ne $EngineResult.elapsed_sec) {
-    try {
-      [void]$metaParts.Add(("{0:N2}s" -f [double]$EngineResult.elapsed_sec))
-    }
-    catch {}
-  }
 
-  $script:adviceActionPrimary = Get-AdviceDecisionPrimary -WeightedRows $sortedRows
-  $script:lastAdviceWeightedRows = @($sortedRows | ForEach-Object {
-    [pscustomobject]@{
-      token = [string]$_.token
-      weight = [double]$_.weight
+    $rowsForDecision = New-Object System.Collections.Generic.List[object]
+    foreach ($tokenKey in $tokenWeights.Keys) {
+      [void]$rowsForDecision.Add([pscustomobject]@{
+        token = [string]$tokenKey
+        weight = [double]$tokenWeights[$tokenKey]
+      })
     }
-  })
-  $secondaryLines = New-Object System.Collections.Generic.List[string]
-  if ($mixParts.Count -gt 0) {
-    [void]$secondaryLines.Add(($mixParts -join " | "))
+
+    $sortedRows = New-Object System.Collections.Generic.List[object]
+    $remaining = New-Object System.Collections.Generic.List[object]
+    foreach ($entry in @($rowsForDecision)) { [void]$remaining.Add($entry) }
+    while ($remaining.Count -gt 0) {
+      $bestIndex = 0
+      $bestWeight = [double]$remaining[0].weight
+      $bestToken = [string]$remaining[0].token
+      for ($i = 1; $i -lt $remaining.Count; $i++) {
+        $currentWeight = [double]$remaining[$i].weight
+        $currentToken = [string]$remaining[$i].token
+        if (($currentWeight -gt $bestWeight) -or (($currentWeight -eq $bestWeight) -and ($currentToken -lt $bestToken))) {
+          $bestIndex = $i
+          $bestWeight = $currentWeight
+          $bestToken = $currentToken
+        }
+      }
+      [void]$sortedRows.Add($remaining[$bestIndex])
+      $remaining.RemoveAt($bestIndex)
+    }
+
+    Update-CheckCallButtonModeFromState
+
+    $mixParts = New-Object System.Collections.Generic.List[string]
+    $mixCount = [Math]::Min(2, $sortedRows.Count)
+    for ($i = 0; $i -lt $mixCount; $i++) {
+      $mixRow = $sortedRows[$i]
+      [void]$mixParts.Add(("{0} {1:N2}" -f (Convert-AdviceActionTokenToLabel -Token ([string]$mixRow.token)), [double]$mixRow.weight))
+    }
+
+    $metaParts = New-Object System.Collections.Generic.List[string]
+    if ($EngineResult.PSObject.Properties.Name -contains "selected_strategy" -and $EngineResult.selected_strategy) {
+      [void]$metaParts.Add(("via {0}" -f [string]$EngineResult.selected_strategy))
+    }
+    if ($EngineResult.PSObject.Properties.Name -contains "elapsed_sec" -and $null -ne $EngineResult.elapsed_sec) {
+      try { [void]$metaParts.Add(("{0:N2}s" -f [double]$EngineResult.elapsed_sec)) } catch {}
+    }
+
+    $sortedRowsArray = @($sortedRows)
+    $script:adviceActionPrimary = Get-AdviceDecisionPrimary -WeightedRows $sortedRowsArray
+    $script:lastAdviceWeightedRows = @($sortedRowsArray)
+
+    $secondaryLines = New-Object System.Collections.Generic.List[string]
+    if ($mixParts.Count -gt 0) { [void]$secondaryLines.Add(($mixParts -join " | ")) }
+    if ($metaParts.Count -gt 0) { [void]$secondaryLines.Add(($metaParts -join " | ")) }
+    $script:adviceActionSecondary = ($secondaryLines -join "`r`n")
+    $script:adviceHasAction = $true
+    Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
   }
-  if ($metaParts.Count -gt 0) {
-    [void]$secondaryLines.Add(($metaParts -join " | "))
+  catch {
+    Write-Log ("Set-AdviceFromEngineResult internal error: {0}" -f $_.Exception.Message) -Type "advice_internal_error" -Data @{
+      strategy = if ($EngineResult.PSObject.Properties.Name -contains "selected_strategy") { [string]$EngineResult.selected_strategy } else { "" }
+    }
+    if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+      Write-Log ("Set-AdviceFromEngineResult error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+    }
+    throw
   }
-  $script:adviceActionSecondary = ($secondaryLines -join "`r`n")
-  $script:adviceHasAction = $true
-  Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
 }
 
 Set-AdviceState -Primary $advicePrimary -Secondary $adviceSecondary
