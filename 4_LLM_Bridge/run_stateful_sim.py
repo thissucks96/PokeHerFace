@@ -21,11 +21,18 @@ from requests import RequestException
 RANK_CHARS = "23456789TJQKA"
 SUIT_CHARS = "shdc"
 RANK_VALS = {c: i for i, c in enumerate(RANK_CHARS)}
+DEFAULT_VILLAIN_RANGE = "22+,A2s+,K2s+,Q2s+,J2s+,T2s+,92s+,82s+,72s+,62s+,52s+,42s+,32s+,A2o+,K2o+,Q2o+,J2o+,T2o+,92o+,82o+,72o+,62o+,52o+,42o+,32o+"
 
 def _get_card_val(card_str: str) -> tuple[int, str]:
     if len(card_str) == 3 and card_str.startswith("10"):
         return (RANK_VALS["T"], card_str[2].lower())
     return (RANK_VALS[card_str[0].upper()], card_str[1].lower())
+
+def _combo_range_from_hole_cards(cards: List[str]) -> str:
+    if len(cards) != 2:
+        raise ValueError(f"Expected exactly 2 hole cards, got {cards!r}")
+    ordered = sorted(cards, key=lambda c: (_get_card_val(c)[0], c[1].lower()), reverse=True)
+    return "".join(f"{card[0].upper()}{card[1].lower()}" for card in ordered)
 
 def _eval_7_cards(cards: List[str]) -> tuple[int, List[int]]:
     best_score = (-1, [])
@@ -92,14 +99,11 @@ def _build_engine_spot(
     pot: int,
     hero_stack: int
 ) -> Dict[str, Any]:
-    # Ranges are simplified to represent "any two cards" except specific dead combos, 
-    # but the bridge usually processes literal ranges. We'll pass a broad dummy range 
-    # since we are tracking state, but the hero knows their exact hand in reality.
-    # The solver will use Hero range vs Villain range theoretically.
-    
+    hero_exact_combo = _combo_range_from_hole_cards(hero_cards)
+
     return {
-        "hero_range": "22+,A2s+,K2s+,Q2s+,J2s+,T2s+,92s+,82s+,72s+,62s+,52s+,42s+,32s+,A2o+,K2o+,Q2o+,J2o+,T2o+,92o+,82o+,72o+,62o+,52o+,42o+,32o+",
-        "villain_range": "22+,A2s+,K2s+,Q2s+,J2s+,T2s+,92s+,82s+,72s+,62s+,52s+,42s+,32s+,A2o+,K2o+,Q2o+,J2o+,T2o+,92o+,82o+,72o+,62o+,52o+,42o+,32o+",
+        "hero_range": hero_exact_combo,
+        "villain_range": DEFAULT_VILLAIN_RANGE,
         "board": board_cards,
         "in_position_player": 1, # Hero acts last on post-flop streets (BTN vs BB logic)
         "starting_stack": hero_stack,
@@ -152,6 +156,7 @@ def main() -> int:
         hand_record: Dict[str, Any] = {
             "hand_index": h_idx + 1,
             "hero_cards": hero_hole,
+            "hero_range": _combo_range_from_hole_cards(hero_hole),
             "villain_cards": villain_hole,
             "full_board": full_board,
             "streets": [],
