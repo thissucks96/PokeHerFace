@@ -14,6 +14,8 @@ This workspace is organized to keep the engine, neural models, hand history data
 
 - `shark.exe` (GUI) builds and launches on Windows.
 - `shark_cli.exe` (headless) accepts JSON input/output for automated solves.
+- `shark_cli.exe` now supports optional `active_node_path` input and returns `active_node_actions` for the matching solved node when present.
+  - Current limitation: `active_node_actions` are node-level range averages, not exact combo-conditioned frequencies yet.
 - Node-lock targets are enforced in CFR by `node_id` + `street` (root and non-root).
 - Python bridge server (`POST /solve`) runs a two-pass safety loop:
   - baseline no-lock solve,

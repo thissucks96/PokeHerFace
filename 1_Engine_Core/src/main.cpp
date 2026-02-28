@@ -48,6 +48,7 @@ struct SolveInput {
   int raise_cap{3};
   bool compress_strategy{true};
   BetSizingConfig bet_sizing;
+  std::string active_node_path{""};
 };
 
 struct ActionSummary {
@@ -70,6 +71,9 @@ struct SolveResult {
   TreeStatistics tree_stats{};
   std::vector<ActionSummary> root_actions;
   std::vector<NodeLockCatalogEntry> node_lock_catalog;
+  bool active_node_found{false};
+  std::string active_node_path{""};
+  std::vector<ActionSummary> active_node_actions;
 };
 
 auto default_thread_count() -> int {
@@ -305,6 +309,12 @@ auto parse_solve_input(const json &spot) -> SolveInput {
   if (spot.contains("compress_strategy")) {
     input.compress_strategy = spot.at("compress_strategy").get<bool>();
   }
+  if (spot.contains("active_node_path")) {
+    if (!spot.at("active_node_path").is_string()) {
+      throw std::runtime_error("spot.json active_node_path must be a string.");
+    }
+    input.active_node_path = spot.at("active_node_path").get<std::string>();
+  }
 
   if (spot.contains("bet_sizing")) {
     const json &bet_cfg = spot.at("bet_sizing");
@@ -415,13 +425,13 @@ auto parse_node_lock(const std::optional<std::string> &node_lock_path) -> NodeLo
   return lock_data;
 }
 
-auto summarize_root_actions(Node *root) -> std::vector<ActionSummary> {
+auto summarize_action_node(Node *node) -> std::vector<ActionSummary> {
   std::vector<ActionSummary> summary;
-  if (!root || root->get_node_type() != NodeType::ACTION_NODE) {
+  if (!node || node->get_node_type() != NodeType::ACTION_NODE) {
     return summary;
   }
 
-  auto *action_node = dynamic_cast<ActionNode *>(root);
+  auto *action_node = dynamic_cast<ActionNode *>(node);
   if (!action_node) {
     return summary;
   }
@@ -429,7 +439,7 @@ auto summarize_root_actions(Node *root) -> std::vector<ActionSummary> {
   const std::vector<float> avg = action_node->get_average_strat();
   const int num_hands = action_node->get_num_hands();
   const int num_actions = action_node->get_num_actions();
-  if (num_hands <= 0 || num_actions <= 0) {
+  if (num_hands <= 0 || num_actions <= 0 || avg.empty()) {
     return summary;
   }
 
@@ -451,6 +461,49 @@ auto summarize_root_actions(Node *root) -> std::vector<ActionSummary> {
   }
 
   return summary;
+}
+
+auto summarize_root_actions(Node *root) -> std::vector<ActionSummary> {
+  return summarize_action_node(root);
+}
+
+auto find_node_by_id(Node *node, const std::string &target_id) -> Node * {
+  if (!node) {
+    return nullptr;
+  }
+
+  if (node->get_node_type() == NodeType::ACTION_NODE) {
+    auto *action_node = dynamic_cast<ActionNode *>(node);
+    if (!action_node) {
+      return nullptr;
+    }
+    if (action_node->get_node_id() == target_id) {
+      return node;
+    }
+    for (int i = 0; i < action_node->get_num_actions(); ++i) {
+      if (Node *found = find_node_by_id(action_node->get_child(i), target_id)) {
+        return found;
+      }
+    }
+    return nullptr;
+  }
+
+  if (node->get_node_type() == NodeType::CHANCE_NODE) {
+    auto *chance_node = dynamic_cast<ChanceNode *>(node);
+    if (!chance_node) {
+      return nullptr;
+    }
+    for (int i = 0; i < 52; ++i) {
+      if (!chance_node->get_child(i)) {
+        continue;
+      }
+      if (Node *found = find_node_by_id(chance_node->get_child(i), target_id)) {
+        return found;
+      }
+    }
+  }
+
+  return nullptr;
 }
 
 void collect_node_lock_catalog(Node *node, Street street, size_t limit,
@@ -582,6 +635,15 @@ auto run_solve(const SolveInput &input, NodeLockData *node_lock, bool verbose) -
       br.get_exploitability(root.get(), input.iterations, input.board, input.starting_pot, input.in_position_player);
   result.root_actions = summarize_root_actions(root.get());
   collect_node_lock_catalog(root.get(), street_from_board_size(input.board.size()), 128, result.node_lock_catalog);
+  if (!input.active_node_path.empty()) {
+    result.active_node_path = input.active_node_path;
+    if (Node *target_node = find_node_by_id(root.get(), input.active_node_path)) {
+      result.active_node_found = true;
+      result.active_node_actions = summarize_action_node(target_node);
+    } else {
+      result.active_node_found = false;
+    }
+  }
 
   if (verbose) {
     std::cout << "\n=== Results ===\n";
@@ -615,6 +677,7 @@ auto solve_input_to_json(const SolveInput &input) -> json {
       {"remove_donk_bets", input.remove_donk_bets},
       {"raise_cap", input.raise_cap},
       {"compress_strategy", input.compress_strategy},
+      {"active_node_path", input.active_node_path},
       {"bet_sizing",
        {{"flop", {{"bet_sizes", input.bet_sizing.flop.bet_sizes}, {"raise_sizes", input.bet_sizing.flop.raise_sizes}}},
         {"turn", {{"bet_sizes", input.bet_sizing.turn.bet_sizes}, {"raise_sizes", input.bet_sizing.turn.raise_sizes}}},
@@ -626,6 +689,12 @@ auto solve_result_to_json(const SolveResult &result, const SolveInput &input, co
   json root_actions = json::array();
   for (const auto &action : result.root_actions) {
     root_actions.push_back(
+        {{"action", action.action}, {"amount", action.amount}, {"avg_frequency", action.avg_frequency}});
+  }
+
+  json active_node_actions = json::array();
+  for (const auto &action : result.active_node_actions) {
+    active_node_actions.push_back(
         {{"action", action.action}, {"amount", action.amount}, {"avg_frequency", action.avg_frequency}});
   }
 
@@ -689,6 +758,9 @@ auto solve_result_to_json(const SolveResult &result, const SolveInput &input, co
         {"total", result.total_seconds}}},
       {"final_exploitability_pct", result.final_exploitability},
       {"root_actions", root_actions},
+      {"active_node_path", result.active_node_path},
+      {"active_node_found", result.active_node_found},
+      {"active_node_actions", active_node_actions},
       {"node_lock_catalog", node_lock_catalog},
       {"warnings", warnings}};
 }
