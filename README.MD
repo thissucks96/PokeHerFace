@@ -517,6 +517,8 @@ No-engine startup variant:
   - `POKE_OCR_PARALLEL` (`1`/`0`, default `1`) enables parallel slot OCR for staged board/hero passes.
   - `POKE_OCR_PARALLEL_MAX_WORKERS` (default `3`, range `1..8`) caps parallel slot workers.
 
+When tester launches the bridge, it now applies a higher-quality `fast_live` default tuning (unless you explicitly override env vars): flop/turn/river baseline budgets `5/4/3s`, active-node budgets `6s` (`8s` on flop), active-node flop lookup-only disabled, and spot caps increased to `iterations=2`, `threads=4`.
+
 Backend lifecycle in tester:
 - On launch, tester checks Ollama + bridge endpoints and auto-starts missing services (backend windows start minimized).
 - On close/restart, tester stops only the backend processes it started in that session.

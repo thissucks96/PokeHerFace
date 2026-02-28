@@ -6051,6 +6051,27 @@ function Ensure-BackendsRunning {
       else {
         Write-Log ("Starting bridge server at {0} using {1}..." -f $bridgeHealthEndpoint, $pyCmd.label)
         try {
+          # Default fast_live quality tuning: allow a few more seconds for stronger decisions.
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_SEC = "6" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC = "5" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC = "4" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC = "3" }
+          if (-not $env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC) { $env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC = "6" }
+          if (-not $env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC) { $env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = "8" }
+          if (-not $env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY) { $env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY = "0" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_ITERATIONS) { $env:FAST_LIVE_SPOT_MAX_ITERATIONS = "2" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_THREADS) { $env:FAST_LIVE_SPOT_MAX_THREADS = "4" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_RAISE_CAP) { $env:FAST_LIVE_SPOT_MAX_RAISE_CAP = "2" }
+          Write-Log ("fast_live tuning: baseline(f/t/r)={0}/{1}/{2}s active_node={3}s active_node_flop={4}s lookup_only={5} iters={6} threads={7}" -f `
+            [string]$env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC, `
+            [string]$env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC, `
+            [string]$env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC, `
+            [string]$env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC, `
+            [string]$env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC, `
+            [string]$env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY, `
+            [string]$env:FAST_LIVE_SPOT_MAX_ITERATIONS, `
+            [string]$env:FAST_LIVE_SPOT_MAX_THREADS) -Type "engine_fast_live_tuning"
+
           $env:NEURAL_BRAIN_ENABLED = if ($engineNeuralEnabled) { "1" } else { "0" }
           $env:NEURAL_BRAIN_MODE = [string]$engineNeuralMode
           $env:NEURAL_BRAIN_TIMEOUT_SEC = [string]$engineNeuralTimeoutSec
