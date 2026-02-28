@@ -2692,12 +2692,10 @@ function Resolve-ShowdownAndAwardPot {
       current_pot = [int]$script:currentPotAmount
     }
   if ($cmp -gt 0) {
-    Set-AdviceState -Primary "HERO WINS" -Secondary ("Showdown: {0} beats {1}. Pot {2} awarded." -f $heroNarrative, $villainNarrative, [int]$script:currentPotAmount)
-    Award-PotToWinner -Winner "hero" -Reason "showdown"
+    Award-PotToWinner -Winner "hero" -Reason "showdown" -OutcomeSummary ("Showdown: {0} beats {1}. Pot {2} awarded." -f $heroNarrative, $villainNarrative, [int]$script:currentPotAmount)
   }
   elseif ($cmp -lt 0) {
-    Set-AdviceState -Primary "VILLAIN WINS" -Secondary ("Showdown: {0} beats {1}. Pot {2} awarded." -f $villainNarrative, $heroNarrative, [int]$script:currentPotAmount)
-    Award-PotToWinner -Winner "villain" -Reason "showdown"
+    Award-PotToWinner -Winner "villain" -Reason "showdown" -OutcomeSummary ("Showdown: {0} beats {1}. Pot {2} awarded." -f $villainNarrative, $heroNarrative, [int]$script:currentPotAmount)
   }
   else {
     $award = [int]([Math]::Floor(([int]$script:currentPotAmount) / 2))
@@ -5687,7 +5685,8 @@ function Show-VillainActionMenu {
 function Award-PotToWinner {
   param(
     [Parameter(Mandatory = $true)][ValidateSet("hero", "villain")][string]$Winner,
-    [string]$Reason = "manual_settle"
+    [string]$Reason = "manual_settle",
+    [string]$OutcomeSummary = ""
   )
   $award = [int]([Math]::Max(0, $script:currentPotAmount))
   if ($Winner -eq "hero") {
@@ -5704,7 +5703,11 @@ function Award-PotToWinner {
   $script:villainFolded = $false
   $winnerLabel = if ($Winner -eq "hero") { "HERO WINS" } else { "VILLAIN WINS" }
   $script:adviceActionPrimary = $winnerLabel
-  $script:adviceActionSecondary = ("Pot {0} awarded." -f [int]$award)
+  $summaryText = ([string]$OutcomeSummary).Trim()
+  if (-not $summaryText) {
+    $summaryText = ("Pot {0} awarded." -f [int]$award)
+  }
+  $script:adviceActionSecondary = $summaryText
   $script:adviceHasAction = $true
   Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
   Update-TableStateDisplay
@@ -6309,15 +6312,15 @@ function New-AdviceOverlayForm {
   $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(190, 205, 220)
   $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
   $titleLabel.Location = New-Object System.Drawing.Point(12, 10)
-  $titleLabel.Size = New-Object System.Drawing.Size(296, 34)
-  $titleLabel.AutoEllipsis = $true
+  $titleLabel.Size = New-Object System.Drawing.Size(296, 42)
+  $titleLabel.AutoEllipsis = $false
   $overlay.Controls.Add($titleLabel)
 
   $valueLabel = New-Object System.Windows.Forms.Label
   $valueLabel.Text = "WAIT"
   $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 235, 160)
   $valueLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 28, [System.Drawing.FontStyle]::Bold)
-  $valueLabel.Location = New-Object System.Drawing.Point(10, 50)
+  $valueLabel.Location = New-Object System.Drawing.Point(10, 58)
   $valueLabel.Size = New-Object System.Drawing.Size(300, 64)
   $valueLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
   $overlay.Controls.Add($valueLabel)
