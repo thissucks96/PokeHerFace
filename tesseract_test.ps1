@@ -8302,3 +8302,4 @@ $form.Add_FormClosing({
 })
 
 [void]$form.ShowDialog()
+Read-Host "Press Enter to exit"
