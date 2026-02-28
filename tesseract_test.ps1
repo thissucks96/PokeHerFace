@@ -4699,7 +4699,8 @@ function Prompt-ForChipAmount {
     [Parameter(Mandatory = $true)][string]$Title,
     [Parameter(Mandatory = $true)][string]$Prompt,
     [int]$DefaultValue = 0,
-    [int]$MaxValue = 0
+    [int]$MaxValue = 0,
+    [int]$BasePotAmount = 0
   )
   $dialog = New-Object System.Windows.Forms.Form
   $dialog.Text = $Title
@@ -4708,7 +4709,12 @@ function Prompt-ForChipAmount {
   $dialog.MinimizeBox = $false
   $dialog.MaximizeBox = $false
   $dialog.ShowInTaskbar = $false
-  $dialog.ClientSize = New-Object System.Drawing.Size(330, 136)
+  $showPotButtons = ([int]$BasePotAmount -gt 0)
+  $dialog.ClientSize = $(if ($showPotButtons) {
+    New-Object System.Drawing.Size(330, 176)
+  } else {
+    New-Object System.Drawing.Size(330, 136)
+  })
 
   $label = New-Object System.Windows.Forms.Label
   $label.Text = $Prompt
@@ -4725,16 +4731,47 @@ function Prompt-ForChipAmount {
   $numAmount.Font = New-Object System.Drawing.Font("Segoe UI", 10)
   $dialog.Controls.Add($numAmount)
 
+  if ($showPotButtons) {
+    $shortcutPercents = @(
+      @{ label = "25% Pot"; factor = 0.25 },
+      @{ label = "50% Pot"; factor = 0.50 },
+      @{ label = "100% Pot"; factor = 1.00 }
+    )
+    $shortcutX = 18
+    foreach ($shortcut in $shortcutPercents) {
+      $btnShortcut = New-Object System.Windows.Forms.Button
+      $btnShortcut.Text = [string]$shortcut.label
+      $btnShortcut.Location = New-Object System.Drawing.Point($shortcutX, 92)
+      $btnShortcut.Size = New-Object System.Drawing.Size(92, 26)
+      $factor = [double]$shortcut.factor
+      $btnShortcut.Add_Click({
+        $targetAmount = [int][Math]::Round(([double]$BasePotAmount * $factor), 0, [System.MidpointRounding]::AwayFromZero)
+        $bounded = [int]([Math]::Min([Math]::Max(0, $targetAmount), [Math]::Max(0, $MaxValue)))
+        $numAmount.Value = [decimal]$bounded
+      }.GetNewClosure())
+      $dialog.Controls.Add($btnShortcut)
+      $shortcutX += 100
+    }
+  }
+
   $btnOk = New-Object System.Windows.Forms.Button
   $btnOk.Text = "OK"
-  $btnOk.Location = New-Object System.Drawing.Point(156, 96)
+  $btnOk.Location = $(if ($showPotButtons) {
+    New-Object System.Drawing.Point(156, 136)
+  } else {
+    New-Object System.Drawing.Point(156, 96)
+  })
   $btnOk.Size = New-Object System.Drawing.Size(72, 28)
   $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
   $dialog.Controls.Add($btnOk)
 
   $btnCancel = New-Object System.Windows.Forms.Button
   $btnCancel.Text = "Cancel"
-  $btnCancel.Location = New-Object System.Drawing.Point(238, 96)
+  $btnCancel.Location = $(if ($showPotButtons) {
+    New-Object System.Drawing.Point(238, 136)
+  } else {
+    New-Object System.Drawing.Point(238, 96)
+  })
   $btnCancel.Size = New-Object System.Drawing.Size(72, 28)
   $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
   $dialog.Controls.Add($btnCancel)
@@ -4750,6 +4787,39 @@ function Prompt-ForChipAmount {
   $value = [int][decimal]$numAmount.Value
   $dialog.Dispose()
   return $value
+}
+
+function Get-HeroLegalActionTokensForSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot
+  )
+
+  $slotKey = ([string]$Slot).ToLowerInvariant()
+  switch ($slotKey) {
+    "check_btn" { return @([string]$script:checkCallButtonToken) }
+    "call_btn" { return @([string]$script:checkCallButtonToken) }
+    "fold_btn" { return @("FOLD") }
+    "bet_btn" { $slotKey = "raise_btn" }
+    "raise_btn" {
+      if ([int]$script:currentHeroChips -le 0) {
+        return @()
+      }
+      if ([string]$script:raiseAllInButtonToken -eq "ALL IN") {
+        return @("ALL IN")
+      }
+      return @("RAISE", "ALL IN")
+    }
+    "allin_btn" {
+      if ([int]$script:currentHeroChips -le 0) {
+        return @()
+      }
+      if ([string]$script:raiseAllInButtonToken -eq "ALL IN") {
+        return @("ALL IN")
+      }
+      return @("RAISE", "ALL IN")
+    }
+    default { return @() }
+  }
 }
 
 function Convert-TextToChipAmount {
@@ -4904,7 +4974,7 @@ function Invoke-VillainActionSelection {
         $committedAmount = [int]([Math]::Min($maxAmount, [Math]::Max(0, $AmountOverride)))
       }
       else {
-        $enteredAmount = Prompt-ForChipAmount -Title ("Villain {0}" -f $normalizedAction) -Prompt ("Enter villain {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
+        $enteredAmount = Prompt-ForChipAmount -Title ("Villain {0}" -f $normalizedAction) -Prompt ("Enter villain {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount -BasePotAmount $(if ($normalizedAction -eq "RAISE") { [int]$script:currentPotAmount } else { 0 })
         if ($null -eq $enteredAmount) {
           Write-Log ("Villain action canceled: {0}" -f $normalizedAction)
           return
@@ -4980,7 +5050,7 @@ function Invoke-ManualActionSelection {
       }
     }
     $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
-    $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
+    $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount -BasePotAmount $(if ($normalizedAction -eq "RAISE") { [int]$script:currentPotAmount } else { 0 })
     if ($null -eq $enteredAmount) {
       Write-Log ("Manual action canceled: {0}" -f $normalizedAction)
       return
@@ -6103,16 +6173,92 @@ function New-ManualActionMenu {
   param(
     [Parameter(Mandatory = $true)][string]$SlotKey
   )
-  $actionToken = Get-ActionTokenForSlot -Slot $SlotKey
-  if (-not $actionToken) {
+  $legalTokens = @(Get-HeroLegalActionTokensForSlot -Slot $SlotKey)
+  if ($legalTokens.Count -le 0) {
     return $null
   }
-  $item = New-Object System.Windows.Forms.ToolStripMenuItem
-  $item.Text = ("Use {0}" -f $actionToken)
-  $item.Add_Click({
-    Invoke-ManualActionSelection -ActionToken $actionToken
+  if ($legalTokens.Count -eq 1) {
+    $singleToken = [string]$legalTokens[0]
+    $item = New-Object System.Windows.Forms.ToolStripMenuItem
+    $item.Text = ("Use {0}" -f $singleToken)
+    $item.Add_Click({
+      Invoke-ManualActionSelection -ActionToken $singleToken
+    }.GetNewClosure())
+    return $item
+  }
+
+  $menu = New-Object System.Windows.Forms.ToolStripMenuItem
+  $menu.Text = "Use Action"
+  foreach ($token in $legalTokens) {
+    $capturedToken = [string]$token
+    $child = New-Object System.Windows.Forms.ToolStripMenuItem
+    $child.Text = $capturedToken
+    $child.Add_Click({
+      Invoke-ManualActionSelection -ActionToken $capturedToken
+    }.GetNewClosure())
+    [void]$menu.DropDownItems.Add($child)
+  }
+  return $menu
+}
+
+function Populate-RoiSlotContextMenuItems {
+  param(
+    [Parameter(Mandatory = $true)][System.Windows.Forms.ContextMenuStrip]$Menu,
+    [Parameter(Mandatory = $true)][string]$SlotKey
+  )
+
+  $Menu.Items.Clear()
+
+  $title = New-Object System.Windows.Forms.ToolStripMenuItem
+  $title.Text = ("Slot: {0}" -f $SlotKey)
+  $title.Enabled = $false
+  [void]$Menu.Items.Add($title)
+
+  if (($SlotKey -in $cardSlotOrder) -or ($SlotKey -in $playerSlotOrder)) {
+    [void]$Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    [void]$Menu.Items.Add((New-ManualCardRandomMenuItem -SlotKey $SlotKey))
+    [void]$Menu.Items.Add((New-ManualCardMenu -SlotKey $SlotKey))
+
+    $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $runItem.Text = "Run OCR"
+    $runItem.Add_Click({
+      Run-OcrSingleSlot -Slot $SlotKey
+    }.GetNewClosure())
+    [void]$Menu.Items.Add($runItem)
+  }
+  elseif ($SlotKey -in $infoSlotOrder) {
+    [void]$Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $runItem.Text = "Run OCR"
+    $runItem.Add_Click({
+      Run-OcrSingleSlot -Slot $SlotKey
+    }.GetNewClosure())
+    [void]$Menu.Items.Add($runItem)
+  }
+  elseif ($SlotKey -in $stateSlotOrder) {
+    [void]$Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+  }
+  elseif ($SlotKey -in $actionSlotOrder) {
+    $actionMenu = New-ManualActionMenu -SlotKey $SlotKey
+    if ($null -ne $actionMenu) {
+      [void]$Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+      [void]$Menu.Items.Add($actionMenu)
+    }
+  }
+
+  $repickItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $repickItem.Text = "Repick ROI"
+  $repickItem.Add_Click({
+    Repick-RoiForSlot -Key $SlotKey
   }.GetNewClosure())
-  return $item
+  [void]$Menu.Items.Add($repickItem)
+
+  $clearItem = New-Object System.Windows.Forms.ToolStripMenuItem
+  $clearItem.Text = "Clear ROI"
+  $clearItem.Add_Click({
+    Clear-RoiForSlot -Key $SlotKey
+  }.GetNewClosure())
+  [void]$Menu.Items.Add($clearItem)
 }
 
 function New-RoiSlotContextMenu {
@@ -6121,58 +6267,10 @@ function New-RoiSlotContextMenu {
   )
   $slotKey = [string]$Key
   $menu = New-Object System.Windows.Forms.ContextMenuStrip
-
-  $title = New-Object System.Windows.Forms.ToolStripMenuItem
-  $title.Text = ("Slot: {0}" -f $slotKey)
-  $title.Enabled = $false
-  [void]$menu.Items.Add($title)
-
-  if (($slotKey -in $cardSlotOrder) -or ($slotKey -in $playerSlotOrder)) {
-    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-    [void]$menu.Items.Add((New-ManualCardRandomMenuItem -SlotKey $slotKey))
-    [void]$menu.Items.Add((New-ManualCardMenu -SlotKey $slotKey))
-
-    $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $runItem.Text = "Run OCR"
-    $runItem.Add_Click({
-      Run-OcrSingleSlot -Slot $slotKey
-    }.GetNewClosure())
-    [void]$menu.Items.Add($runItem)
-  }
-  elseif ($slotKey -in $infoSlotOrder) {
-    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-    $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $runItem.Text = "Run OCR"
-    $runItem.Add_Click({
-      Run-OcrSingleSlot -Slot $slotKey
-    }.GetNewClosure())
-    [void]$menu.Items.Add($runItem)
-  }
-  elseif ($slotKey -in $stateSlotOrder) {
-    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-  }
-  elseif ($slotKey -in $actionSlotOrder) {
-    $actionMenu = New-ManualActionMenu -SlotKey $slotKey
-    if ($null -ne $actionMenu) {
-      [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-      [void]$menu.Items.Add($actionMenu)
-    }
-  }
-
-  $repickItem = New-Object System.Windows.Forms.ToolStripMenuItem
-  $repickItem.Text = "Repick ROI"
-  $repickItem.Add_Click({
-    Repick-RoiForSlot -Key $slotKey
+  Populate-RoiSlotContextMenuItems -Menu $menu -SlotKey $slotKey
+  $menu.Add_Opening({
+    Populate-RoiSlotContextMenuItems -Menu $menu -SlotKey $slotKey
   }.GetNewClosure())
-  [void]$menu.Items.Add($repickItem)
-
-  $clearItem = New-Object System.Windows.Forms.ToolStripMenuItem
-  $clearItem.Text = "Clear ROI"
-  $clearItem.Add_Click({
-    Clear-RoiForSlot -Key $slotKey
-  }.GetNewClosure())
-  [void]$menu.Items.Add($clearItem)
-
   return $menu
 }
 
@@ -6211,7 +6309,9 @@ function New-RoiOverlayForm {
     if ($slotText -eq "villain_txt") {
       $slotText = "villain"
     }
-    if (-not $slotText) { return }
+    if ($state.key -in $actionSlotOrder) {
+      $slotText = ""
+    }
     $fontSize = 9.0
     if ($sender.Width -lt 52 -or $sender.Height -lt 22) {
       $fontSize = 7.0
@@ -6240,7 +6340,9 @@ function New-RoiOverlayForm {
     $fmt = $null
     try {
       $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
-      $e.Graphics.DrawString($slotText, $font, $brush, 4, 2)
+      if ($slotText) {
+        $e.Graphics.DrawString($slotText, $font, $brush, 4, 2)
+      }
       if ($cardText) {
         if ($state.key -in $stateSlotOrder) {
           $cardFontSize = [Math]::Max(8.0, [Math]::Min([double]($sender.Height * 0.18), [double]($sender.Width * 0.12)))
@@ -7200,7 +7302,6 @@ function Try-AutoSendHeroCardsToEngine {
     $script:engineLastQueuedLogicalKey = ""
     $script:engineLastCompletedLogicalKey = ""
     Ensure-BackendsRunning
-    Reset-TableStateToCurrentStakes
     $script:lastHeroStageKey = $heroStageKey
   }
 

@@ -371,6 +371,8 @@ No-engine startup variant:
 - The advice primary label now buckets engine output into clearer user actions (`CHECK`, `CALL`, `CALL ANY`, `FOLD`, `RAISE`) and preserves explicit amounts when the bridge returns them (for example `CALL 3`, `RAISE 12`).
 - Manual `CALL` / `RAISE` prompts now default to the last recommended engine amount when one is available, so the user can accept or edit the suggested size instead of retyping from scratch.
 - The visible manual action controls now use a dynamic `Check` / `Call` button, `Fold`, `Raise`, and `All In`; the first button automatically flips to `Call` whenever the current advice/action mix includes a call path, otherwise it stays `Check`. `All In` commits the entire remaining hero stack immediately.
+- The ROI action menus now follow the same legality rules as the main buttons: `CHECK` disappears whenever a call is required, the aggressive ROI control exposes `RAISE` plus `ALL IN` when both are legal (or only `ALL IN` when a normal raise is no longer legal), and the menu is rebuilt on open so those labels stay in sync with the live hand state.
+- Raise amount prompts now include quick sizing buttons for `25% Pot`, `50% Pot`, and `100% Pot`, which populate the amount field from the current pot size before you confirm.
 - The main tester window now reflows on resize: the left workspace expands/contracts, the advice panel stays pinned to the right, and the log/output panes scale with the window instead of colliding.
 - The manual action buttons were moved into the right-side advice panel so the header rows stay focused on capture/run controls instead of stacking every control in one strip.
 - The target picker now exposes the simplified live labels (`hero`, `pot`, `check`, `fold`, `call`, `raise`, `all_in`) while still mapping those controls back to the underlying ROI keys internally. Legacy `bet_btn` remains supported as a compatibility alias for older saved ROIs.
@@ -406,6 +408,7 @@ No-engine startup variant:
   - deals hero/villain hole cards one at a time in live-deal order,
   - tracks a hidden burn pile,
   - and then auto-advances streets (`Burn + Flop`, `Burn + Turn`, `Burn + River`) whenever a betting round resolves.
+- The initial hero advice stage no longer resets the live table state, so the posted blinds and dealt villain hole cards stay intact after `New Hand`.
 - Pot settlement is now automatic:
   - folding awards the pot immediately,
   - completed river rounds run an automatic showdown and award the pot to the correct player,
