@@ -73,6 +73,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - advice normalization now uses runtime-safe sorting paths and applies a legal-action fallback (`CALL/CHECK/FOLD/RAISE/ALL IN`) if engine row parsing fails, preventing postflop `WAIT` stalls.
   - engine advice ingestion is now deterministic (manual token-weight aggregation + manual ranking) to avoid PowerShell dynamic binder crashes on flop fallback payloads (`Argument types do not match`).
   - advice ranking no longer enumerates generic lists through `@(...)` conversion; index-based ranking is used to avoid the remaining binder mismatch seen in manual-mode flop transitions.
+  - final advice handoff now materializes weighted rows via `ArrayList.ToArray()` (no generic-list splat conversion), removing the remaining preflop/flop binder fault when caching `lastAdviceWeightedRows`.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,
