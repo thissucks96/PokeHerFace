@@ -44,8 +44,17 @@ def _get_card_val(card_str: str) -> tuple[int, str]:
 def _combo_range_from_hole_cards(cards: List[str]) -> str:
     if len(cards) != 2:
         raise ValueError(f"Expected exactly 2 hole cards, got {cards!r}")
-    ordered = sorted(cards, key=lambda c: (_get_card_val(c)[0], c[1].lower()), reverse=True)
-    return "".join(f"{card[0].upper()}{card[1].lower()}" for card in ordered)
+    ordered = sorted(cards, key=lambda c: _get_card_val(c)[0], reverse=True)
+    card1, card2 = ordered[0], ordered[1]
+
+    rank1, rank2 = card1[0].upper(), card2[0].upper()
+    suit1, suit2 = card1[1].lower(), card2[1].lower()
+
+    if rank1 == rank2:
+        return f"{rank1}{rank2}"
+    if suit1 == suit2:
+        return f"{rank1}{rank2}s"
+    return f"{rank1}{rank2}o"
 
 def _eval_7_cards(cards: List[str]) -> tuple[int, List[int]]:
     best_score = (-1, [])

@@ -427,7 +427,7 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
   - hero gets one decision on flop / turn / river,
   - showdown winner and net bb are recorded.
 - It now makes the full simplified `shark_cli` spot contract explicit for every decision:
-  - exact dealt `hero_range` combo,
+  - structural dealt `hero_range` hand class (`44`, `AKs`, `AKo`) for solver compatibility,
   - fixed `villain_range`,
   - board by street,
   - in-position flag,
