@@ -184,11 +184,14 @@ $lastRecommendedRaiseAmount = 0
 $numSmallBlind = $null
 $numBigBlind = $null
 $numBuyIn = $null
+$btnToggleVillainCards = $null
 $lblCurrentPotValue = $null
 $lblCurrentChipsValue = $null
+$lblVillainCardsValue = $null
 $stateOverlay = $null
 $stateOverlayPotLabel = $null
 $stateOverlayChipsLabel = $null
+$stateOverlayVillainLabel = $null
 $currentPotAmount = 0
 $currentHeroChips = 0
 $currentVillainChips = 0
@@ -200,6 +203,7 @@ $activeVillainCount = 0
 $heroFolded = $false
 $villainFolded = $false
 $currentDeckShoe = @()
+$showVillainCards = $false
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
@@ -1356,6 +1360,30 @@ function Get-CurrentGameStateSnapshot {
   }
 }
 
+function Get-VillainCardsText {
+  return ("{0} {1}" -f [string]$script:villainCards["villain1"], [string]$script:villainCards["villain2"])
+}
+
+function Get-VisibleVillainCardsText {
+  if (-not $script:showVillainCards) {
+    return "Villain Cards: Hidden"
+  }
+  return ("Villain Cards: {0}" -f (Get-VillainCardsText))
+}
+
+function Set-VillainCardsVisibility {
+  param([bool]$Visible)
+  $script:showVillainCards = [bool]$Visible
+  if ($null -ne $script:btnToggleVillainCards) {
+    $script:btnToggleVillainCards.Text = $(if ($script:showVillainCards) { "Hide Villain Cards" } else { "Show Villain Cards" })
+  }
+  Update-TableStateDisplay
+}
+
+function Toggle-VillainCardsVisibility {
+  Set-VillainCardsVisibility -Visible:(-not [bool]$script:showVillainCards)
+}
+
 function Reset-StreetActionState {
   $script:currentFacingBetAmount = 0
   $script:currentHeroStreetCommit = 0
@@ -1419,17 +1447,24 @@ function Apply-VillainCommitmentToPot {
 function Update-TableStateDisplay {
   $potText = ("Pot: {0}" -f [int]$script:currentPotAmount)
   $chipsText = ("Hero Chips: {0}" -f [int]$script:currentHeroChips)
+  $villainText = Get-VisibleVillainCardsText
   if ($null -ne $script:lblCurrentPotValue) {
     $script:lblCurrentPotValue.Text = $potText
   }
   if ($null -ne $script:lblCurrentChipsValue) {
     $script:lblCurrentChipsValue.Text = $chipsText
   }
+  if ($null -ne $script:lblVillainCardsValue) {
+    $script:lblVillainCardsValue.Text = $villainText
+  }
   if ($null -ne $script:stateOverlayPotLabel) {
     $script:stateOverlayPotLabel.Text = $potText
   }
   if ($null -ne $script:stateOverlayChipsLabel) {
     $script:stateOverlayChipsLabel.Text = $chipsText
+  }
+  if ($null -ne $script:stateOverlayVillainLabel) {
+    $script:stateOverlayVillainLabel.Text = $villainText
   }
   if ($overlayForms.ContainsKey("pot_txt")) {
     try {
@@ -3154,9 +3189,29 @@ $lblCurrentChipsValue = New-Object System.Windows.Forms.Label
 $lblCurrentChipsValue.Text = "Hero Chips: 0"
 $lblCurrentChipsValue.ForeColor = [System.Drawing.Color]::White
 $lblCurrentChipsValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
-$lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, 338)
-$lblCurrentChipsValue.Size = New-Object System.Drawing.Size(210, 22)
-$advicePanel.Controls.Add($lblCurrentChipsValue)
+  $lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, 338)
+  $lblCurrentChipsValue.Size = New-Object System.Drawing.Size(210, 22)
+  $advicePanel.Controls.Add($lblCurrentChipsValue)
+
+$btnToggleVillainCards = New-Object System.Windows.Forms.Button
+$btnToggleVillainCards.Text = "Show Villain Cards"
+$btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, 366)
+$btnToggleVillainCards.Size = New-Object System.Drawing.Size(210, 28)
+$btnToggleVillainCards.FlatStyle = "Flat"
+$btnToggleVillainCards.ForeColor = [System.Drawing.Color]::White
+$btnToggleVillainCards.BackColor = [System.Drawing.Color]::FromArgb(58, 70, 88)
+$btnToggleVillainCards.Add_Click({ Toggle-VillainCardsVisibility })
+$advicePanel.Controls.Add($btnToggleVillainCards)
+$script:btnToggleVillainCards = $btnToggleVillainCards
+
+$lblVillainCardsValue = New-Object System.Windows.Forms.Label
+$lblVillainCardsValue.Text = "Villain Cards: Hidden"
+$lblVillainCardsValue.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
+$lblVillainCardsValue.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, 400)
+$lblVillainCardsValue.Size = New-Object System.Drawing.Size(210, 32)
+$lblVillainCardsValue.AutoEllipsis = $true
+$advicePanel.Controls.Add($lblVillainCardsValue)
 
 $numSmallBlind.Add_ValueChanged({
   if ($numBigBlind.Value -lt $numSmallBlind.Value) {
@@ -3187,8 +3242,8 @@ $numBuyIn.Add_ValueChanged({
 })
 
 $txtAdviceDetail = New-Object System.Windows.Forms.TextBox
-$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 394)
-$txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 176)
+$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 438)
+$txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 132)
 $txtAdviceDetail.Multiline = $true
 $txtAdviceDetail.ReadOnly = $true
 $txtAdviceDetail.ScrollBars = "Vertical"
@@ -3201,6 +3256,8 @@ $advicePanel.Controls.Add($txtAdviceDetail)
 foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)) {
   $advicePanel.Controls.Add($manualActionButton)
 }
+
+Set-VillainCardsVisibility -Visible:$false
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -3363,7 +3420,11 @@ function Update-MainLayout {
   $lblCurrentChipsTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 142))
   $lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 162))
   $lblCurrentChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
-  $detailTopY = $stakesTopY + 200
+  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 190))
+  $btnToggleVillainCards.Size = New-Object System.Drawing.Size($innerWidth, 28)
+  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 224))
+  $lblVillainCardsValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
+  $detailTopY = $stakesTopY + 264
   $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
   $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
   $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
@@ -4147,7 +4208,7 @@ function New-TableStateOverlayForm {
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
-  $overlay.Size = New-Object System.Drawing.Size(220, 86)
+  $overlay.Size = New-Object System.Drawing.Size(240, 112)
   $overlay.Location = $(if ($null -ne $script:savedStateOverlayLocation) {
     New-Object System.Drawing.Point([int]$script:savedStateOverlayLocation.X, [int]$script:savedStateOverlayLocation.Y)
   } else {
@@ -4181,8 +4242,16 @@ function New-TableStateOverlayForm {
   $chipsLabel.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
   $chipsLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
   $chipsLabel.Location = New-Object System.Drawing.Point(10, 56)
-  $chipsLabel.Size = New-Object System.Drawing.Size(200, 20)
+  $chipsLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($chipsLabel)
+
+  $villainLabel = New-Object System.Windows.Forms.Label
+  $villainLabel.Text = "Villain Cards: Hidden"
+  $villainLabel.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
+  $villainLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $villainLabel.Location = New-Object System.Drawing.Point(10, 80)
+  $villainLabel.Size = New-Object System.Drawing.Size(220, 20)
+  $overlay.Controls.Add($villainLabel)
 
   $dragHandlerDown = {
     param($sender, $e)
@@ -4209,7 +4278,7 @@ function New-TableStateOverlayForm {
     Save-RoiState
   }.GetNewClosure()
 
-  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel)) {
+  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainLabel)) {
     $ctl.ContextMenuStrip = $overlay.ContextMenuStrip
     $ctl.Add_MouseDown($dragHandlerDown)
     $ctl.Add_MouseMove($dragHandlerMove)
@@ -4218,6 +4287,7 @@ function New-TableStateOverlayForm {
 
   $script:stateOverlayPotLabel = $potLabel
   $script:stateOverlayChipsLabel = $chipsLabel
+  $script:stateOverlayVillainLabel = $villainLabel
   Update-TableStateDisplay
   return $overlay
 }
