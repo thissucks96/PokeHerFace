@@ -412,11 +412,13 @@ No-engine startup variant:
   - tracks a hidden burn pile,
   - and then auto-advances streets (`Burn + Flop`, `Burn + Turn`, `Burn + River`) whenever a betting round resolves.
 - The initial hero advice stage no longer resets the live table state, so the posted blinds and dealt villain hole cards stay intact after `New Hand`.
+- The floating `Table State` overlay `New Hand` shortcut now routes through the same deferred hand-cycle path as the main button, so it uses the identical reset/deal flow without running that work inside the menu-click context.
 - Pot settlement is now automatic:
   - folding awards the pot immediately,
   - completed river rounds run an automatic showdown and award the pot to the correct player,
   - the final visible hand stays frozen on screen until you click `New Hand`, while the backend prepares a fresh shuffled deck for the next cycle,
   - and winner settlement now overwrites stale action advice with `HERO WINS` / `VILLAIN WINS`.
+- Manual action-state changes now attempt street resolution before waiting on another advice refresh, so matched `CALL` / `CHECK` endings can deal the next street immediately instead of stalling behind a busy advice loop.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - top-level `Random Card` for a legal non-duplicate assignment
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
