@@ -97,7 +97,7 @@ $engineLlmPreset = if ($env:ENGINE_LLM_PRESET) { [string]$env:ENGINE_LLM_PRESET 
 $engineRuntimeProfile = "fast"
 if ($env:ENGINE_RUNTIME_PROFILE) {
   $parsedRuntimeProfile = ([string]$env:ENGINE_RUNTIME_PROFILE).Trim().ToLowerInvariant()
-  if ($parsedRuntimeProfile -in @("fast", "normal")) {
+  if ($parsedRuntimeProfile -in @("fast", "fast_live", "normal")) {
     $engineRuntimeProfile = $parsedRuntimeProfile
   }
 }
@@ -178,6 +178,8 @@ $engineQueueCompletedCount = 0
 $engineLastResultSummary = "none"
 $advicePrimary = "WAIT"
 $adviceSecondary = "No actionable advice yet."
+$lastRecommendedCallAmount = 0
+$lastRecommendedRaiseAmount = 0
 $numSmallBlind = $null
 $numBigBlind = $null
 $numBuyIn = $null
@@ -207,14 +209,17 @@ $autoEnabled = $false
 $overlayVisible = $true
 $quickSingleSlotHidden = $false
 $adviceOverlay = $null
+$savedAdviceOverlayLocation = $null
+$savedStateOverlayLocation = $null
 $adviceOverlayTitleLabel = $null
 $adviceOverlayValueLabel = $null
 $lblAdviceValue = $null
 $txtAdviceDetail = $null
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
 $playerSlotOrder = @("hero1", "hero2")
-$actionSlotOrder = @("fold_btn", "call_btn", "bet_btn", "raise_btn")
-$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "fold_btn", "call_btn", "bet_btn", "raise_btn")
+$infoSlotOrder = @("pot_txt")
+$actionSlotOrder = @("check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn")
+$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "pot_txt", "check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn")
 $cardRegions = @{}
 $overlayForms = @{}
 $overlayColors = @{
@@ -226,6 +231,8 @@ $overlayColors = @{
   river = [System.Drawing.Color]::FromArgb(255, 150, 80)
   hero1 = [System.Drawing.Color]::FromArgb(150, 110, 255)
   hero2 = [System.Drawing.Color]::FromArgb(150, 110, 255)
+  pot_txt = [System.Drawing.Color]::FromArgb(72, 180, 200)
+  check_btn = [System.Drawing.Color]::FromArgb(64, 132, 112)
   fold_btn = [System.Drawing.Color]::FromArgb(255, 86, 86)
   call_btn = [System.Drawing.Color]::FromArgb(70, 180, 255)
   bet_btn = [System.Drawing.Color]::FromArgb(110, 220, 130)
@@ -470,6 +477,23 @@ function Save-RoiState {
       virtual_w = [int]$virtual.Width
       virtual_h = [int]$virtual.Height
       saved_utc = [DateTime]::UtcNow.ToString("o")
+      quick_tests_hidden = [bool]$script:quickSingleSlotHidden
+    }
+    $adviceLocation = $script:savedAdviceOverlayLocation
+    if ($null -eq $adviceLocation -and $null -ne $script:adviceOverlay -and -not $script:adviceOverlay.IsDisposed) {
+      $adviceLocation = $script:adviceOverlay.Location
+    }
+    if ($null -ne $adviceLocation) {
+      $payload["_meta"]["advice_overlay_x"] = [int]$adviceLocation.X
+      $payload["_meta"]["advice_overlay_y"] = [int]$adviceLocation.Y
+    }
+    $stateLocation = $script:savedStateOverlayLocation
+    if ($null -eq $stateLocation -and $null -ne $script:stateOverlay -and -not $script:stateOverlay.IsDisposed) {
+      $stateLocation = $script:stateOverlay.Location
+    }
+    if ($null -ne $stateLocation) {
+      $payload["_meta"]["state_overlay_x"] = [int]$stateLocation.X
+      $payload["_meta"]["state_overlay_y"] = [int]$stateLocation.Y
     }
     foreach ($key in (Get-RoiTargets)) {
       $r = Get-RoiRectByKey -Key $key
@@ -495,10 +519,30 @@ function Load-RoiState {
   try {
     $json = Get-Content -Path $roiStatePath -Raw -ErrorAction Stop
     $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    $meta = $obj._meta
+    if ($null -ne $meta) {
+      if ($meta.PSObject.Properties.Name -contains "quick_tests_hidden") {
+        try {
+          $script:quickSingleSlotHidden = [bool]$meta.quick_tests_hidden
+        }
+        catch {}
+      }
+      if (($meta.PSObject.Properties.Name -contains "advice_overlay_x") -and ($meta.PSObject.Properties.Name -contains "advice_overlay_y")) {
+        try {
+          $script:savedAdviceOverlayLocation = New-Object System.Drawing.Point([int]$meta.advice_overlay_x, [int]$meta.advice_overlay_y)
+        }
+        catch {}
+      }
+      if (($meta.PSObject.Properties.Name -contains "state_overlay_x") -and ($meta.PSObject.Properties.Name -contains "state_overlay_y")) {
+        try {
+          $script:savedStateOverlayLocation = New-Object System.Drawing.Point([int]$meta.state_overlay_x, [int]$meta.state_overlay_y)
+        }
+        catch {}
+      }
+    }
     $scaleX = 1.0
     $scaleY = 1.0
     if ($roiAutoScale) {
-      $meta = $obj._meta
       if ($null -ne $meta) {
         $savedW = [double]$meta.virtual_w
         $savedH = [double]$meta.virtual_h
@@ -577,7 +621,7 @@ function Format-CardSlotStatus {
   }
 
   $missingActions = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in @("fold_btn", "call_btn")) {
+  foreach ($slot in @("check_btn", "fold_btn", "call_btn")) {
     $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
     if (-not (Test-RegionSelected -Rect $slotRect)) {
       [void]$missingActions.Add([string]$slot)
@@ -1213,6 +1257,15 @@ function Update-TableStateDisplay {
   }
   if ($null -ne $script:stateOverlayChipsLabel) {
     $script:stateOverlayChipsLabel.Text = $chipsText
+  }
+  if ($overlayForms.ContainsKey("pot_txt")) {
+    try {
+      $overlay = $overlayForms["pot_txt"]
+      if ($null -ne $overlay -and -not $overlay.IsDisposed) {
+        $overlay.Invalidate()
+      }
+    }
+    catch {}
   }
 }
 
@@ -2533,6 +2586,15 @@ $btnRestart.ForeColor = [System.Drawing.Color]::White
 $btnRestart.BackColor = [System.Drawing.Color]::FromArgb(52, 64, 92)
 $form.Controls.Add($btnRestart)
 
+$btnNewHand = New-Object System.Windows.Forms.Button
+$btnNewHand.Text = "New Hand"
+$btnNewHand.Location = New-Object System.Drawing.Point(785, 136)
+$btnNewHand.Size = New-Object System.Drawing.Size(95, 34)
+$btnNewHand.FlatStyle = "Flat"
+$btnNewHand.ForeColor = [System.Drawing.Color]::White
+$btnNewHand.BackColor = [System.Drawing.Color]::FromArgb(64, 84, 108)
+$form.Controls.Add($btnNewHand)
+
 $btnTargets = New-Object System.Windows.Forms.Button
 $btnTargets.Text = "Targets: On (F8)"
 $btnTargets.Location = New-Object System.Drawing.Point(610, 176)
@@ -2671,6 +2733,16 @@ $btnFold.BackColor = [System.Drawing.Color]::FromArgb(112, 118, 126)
 $btnFold.Add_Click({ Invoke-ManualActionSelection -ActionToken "FOLD" })
 $form.Controls.Add($btnFold)
 
+$btnCheck = New-Object System.Windows.Forms.Button
+$btnCheck.Text = "Check"
+$btnCheck.Location = New-Object System.Drawing.Point(840, 18)
+$btnCheck.Size = New-Object System.Drawing.Size(84, 28)
+$btnCheck.FlatStyle = "Flat"
+$btnCheck.ForeColor = [System.Drawing.Color]::White
+$btnCheck.BackColor = [System.Drawing.Color]::FromArgb(40, 108, 88)
+$btnCheck.Add_Click({ Invoke-ManualActionSelection -ActionToken "CHECK" })
+$form.Controls.Add($btnCheck)
+
 $btnCall = New-Object System.Windows.Forms.Button
 $btnCall.Text = "Call"
 $btnCall.Location = New-Object System.Drawing.Point(930, 18)
@@ -2738,9 +2810,11 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("turn")
 [void]$cmbTarget.Items.Add("river")
 [void]$cmbTarget.Items.Add("hero")
-[void]$cmbTarget.Items.Add("fold_btn")
-[void]$cmbTarget.Items.Add("call_btn")
-[void]$cmbTarget.Items.Add("raise_btn")
+[void]$cmbTarget.Items.Add("pot")
+[void]$cmbTarget.Items.Add("check")
+[void]$cmbTarget.Items.Add("fold")
+[void]$cmbTarget.Items.Add("call")
+[void]$cmbTarget.Items.Add("raise")
 $cmbTarget.SelectedIndex = 0
 $cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
@@ -2977,7 +3051,7 @@ function Update-MainLayout {
   $regionLabel.Size = New-Object System.Drawing.Size($leftWidth, 20)
   $cardStatusLabel.Size = New-Object System.Drawing.Size($leftWidth, 18)
 
-  $actionButtons = @($btnFold, $btnCall, $btnRaise)
+  $actionButtons = @($btnCheck, $btnFold, $btnCall, $btnRaise)
   $visibleActionButtons = @($actionButtons | Where-Object { $_.Visible })
   $actionRowWidth = 0
   if ($visibleActionButtons.Count -gt 0) {
@@ -3003,7 +3077,8 @@ function Update-MainLayout {
   $numInterval.Location = New-Object System.Drawing.Point($x, ($row1Y + 4))
 
   $btnRestart.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnRestart.Width), $row1Y)
-  $btnRunEngine.Location = New-Object System.Drawing.Point(($btnRestart.Left - $gap - [int]$btnRunEngine.Width), $row1Y)
+  $btnNewHand.Location = New-Object System.Drawing.Point(($btnRestart.Left - $gap - [int]$btnNewHand.Width), $row1Y)
+  $btnRunEngine.Location = New-Object System.Drawing.Point(($btnNewHand.Left - $gap - [int]$btnRunEngine.Width), $row1Y)
   $btnAutoStop.Location = New-Object System.Drawing.Point(($btnRunEngine.Left - $gap - [int]$btnAutoStop.Width), $row1Y)
   $btnAutoStart.Location = New-Object System.Drawing.Point(($btnAutoStop.Left - $gap - [int]$btnAutoStart.Width), $row1Y)
 
@@ -3012,7 +3087,7 @@ function Update-MainLayout {
   $cmbCaptureMode.Location = New-Object System.Drawing.Point(110, ($row2Y - 3))
   $lblTarget.Location = New-Object System.Drawing.Point(320, $row2Y)
   $cmbTarget.Location = New-Object System.Drawing.Point(405, ($row2Y - 3))
-  $cmbTarget.Size = New-Object System.Drawing.Size(170, 24)
+  $cmbTarget.Size = New-Object System.Drawing.Size(180, 24)
   $btnSetHeroes.Location = New-Object System.Drawing.Point(($leftRight - [int]$btnSetHeroes.Width), ($row2Y - 3))
   $btnResetRois.Location = New-Object System.Drawing.Point(($btnSetHeroes.Left - $gap - [int]$btnResetRois.Width), ($row2Y - 3))
   $btnTargets.Location = New-Object System.Drawing.Point(($btnResetRois.Left - $gap - [int]$btnTargets.Width), ($row2Y - 3))
@@ -3236,17 +3311,28 @@ function Get-AdvicePrimaryColor {
   param(
     [string]$Primary
   )
-  switch (([string]$Primary).Trim().ToUpperInvariant()) {
-    "FOLD" { return [System.Drawing.Color]::FromArgb(208, 214, 222) }
-    "CALL" { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
-    "CALL ANY" { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
-    "CHECK" { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
-    "BET" { return [System.Drawing.Color]::FromArgb(255, 128, 128) }
-    "RAISE" { return [System.Drawing.Color]::FromArgb(255, 128, 128) }
-    "ALL IN" { return [System.Drawing.Color]::FromArgb(255, 110, 110) }
-    "THINKING" { return [System.Drawing.Color]::FromArgb(255, 235, 160) }
-    default { return [System.Drawing.Color]::FromArgb(255, 235, 160) }
+  $value = ([string]$Primary).Trim().ToUpperInvariant()
+  if ($value -like "FOLD*") { return [System.Drawing.Color]::FromArgb(208, 214, 222) }
+  if ($value -like "CALL*") { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
+  if ($value -like "CHECK*") { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
+  if ($value -like "BET*" -or $value -like "RAISE*") { return [System.Drawing.Color]::FromArgb(255, 128, 128) }
+  if ($value -like "ALL IN*") { return [System.Drawing.Color]::FromArgb(255, 110, 110) }
+  if ($value -eq "THINKING") { return [System.Drawing.Color]::FromArgb(255, 235, 160) }
+  return [System.Drawing.Color]::FromArgb(255, 235, 160)
+}
+
+function Get-AmountFromActionToken {
+  param([string]$Token)
+  $tokenValue = ([string]$Token).Trim().ToLowerInvariant()
+  if ($tokenValue -match "^(?:call|bet|raise):(-?\d+)$") {
+    try {
+      return [int]$matches[1]
+    }
+    catch {
+      return 0
+    }
   }
+  return 0
 }
 
 function Get-ActionTokenForSlot {
@@ -3254,6 +3340,7 @@ function Get-ActionTokenForSlot {
     [Parameter(Mandatory = $true)][string]$Slot
   )
   switch (([string]$Slot).ToLowerInvariant()) {
+    "check_btn" { return "CHECK" }
     "fold_btn" { return "FOLD" }
     "call_btn" { return "CALL" }
     "bet_btn" { return "RAISE" }
@@ -3327,6 +3414,28 @@ function Prompt-ForChipAmount {
   return $value
 }
 
+function Convert-TextToChipAmount {
+  param([string]$Text)
+  $value = ([string]$Text).Trim()
+  if (-not $value) {
+    return $null
+  }
+  $matches = [regex]::Matches($value, "\d[\d,\.]*")
+  if ($matches.Count -le 0) {
+    return $null
+  }
+  $raw = [string]$matches[$matches.Count - 1].Value
+  $digitsOnly = ($raw -replace "[^\d]", "")
+  if (-not $digitsOnly) {
+    return $null
+  }
+  $parsed = 0
+  if ([int]::TryParse($digitsOnly, [ref]$parsed)) {
+    return [int]$parsed
+  }
+  return $null
+}
+
 function Invoke-ManualActionSelection {
   param(
     [Parameter(Mandatory = $true)][string]$ActionToken
@@ -3340,10 +3449,20 @@ function Invoke-ManualActionSelection {
   if ($normalizedAction -in @("CALL", "RAISE")) {
     $stakes = Get-StakeSettings
     $defaultAmount = if ($normalizedAction -eq "RAISE") {
-      [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+      if ($script:lastRecommendedRaiseAmount -gt 0) {
+        [int]$script:lastRecommendedRaiseAmount
+      }
+      else {
+        [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+      }
     }
     else {
-      [int]$stakes.big_blind
+      if ($script:lastRecommendedCallAmount -gt 0) {
+        [int]$script:lastRecommendedCallAmount
+      }
+      else {
+        [int]$stakes.big_blind
+      }
     }
     $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
     $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
@@ -3386,7 +3505,7 @@ function Convert-AdviceActionTokenToLabel {
   if (-not $tokenValue) {
     return ""
   }
-  if ($tokenValue -match "^(bet|raise):(-?\d+)$") {
+  if ($tokenValue -match "^(call|bet|raise):(-?\d+)$") {
     return ("{0} {1}" -f $matches[1].ToUpperInvariant(), $matches[2])
   }
   return $tokenValue.ToUpperInvariant()
@@ -3406,7 +3525,7 @@ function Convert-ActionSummaryRowToToken {
   if (-not $actionName) {
     return ""
   }
-  if ($actionName -in @("bet", "raise")) {
+  if ($actionName -in @("call", "bet", "raise")) {
     $amount = 0
     if ($Row.PSObject.Properties.Name -contains "amount" -and $null -ne $Row.amount) {
       try { $amount = [int][Math]::Round([double]$Row.amount) } catch { $amount = 0 }
@@ -3455,6 +3574,12 @@ function Get-AdviceDecisionPrimary {
 
   if ($checkWeight -ge 0.95 -and $callWeight -le 0.05 -and $foldWeight -le 0.05 -and $raiseWeight -le 0.05) {
     return "CHECK"
+  }
+  if ($topToken -match "^call:\d+$") {
+    return (Convert-AdviceActionTokenToLabel -Token $topToken)
+  }
+  if ($topToken -match "^(bet|raise):\d+$") {
+    return (Convert-AdviceActionTokenToLabel -Token $topToken)
   }
   if ($callWeight -ge 0.85 -and $foldWeight -le 0.10 -and $raiseWeight -le 0.15) {
     return "CALL ANY"
@@ -3599,6 +3724,8 @@ function Set-AdviceFromEngineResult {
   }
 
   $weightedRows = New-Object System.Collections.Generic.List[object]
+  $script:lastRecommendedCallAmount = 0
+  $script:lastRecommendedRaiseAmount = 0
   foreach ($row in $rawRows) {
     if ($null -eq $row) {
       continue
@@ -3621,6 +3748,19 @@ function Set-AdviceFromEngineResult {
   }
 
   $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  foreach ($row in $sortedRows) {
+    $amount = Get-AmountFromActionToken -Token ([string]$row.token)
+    if ($amount -le 0) {
+      continue
+    }
+    $tokenLower = ([string]$row.token).Trim().ToLowerInvariant()
+    if ($script:lastRecommendedCallAmount -le 0 -and $tokenLower -like "call:*") {
+      $script:lastRecommendedCallAmount = [int]$amount
+    }
+    if ($script:lastRecommendedRaiseAmount -le 0 -and ($tokenLower -like "bet:*" -or $tokenLower -like "raise:*")) {
+      $script:lastRecommendedRaiseAmount = [int]$amount
+    }
+  }
   $primaryToken = [string]$sortedRows[0].token
   $mixParts = New-Object System.Collections.Generic.List[string]
   foreach ($row in ($sortedRows | Select-Object -First 2)) {
@@ -3662,7 +3802,11 @@ function New-AdviceOverlayForm {
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
   $overlay.Size = New-Object System.Drawing.Size(320, 132)
-  $overlay.Location = New-Object System.Drawing.Point(40, 40)
+  $overlay.Location = $(if ($null -ne $script:savedAdviceOverlayLocation) {
+    New-Object System.Drawing.Point([int]$script:savedAdviceOverlayLocation.X, [int]$script:savedAdviceOverlayLocation.Y)
+  } else {
+    New-Object System.Drawing.Point(40, 40)
+  })
   $overlay.Tag = [pscustomobject]@{
     down = $false
     offsetX = 0
@@ -3708,6 +3852,8 @@ function New-AdviceOverlayForm {
     param($sender, $e)
     $state = $overlay.Tag
     $state.down = $false
+    $script:savedAdviceOverlayLocation = New-Object System.Drawing.Point([int]$overlay.Left, [int]$overlay.Top)
+    Save-RoiState
   }.GetNewClosure()
 
   foreach ($ctl in @($overlay, $titleLabel, $valueLabel)) {
@@ -3732,7 +3878,11 @@ function New-TableStateOverlayForm {
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
   $overlay.Size = New-Object System.Drawing.Size(220, 86)
-  $overlay.Location = New-Object System.Drawing.Point(40, 182)
+  $overlay.Location = $(if ($null -ne $script:savedStateOverlayLocation) {
+    New-Object System.Drawing.Point([int]$script:savedStateOverlayLocation.X, [int]$script:savedStateOverlayLocation.Y)
+  } else {
+    New-Object System.Drawing.Point(40, 182)
+  })
   $overlay.Tag = [pscustomobject]@{
     down = $false
     offsetX = 0
@@ -3784,6 +3934,8 @@ function New-TableStateOverlayForm {
     param($sender, $e)
     $state = $overlay.Tag
     $state.down = $false
+    $script:savedStateOverlayLocation = New-Object System.Drawing.Point([int]$overlay.Left, [int]$overlay.Top)
+    Save-RoiState
   }.GetNewClosure()
 
   foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel)) {
@@ -4375,8 +4527,6 @@ function New-ManualCardMenu {
   $capturedSlot = [string]$SlotKey
   $menu = New-Object System.Windows.Forms.ToolStripMenuItem
   $menu.Text = "Set Card"
-  [void]$menu.DropDownItems.Add((New-ManualCardRandomMenuItem -SlotKey $capturedSlot))
-  [void]$menu.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
   foreach ($suitToken in @("S", "H", "D", "C")) {
     [void]$menu.DropDownItems.Add((New-ManualCardSuitMenuItem -SlotKey $capturedSlot -SuitToken $suitToken))
   }
@@ -4413,8 +4563,18 @@ function New-RoiSlotContextMenu {
 
   if (($slotKey -in $cardSlotOrder) -or ($slotKey -in $playerSlotOrder)) {
     [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    [void]$menu.Items.Add((New-ManualCardRandomMenuItem -SlotKey $slotKey))
     [void]$menu.Items.Add((New-ManualCardMenu -SlotKey $slotKey))
 
+    $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $runItem.Text = "Run OCR"
+    $runItem.Add_Click({
+      Run-OcrSingleSlot -Slot $slotKey
+    }.GetNewClosure())
+    [void]$menu.Items.Add($runItem)
+  }
+  elseif ($slotKey -in $infoSlotOrder) {
+    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
     $runItem.Text = "Run OCR"
     $runItem.Add_Click({
@@ -4471,7 +4631,7 @@ function New-RoiOverlayForm {
     offsetX = 0
     offsetY = 0
   }
-  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder) -or ($Key -in $actionSlotOrder)) {
+  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder) -or ($Key -in $actionSlotOrder) -or ($Key -in $infoSlotOrder)) {
     $overlay.ContextMenuStrip = New-RoiSlotContextMenu -Key $Key
   }
   $overlay.Add_Paint({
@@ -4490,6 +4650,10 @@ function New-RoiOverlayForm {
     $cardColor = [System.Drawing.Color]::FromArgb(250, 255, 255)
     if (($state.key -in $cardSlotOrder) -or ($state.key -in $playerSlotOrder)) {
       $cardText = Get-CardTokenOverlayText -Token (Get-AssignedCardTokenForSlot -Slot ([string]$state.key))
+    }
+    elseif ($state.key -in $infoSlotOrder) {
+      $cardText = ("POT {0}" -f [int]$script:currentPotAmount)
+      $cardColor = [System.Drawing.Color]::FromArgb(180, 240, 255)
     }
     elseif ($state.key -in $actionSlotOrder) {
       $cardText = Get-ActionSlotOverlayText -Slot ([string]$state.key)
@@ -5025,6 +5189,68 @@ function Run-OcrSingleSlot {
   }
   if (-not ($allSlotOrder -contains $Slot)) {
     Write-Log ("Single-slot OCR skipped: unknown slot '{0}'." -f $Slot)
+    return
+  }
+  if ($Slot -eq "pot_txt") {
+    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$Slot]
+    if (-not (Test-RegionSelected -Rect $slotRect)) {
+      Write-Log ("Single-slot OCR skipped: ROI not set for {0}." -f $Slot)
+      return
+    }
+    if (-not $tesseractExe) {
+      Write-Log "Pot OCR skipped: Tesseract is not available."
+      return
+    }
+    $script:isBusy = $true
+    $restoreOverlaysAfter = $false
+    try {
+      if ($overlayVisible) {
+        $restoreOverlaysAfter = $true
+        Set-OverlayVisibilityForCapture -Enable $false
+        Start-Sleep -Milliseconds 50
+      }
+      $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
+      New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+      $best = Get-BestOcrForRegion -Region $slotRect -ProfileName "Numeric (pot/stack)" -TmpDir $tmpDir -Tag "pot"
+      if ($null -eq $best) {
+        Write-Log "Pot OCR warning: no readable output."
+        return
+      }
+      $parsedAmount = Convert-TextToChipAmount -Text ([string]$best.text)
+      if ($null -eq $parsedAmount) {
+        Write-Log ("Pot OCR warning: could not parse numeric output ({0})." -f ([string]$best.text).Trim())
+        return
+      }
+      $script:currentPotAmount = [int]$parsedAmount
+      Update-TableStateDisplay
+      $txtLatest.Text = @(
+        "run:   single_slot"
+        "slot:  pot_txt"
+        ("pot:   {0}" -f [int]$script:currentPotAmount)
+        ("raw:   {0}" -f ([string]$best.text).Trim())
+        ("source:{0}/{1}" -f [string]$best.label, [string]$best.variant)
+      ) -join "`r`n"
+      Refresh-RoiOverlays
+      Write-Log ("Pot OCR OK via {0}/{1}: {2} -> {3}" -f [string]$best.label, [string]$best.variant, ([string]$best.text).Trim(), [int]$script:currentPotAmount) -Type "ocr_pot" -Data @{
+        slot = "pot_txt"
+        raw = ([string]$best.text).Trim()
+        parsed = [int]$script:currentPotAmount
+        profile = [string]$best.label
+        variant = [string]$best.variant
+      }
+    }
+    catch {
+      Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
+      if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
+        Write-Log ("OCR ERROR at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
+      }
+    }
+    finally {
+      if ($restoreOverlaysAfter) {
+        Set-OverlayVisibilityForCapture -Enable $true
+      }
+      $script:isBusy = $false
+    }
     return
   }
   if (Test-SlotManualAuthority -Slot $Slot) {
@@ -5653,6 +5879,32 @@ function Reset-NewHandState {
   Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
 }
 
+function Start-NewHandPreserveChips {
+  $preservedChips = [int]$script:currentHeroChips
+  $defaultState = Get-DefaultTableStateFromStakes
+  Reset-NewHandState
+  if ($preservedChips -gt 0) {
+    $script:currentHeroChips = [int]$preservedChips
+  }
+  else {
+    $script:currentHeroChips = [int]$defaultState.hero_chips
+  }
+  $script:currentPotAmount = [int]$defaultState.starting_pot
+  $txtLatest.Text = @(
+    "run:   new_hand"
+    ("hero_cards: {0}" -f (Get-HeroCardsText))
+    ("board: {0}" -f (Get-BoardTokensText))
+    ("pot:   {0}" -f [int]$script:currentPotAmount)
+    ("chips: {0}" -f [int]$script:currentHeroChips)
+  ) -join "`r`n"
+  Update-TableStateDisplay
+  Refresh-RoiOverlays
+  Write-Log ("New hand started: cards cleared, hero chips preserved at {0}, pot reset to {1}." -f [int]$script:currentHeroChips, [int]$script:currentPotAmount) -Type "new_hand" -Data @{
+    current_pot = [int]$script:currentPotAmount
+    current_hero_chips = [int]$script:currentHeroChips
+  }
+}
+
 function Run-OcrHeroSet {
   if ($isBusy) {
     return
@@ -6169,6 +6421,13 @@ $btnPick.Add_Click({
     if (-not $target) {
       $target = "flop1"
     }
+    switch ($target) {
+      "pot" { $target = "pot_txt" }
+      "check" { $target = "check_btn" }
+      "fold" { $target = "fold_btn" }
+      "call" { $target = "call_btn" }
+      "raise" { $target = "raise_btn" }
+    }
     if ($target -eq "hero") {
       Set-RoiRectByKey -Key "hero1" -Rect $rect
       $regionLabel.Text = ("Selected: hero1 -> X={0}, Y={1}, W={2}, H={3}" -f $rect.X, $rect.Y, $rect.Width, $rect.Height)
@@ -6250,6 +6509,7 @@ $btnRunHero.Add_Click({
 $btnQuickToggle.Add_Click({
   $script:quickSingleSlotHidden = -not $quickSingleSlotHidden
   Update-MainLayout
+  Save-RoiState
 })
 
 $btnAutoStart.Add_Click({
@@ -6332,6 +6592,10 @@ $btnRestart.Add_Click({
   $form.Close()
 })
 
+$btnNewHand.Add_Click({
+  Start-NewHandPreserveChips
+})
+
 $btnTargets.Add_Click({
   Toggle-RoiOverlays
 })
@@ -6355,7 +6619,7 @@ $btnResetRois.Add_Click({
   $cardStatusLabel.Text = Format-CardSlotStatus
   Save-RoiState -ForceWriteEmpty
   Refresh-RoiOverlays
-  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river, hero, and action button ROIs."
+  Write-Log "ROIs reset. Re-pick flop1, flop2, flop3, turn, river, pot_txt, hero, and action button ROIs."
 })
 
 $cmbCaptureMode.Add_SelectedIndexChanged({
@@ -6390,6 +6654,7 @@ $form.Add_Shown({
     runtime_profile = $engineRuntimeProfile
   }
   Load-RoiState
+  Update-MainLayout
   $regionLabel.Text = "Selected: none"
   $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board, hero, and action ROIs."
   $cardStatusLabel.Text = Format-CardSlotStatus
