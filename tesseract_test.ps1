@@ -310,11 +310,15 @@ function Get-ShortHash {
 function Get-EngineLogicalStateKey {
   param(
     [Parameter(Mandatory = $true)][string[]]$BoardTokens,
-    [Parameter(Mandatory = $true)][string[]]$HeroTokens,
+    [AllowEmptyCollection()][string[]]$HeroTokens = @(),
     [Parameter(Mandatory = $true)][string]$StageLabel
   )
   $boardNorm = @($BoardTokens | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
-  $heroNorm = @($HeroTokens | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
+  $heroInput = @()
+  if ($null -ne $HeroTokens) {
+    $heroInput = @($HeroTokens)
+  }
+  $heroNorm = @($heroInput | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
   $stageNorm = ([string]$StageLabel).Trim().ToLowerInvariant()
   $streetNorm = "flop"
   if ($boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count -ge 5) {
