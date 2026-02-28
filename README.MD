@@ -444,9 +444,10 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
   - per-hand street actions,
   - per-street solve spot snapshots,
   - per-street latency,
-  - strategy source usage,
+  - actual bridge `selected_strategy` usage (for example `baseline_gto` vs `fallback_lookup_policy`),
   - all-in counts / street distribution,
   - aggregate `bb_100` in this simplified environment.
+- Bet application inside the harness now enforces the configured `minimum_bet`, so small-pot 33% probes no longer create illegal 1bb bets.
 - This is the current no-vision benchmark for validating backend decision flow before returning to OCR/live integration.
 
 ## Quick Start (WSL / Linux)

@@ -249,15 +249,16 @@ def main() -> int:
             t_elapsed = time.perf_counter() - t_start
             
             metrics = resp_json.get("metrics", {})
-            action_map = resp_json.get("result", {}).get("root_actions", [])
-            strat_source = str(metrics.get("runtime_profile", "unknown"))
+            result_block = resp_json.get("result", {}) or {}
+            action_map = result_block.get("root_actions", [])
+            strat_source = str(resp_json.get("selected_strategy") or result_block.get("selected_strategy") or "unknown")
             strategy_source_counts[strat_source] = strategy_source_counts.get(strat_source, 0) + 1
             total_latency_by_street[street_name].append(t_elapsed)
             
             # Map choice to exact sizes
             chosen_action = "check"
-            if not action_map and resp_json.get("result", {}).get("decision"):
-                 raw_action = resp_json["result"]["decision"].get("action", "check")
+            if not action_map and result_block.get("decision"):
+                 raw_action = result_block["decision"].get("action", "check")
                  if "bet" in raw_action:
                       chosen_action = "bet_33" # Fallback heuristic assumption
             else:
@@ -281,10 +282,11 @@ def main() -> int:
 
             # Math application
             invested = 0
+            min_bet = int(spot["minimum_bet"])
             if chosen_action == "bet_33":
-                invested = int(pot * 0.33)
+                invested = max(min_bet, int(round(pot * 0.33)))
             elif chosen_action == "bet_75":
-                invested = int(pot * 0.75)
+                invested = max(min_bet, int(round(pot * 0.75)))
             elif chosen_action == "all_in":
                 invested = hero_stack
                 
