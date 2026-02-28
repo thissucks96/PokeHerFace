@@ -5188,8 +5188,48 @@ function Set-AdviceState {
     $adviceOverlayValueLabel.ForeColor = $primaryColor
   }
   if ($null -ne $adviceOverlayTitleLabel) {
-    $adviceOverlayTitleLabel.Text = ("Advice: {0}" -f $script:adviceSecondary)
+    $adviceOverlayTitleLabel.Text = (Get-CompactOverlaySecondaryText -Primary $script:advicePrimary -Secondary $script:adviceSecondary)
   }
+}
+
+function Get-CompactOverlaySecondaryText {
+  param(
+    [string]$Primary,
+    [string]$Secondary
+  )
+  $primaryText = ([string]$Primary).Trim().ToUpperInvariant()
+  $text = ([string]$Secondary).Trim()
+  if (-not $text) {
+    return "No actionable advice yet."
+  }
+
+  $isShowdown = ($primaryText -in @("HERO WINS", "VILLAIN WINS", "CHOP")) -or ($text -match "(?i)\bshowdown\b")
+  if (-not $isShowdown) {
+    if ($text.Length -gt 96) {
+      return ($text.Substring(0, 93) + "...")
+    }
+    return $text
+  }
+
+  $potLine = ""
+  $potMatch = [regex]::Match($text, "(?i)\bpot\s+(\d+)\s+awarded\b")
+  if ($potMatch.Success) {
+    $potLine = ("Pot +{0}" -f [string]$potMatch.Groups[1].Value)
+  }
+  $core = $text
+  $core = $core -replace "(?i)^showdown:\s*", ""
+  $core = $core -replace "(?i)\.\s*pot\s+\d+\s+awarded\.?\s*$", ""
+  $core = $core -replace "(?i)\s+beats\s+", " > "
+  $core = $core -replace "(?i)\s+with\s+", " w/ "
+  $core = $core -replace "\s+", " "
+  $core = $core.Trim(" ", ".", "|")
+  if ($core.Length -gt 78) {
+    $core = $core.Substring(0, 75) + "..."
+  }
+  if ($potLine) {
+    return ("{0}`n{1}" -f $core, $potLine)
+  }
+  return $core
 }
 
 function Set-CheckCallButtonMode {
@@ -6318,7 +6358,7 @@ function New-AdviceOverlayForm {
   }
 
   $titleLabel = New-Object System.Windows.Forms.Label
-  $titleLabel.Text = "Advice: No actionable advice yet."
+  $titleLabel.Text = "No actionable advice yet."
   $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(190, 205, 220)
   $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
   $titleLabel.Location = New-Object System.Drawing.Point(12, 10)

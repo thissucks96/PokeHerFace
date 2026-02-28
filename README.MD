@@ -58,6 +58,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - showdown resolution now emits explicit `showdown_eval` logs (board, both hole-card pairs, evaluated category/value vectors, compare result) so winner decisions are auditable when validating chop vs kicker outcomes.
   - showdown advice now includes a readable hand-strength reason (for example `Two Pair ... with kicker`, `Full House ...`, `Royal Flush`) instead of only `HERO/VILLAIN WINS`.
   - winner settlement now preserves that showdown reason in the final advice state (it no longer gets replaced by a generic `Pot awarded` line).
+  - advice overlay headline is now compacted for readability (no `Advice:` prefix; showdown lines are shortened to a concise winner-reason + compact pot line).
   - action-state refresh now runs as a guarded stabilization loop after each move, so auto-villain response + street progression resolves in one pass without requiring extra check/call clicks.
   - the in-app log panel now uses action-aware coloring (`CHECK/CALL` green, `RAISE/ALL IN` red, `FOLD` gray, error paths red/orange) to make live state transitions easier to scan during playtesting.
   - normal UI exit/restart no longer forces a `Press Enter to exit` terminal pause (set `UI_PAUSE_ON_EXIT=1` if you explicitly want the old pause behavior); crash paths still pause for debug capture.
