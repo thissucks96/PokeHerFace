@@ -212,6 +212,10 @@ $overlayColors = @{
 foreach ($slot in $allSlotOrder) {
   $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
 }
+$slotValueSource = @{}
+foreach ($slot in $allSlotOrder) {
+  $slotValueSource[$slot] = "none"
+}
 
 function Get-RoiTargets {
   return $allSlotOrder
@@ -223,6 +227,29 @@ function Get-RoiRectByKey {
     return (Convert-ToRectangleSafe -Value $cardRegions[$Key])
   }
   return [System.Drawing.Rectangle]::Empty
+}
+
+function Get-SlotValueSource {
+  param([string]$Slot)
+  if ($slotValueSource.ContainsKey($Slot)) {
+    return [string]$slotValueSource[$Slot]
+  }
+  return "none"
+}
+
+function Set-SlotValueSource {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$Source
+  )
+  if ($slotValueSource.ContainsKey($Slot)) {
+    $slotValueSource[$Slot] = ([string]$Source).Trim().ToLowerInvariant()
+  }
+}
+
+function Test-SlotManualAuthority {
+  param([string]$Slot)
+  return ((Get-SlotValueSource -Slot $Slot) -eq "manual")
 }
 
 function Set-RoiRectByKey {
@@ -542,6 +569,76 @@ function Get-HeroCardsReady {
 
 function Get-HeroCardsText {
   return ("{0} {1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
+}
+
+function Get-BoardSlotIndex {
+  param([string]$Slot)
+  switch (([string]$Slot).Trim().ToLowerInvariant()) {
+    "flop1" { return 0 }
+    "flop2" { return 1 }
+    "flop3" { return 2 }
+    "turn" { return 3 }
+    "river" { return 4 }
+    default { return -1 }
+  }
+}
+
+function Get-AssignedCardTokenForSlot {
+  param([string]$Slot)
+  $slotKey = ([string]$Slot).Trim()
+  if (-not $slotKey) {
+    return ""
+  }
+  if ($slotKey -in $playerSlotOrder) {
+    $token = Normalize-CardToken -Text ([string]$heroCards[$slotKey])
+    if (Test-CardTokenStrict -Token $token) {
+      return $token
+    }
+    return ""
+  }
+  if ($slotKey -in $cardSlotOrder) {
+    $idx = Get-BoardSlotIndex -Slot $slotKey
+    if ($idx -lt 0) {
+      return ""
+    }
+    if (($lastBoardTokens -is [System.Array]) -and ($idx -lt $lastBoardTokens.Count)) {
+      $token = Normalize-CardToken -Text ([string]$lastBoardTokens[$idx])
+      if (Test-CardTokenStrict -Token $token) {
+        return $token
+      }
+    }
+  }
+  return ""
+}
+
+function Find-AssignedSlotForToken {
+  param(
+    [Parameter(Mandatory = $true)][string]$Token,
+    [string]$ExcludeSlot = ""
+  )
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    return ""
+  }
+  $exclude = ([string]$ExcludeSlot).Trim().ToLowerInvariant()
+  foreach ($slot in @($playerSlotOrder + $cardSlotOrder)) {
+    $slotKey = [string]$slot
+    if ($slotKey.Trim().ToLowerInvariant() -eq $exclude) {
+      continue
+    }
+    $assigned = Get-AssignedCardTokenForSlot -Slot $slotKey
+    if ($assigned -and $assigned -eq $normalized) {
+      return $slotKey
+    }
+  }
+  return ""
+}
+
+function Reset-BoardAssignmentState {
+  $script:lastBoardTokens = @()
+  foreach ($slot in $cardSlotOrder) {
+    Set-SlotValueSource -Slot $slot -Source "none"
+  }
 }
 
 function Get-BoardReadyFromTokens {
@@ -2923,10 +3020,12 @@ function Clear-RoiForSlot {
   if ($Key -in $playerSlotOrder) {
     $heroCards[$Key] = "??"
     $script:lastHeroAutoSendKey = ""
+    $script:lastHeroStageKey = ""
   }
   elseif ($Key -in $cardSlotOrder) {
     Update-LastBoardTokenFromSlot -Slot $Key -Token "??"
   }
+  Set-SlotValueSource -Slot $Key -Source "none"
   $regionLabel.Text = ("Selected: cleared {0}" -f $Key)
   $cardStatusLabel.Text = Format-CardSlotStatus
   Save-RoiState -ForceWriteEmpty
@@ -2947,18 +3046,52 @@ function Apply-ManualCardTokenToSlot {
     Write-Log ("Manual card assign skipped for {0}: invalid token '{1}'." -f $Slot, $Token)
     return
   }
+  $occupiedBy = Find-AssignedSlotForToken -Token $normalized -ExcludeSlot $Slot
+  if ($occupiedBy) {
+    Write-Log ("Manual card assign skipped for {0}: {1} is already assigned to {2}." -f $Slot, $normalized, $occupiedBy) -Type "manual_card_conflict" -Data @{
+      slot = $Slot
+      token = $normalized
+      occupied_by = $occupiedBy
+    }
+    return
+  }
+
+  $queueManualBoardSolve = $false
+  $manualStageLabel = "manual_single"
 
   if ($Slot -in $playerSlotOrder) {
     $heroCards[$Slot] = $normalized
+    Set-SlotValueSource -Slot $Slot -Source "manual"
     if (-not $suppressHeroAutoSend) {
       Try-AutoSendHeroCardsToEngine
     }
   }
   elseif ($Slot -in $cardSlotOrder) {
+    if (-not (Get-HeroCardsReady)) {
+      Write-Log ("Manual board assignment warning: hero cards are not accounted for yet. Set hero1/hero2 first when possible." ) -Type "manual_board_before_hero" -Data @{
+        slot = $Slot
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+      }
+    }
     Update-LastBoardTokenFromSlot -Slot $Slot -Token $normalized
+    Set-SlotValueSource -Slot $Slot -Source "manual"
     $manualBoardReady = Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)
-    if ($manualBoardReady) {
-      [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel "manual_single")
+    if ($manualBoardReady -and (Get-HeroCardsReady)) {
+      $queueManualBoardSolve = $true
+      switch ($lastBoardTokens.Count) {
+        3 { $manualStageLabel = "flop" }
+        4 { $manualStageLabel = "turn" }
+        5 { $manualStageLabel = "river" }
+        default { $manualStageLabel = "manual_single" }
+      }
+    }
+    elseif ($manualBoardReady) {
+      Write-Log ("Manual board assignment held: board is ready but hero cards are still missing, so no solve was queued.") -Type "manual_board_hold_no_hero" -Data @{
+        board = @($lastBoardTokens)
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+      }
     }
   }
   else {
@@ -2979,6 +3112,9 @@ function Apply-ManualCardTokenToSlot {
     token = $normalized
     hero_cards = @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
     board = @($lastBoardTokens)
+  }
+  if ($queueManualBoardSolve) {
+    [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel $manualStageLabel)
   }
 }
 
@@ -3051,6 +3187,10 @@ function New-ManualCardRankMenuItem {
   $capturedSuit = ([string]$SuitToken).ToUpperInvariant()
   $capturedRank = [string]$RankToken
   $capturedToken = ("{0}{1}" -f $capturedRank, $capturedSuit).ToUpperInvariant()
+  $occupiedBy = Find-AssignedSlotForToken -Token $capturedToken -ExcludeSlot $capturedSlot
+  if ($occupiedBy) {
+    return $null
+  }
   $item = New-Object System.Windows.Forms.ToolStripMenuItem
   $item.Text = $capturedRank
   $item.Add_Click({
@@ -3070,7 +3210,13 @@ function New-ManualCardSuitMenuItem {
   $item.Text = Get-ManualSuitDisplay -SuitToken $capturedSuit
   $item.Font = New-Object System.Drawing.Font("Segoe UI Symbol", 9)
   foreach ($rankToken in @("A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2")) {
-    [void]$item.DropDownItems.Add((New-ManualCardRankMenuItem -SlotKey $capturedSlot -SuitToken $capturedSuit -RankToken $rankToken))
+    $rankItem = New-ManualCardRankMenuItem -SlotKey $capturedSlot -SuitToken $capturedSuit -RankToken $rankToken
+    if ($null -ne $rankItem) {
+      [void]$item.DropDownItems.Add($rankItem)
+    }
+  }
+  if ($item.DropDownItems.Count -eq 0) {
+    $item.Enabled = $false
   }
   return $item
 }
@@ -3681,6 +3827,13 @@ function Run-OcrSingleSlot {
     Write-Log ("Single-slot OCR skipped: unknown slot '{0}'." -f $Slot)
     return
   }
+  if (Test-SlotManualAuthority -Slot $Slot) {
+    Write-Log ("Single-slot OCR skipped: {0} is locked by manual assignment ({1})." -f $Slot, (Get-AssignedCardTokenForSlot -Slot $Slot)) -Type "ocr_manual_skip" -Data @{
+      slot = $Slot
+      token = (Get-AssignedCardTokenForSlot -Slot $Slot)
+    }
+    return
+  }
   if (-not (Test-OllamaEndpoint)) {
     Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
     return
@@ -3716,6 +3869,7 @@ function Run-OcrSingleSlot {
       elseif ($Slot -in $cardSlotOrder) {
         Update-LastBoardTokenFromSlot -Slot $Slot -Token "??"
       }
+      Set-SlotValueSource -Slot $Slot -Source "none"
       Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $Slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
       $txtLatest.Text = @(
         "run:   single_slot"
@@ -3736,6 +3890,7 @@ function Run-OcrSingleSlot {
       elseif ($Slot -in $cardSlotOrder) {
         Update-LastBoardTokenFromSlot -Slot $Slot -Token "??"
       }
+      Set-SlotValueSource -Slot $Slot -Source "none"
       Write-Log ("OCR warning [Cards (local vision llava)] {0}: no readable output." -f $Slot)
       $txtLatest.Text = @(
         "run:   single_slot"
@@ -3760,15 +3915,30 @@ function Run-OcrSingleSlot {
     }
     if ($Slot -in $playerSlotOrder) {
       $heroCards[$Slot] = $token
+      Set-SlotValueSource -Slot $Slot -Source "vision"
       if (-not $suppressHeroAutoSend) {
         Try-AutoSendHeroCardsToEngine
       }
     }
     elseif ($Slot -in $cardSlotOrder) {
       Update-LastBoardTokenFromSlot -Slot $Slot -Token $token
+      Set-SlotValueSource -Slot $Slot -Source "vision"
       $manualBoardReady = Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)
-      if ($manualBoardReady) {
-        [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel "manual_single")
+      if ($manualBoardReady -and (Get-HeroCardsReady)) {
+        $singleStageLabel = "manual_single"
+        switch ($lastBoardTokens.Count) {
+          3 { $singleStageLabel = "flop" }
+          4 { $singleStageLabel = "turn" }
+          5 { $singleStageLabel = "river" }
+        }
+        [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel $singleStageLabel)
+      }
+      elseif ($manualBoardReady) {
+        Write-Log ("Single-slot board OCR held: board is ready but hero cards are still missing, so no solve was queued.") -Type "board_hold_no_hero" -Data @{
+          board = @($lastBoardTokens)
+          hero1 = [string]$heroCards["hero1"]
+          hero2 = [string]$heroCards["hero2"]
+        }
       }
     }
     $txtLatest.Text = @(
@@ -3994,7 +4164,7 @@ function Try-AutoSendHeroCardsToEngine {
     if ($enginePendingJobs.Count -gt 0) {
       Stop-AllEngineJobs -Reason "new_hand_hero_staged"
     }
-    $script:lastBoardTokens = @()
+    Reset-BoardAssignmentState
     $script:lastHeroAutoSendKey = ""
     $script:engineLastQueuedStateHash = ""
     $script:engineLastCompletedStateHash = ""
@@ -4032,13 +4202,30 @@ function Run-OcrBoardSetAndQueueEngine {
   if ($isBusy) {
     return
   }
-  if (-not (Test-OllamaEndpoint)) {
+
+  $cards = @{}
+  $previewBySlot = @{}
+  $slotsToResolve = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $Slots) {
+    if (Test-SlotManualAuthority -Slot $slot) {
+      $manualToken = Get-AssignedCardTokenForSlot -Slot $slot
+      if (Test-CardTokenStrict -Token $manualToken) {
+        $cards[$slot] = $manualToken
+        $previewBySlot[$slot] = "manual"
+        continue
+      }
+      Set-SlotValueSource -Slot $slot -Source "none"
+    }
+    [void]$slotsToResolve.Add([string]$slot)
+  }
+
+  if ($slotsToResolve.Count -gt 0 -and (-not (Test-OllamaEndpoint))) {
     Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
     return
   }
 
   $missing = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in $Slots) {
+  foreach ($slot in $slotsToResolve) {
     $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
     if (-not (Test-RegionSelected -Rect $slotRect)) {
       [void]$missing.Add([string]$slot)
@@ -4049,37 +4236,42 @@ function Run-OcrBoardSetAndQueueEngine {
     return
   }
 
-  $script:isBusy = $true
+  $script:isBusy = ($slotsToResolve.Count -gt 0)
   $restoreOverlaysAfter = $false
   $previousKeepAlive = [string]$ollamaVisionKeepAlive
-    $useFastPrimary = $true
+  $useFastPrimary = $true
   try {
-    if ($overlayVisible) {
+    if (($slotsToResolve.Count -gt 0) -and $overlayVisible) {
       $restoreOverlaysAfter = $true
       Set-OverlayVisibilityForCapture -Enable $false
       Start-Sleep -Milliseconds 50
     }
-    # Keep model warm for the current staged pass (flop/turn/river),
-    # then release it in finally to preserve VRAM for solver tasks.
-    $script:ollamaVisionKeepAlive = "20s"
+    if ($slotsToResolve.Count -gt 0) {
+      # Keep model warm for the current staged pass (flop/turn/river),
+      # then release it in finally to preserve VRAM for solver tasks.
+      $script:ollamaVisionKeepAlive = "20s"
+    }
 
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    $cards = @{}
-    $previewBySlot = @{}
-    $resolvedBatch = Resolve-CardTokensBatch -Slots $Slots -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
-    foreach ($slot in $Slots) {
+    $resolvedBatch = @{}
+    if ($slotsToResolve.Count -gt 0) {
+      $resolvedBatch = Resolve-CardTokensBatch -Slots @($slotsToResolve) -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
+    }
+    foreach ($slot in $slotsToResolve) {
       $resolved = $resolvedBatch[$slot]
       if ($null -eq $resolved) {
         $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix ("{0}set" -f $StageLabel.ToLowerInvariant()) -FastMode:$useFastPrimary
       }
       if ($resolved.status -ne "ok") {
         $cards[$slot] = "??"
+        Set-SlotValueSource -Slot $slot -Source "none"
         Write-Log ("OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
         continue
       }
       if ($resolved.no_card) {
         $cards[$slot] = "NO_CARD"
+        Set-SlotValueSource -Slot $slot -Source "none"
         Write-Log ("OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
         continue
       }
@@ -4095,6 +4287,7 @@ function Run-OcrBoardSetAndQueueEngine {
         }
       }
       $cards[$slot] = $token
+      Set-SlotValueSource -Slot $slot -Source "vision"
       $previewBySlot[$slot] = [string]$resolved.preview
       if ($cards[$slot] -eq "??") {
         continue
@@ -4109,7 +4302,7 @@ function Run-OcrBoardSetAndQueueEngine {
     }
 
     $retrySlots = New-Object System.Collections.Generic.List[string]
-    foreach ($slot in $Slots) {
+    foreach ($slot in $slotsToResolve) {
       $tk = if ($cards.ContainsKey($slot)) { ([string]$cards[$slot]).Trim().ToUpperInvariant() } else { "??" }
       if (-not (Test-CardTokenStrict -Token $tk)) {
         [void]$retrySlots.Add([string]$slot)
@@ -4131,6 +4324,7 @@ function Run-OcrBoardSetAndQueueEngine {
           continue
         }
         $cards[$slot] = $retryToken
+        Set-SlotValueSource -Slot $slot -Source "vision"
         $previewBySlot[$slot] = [string]$retryResolved.preview
         Write-Log ("OCR RETRY OK [Cards (local vision llava)] {0} via {1}/{2}: parsed={3} (raw={4})" -f $slot, $retryResolved.variant, $retryResolved.source, $retryToken, [string]$retryResolved.preview) -Type "ocr_slot_retry" -Data @{
           slot = $slot
@@ -4175,6 +4369,15 @@ function Run-OcrBoardSetAndQueueEngine {
       Write-Log ("Engine handoff skipped: {0} board not ready (requires valid rank+suit cards)." -f $StageLabel)
       return
     }
+    if (-not (Get-HeroCardsReady)) {
+      Write-Log ("Engine handoff held: {0} board is ready but hero cards are not set yet." -f $StageLabel) -Type "board_hold_no_hero" -Data @{
+        stage = $StageLabel
+        board = $boardTokens
+        hero1 = [string]$heroCards["hero1"]
+        hero2 = [string]$heroCards["hero2"]
+      }
+      return
+    }
     [void](Queue-EngineSolveForBoard -BoardTokens $boardTokens -StageLabel $StageLabel.ToLowerInvariant())
   }
   catch {
@@ -4199,7 +4402,7 @@ function Run-OcrFlopSet {
 
 function Reset-NewHandState {
   # Reset solver/engine-relevant hand state only. Keep ROI overlays and UI layout untouched.
-  $script:lastBoardTokens = @()
+  Reset-BoardAssignmentState
   $script:lastHeroAutoSendKey = ""
   $script:lastHeroStageKey = ""
   $script:engineLastQueuedStateHash = ""
@@ -4208,6 +4411,9 @@ function Reset-NewHandState {
   $script:engineLastCompletedLogicalKey = ""
   $heroCards["hero1"] = "??"
   $heroCards["hero2"] = "??"
+  foreach ($slot in $playerSlotOrder) {
+    Set-SlotValueSource -Slot $slot -Source "none"
+  }
   Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
 }
 
@@ -4215,13 +4421,22 @@ function Run-OcrHeroSet {
   if ($isBusy) {
     return
   }
-  if (-not (Test-OllamaEndpoint)) {
+
+  $slotsToResolve = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in $playerSlotOrder) {
+    if (Test-SlotManualAuthority -Slot $slot) {
+      continue
+    }
+    [void]$slotsToResolve.Add([string]$slot)
+  }
+
+  if ($slotsToResolve.Count -gt 0 -and (-not (Test-OllamaEndpoint))) {
     Write-Log ("Vision skipped: Ollama endpoint unavailable at {0}." -f $ollamaHost)
     return
   }
 
   $missing = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in $playerSlotOrder) {
+  foreach ($slot in $slotsToResolve) {
     $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
     if (-not (Test-RegionSelected -Rect $slotRect)) {
       [void]$missing.Add([string]$slot)
@@ -4235,22 +4450,27 @@ function Run-OcrHeroSet {
   $started = Get-Date
   $restoreOverlaysAfter = $false
   $previousKeepAlive = [string]$ollamaVisionKeepAlive
-  $script:isBusy = $true
+  $script:isBusy = ($slotsToResolve.Count -gt 0)
   $script:suppressHeroAutoSend = $true
   try {
-    if ($overlayVisible) {
+    if (($slotsToResolve.Count -gt 0) -and $overlayVisible) {
       $restoreOverlaysAfter = $true
       Set-OverlayVisibilityForCapture -Enable $false
       Start-Sleep -Milliseconds 40
     }
 
-    # Keep model warm only for hero1->hero2 sequence, then unload.
-    $script:ollamaVisionKeepAlive = "20s"
+    if ($slotsToResolve.Count -gt 0) {
+      # Keep model warm only for hero1->hero2 sequence, then unload.
+      $script:ollamaVisionKeepAlive = "20s"
+    }
     $tmpDir = Join-Path $env:TEMP "pokebot_ocr_region"
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
-    $resolvedBatch = Resolve-CardTokensBatch -Slots $playerSlotOrder -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
-    foreach ($slot in $playerSlotOrder) {
+    $resolvedBatch = @{}
+    if ($slotsToResolve.Count -gt 0) {
+      $resolvedBatch = Resolve-CardTokensBatch -Slots @($slotsToResolve) -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
+    }
+    foreach ($slot in $slotsToResolve) {
       $resolved = $resolvedBatch[$slot]
       if ($null -eq $resolved) {
         $resolved = Resolve-CardTokenForSlot -Slot $slot -TmpDir $tmpDir -SlotTagPrefix "hero" -FastMode -SkipPresenceCheck
@@ -4285,11 +4505,13 @@ function Run-OcrHeroSet {
 
       if ($resolved.status -ne "ok") {
         $heroCards[$slot] = "??"
+        Set-SlotValueSource -Slot $slot -Source "none"
         Write-Log ("Hero OCR ERROR [{0}]: {1}" -f $slot, $resolved.message)
         continue
       }
       if ($resolved.no_card) {
         $heroCards[$slot] = "NO_CARD"
+        Set-SlotValueSource -Slot $slot -Source "none"
         Write-Log ("Hero OCR NO_CARD [{0}] white={1:P1}, green={2:P1}" -f $slot, [double]$resolved.white_ratio, [double]$resolved.green_ratio)
         continue
       }
@@ -4299,9 +4521,11 @@ function Run-OcrHeroSet {
       }
       $heroCards[$slot] = $token
       if (-not (Test-CardTokenStrict -Token $token)) {
+        Set-SlotValueSource -Slot $slot -Source "none"
         Write-Log ("Hero OCR warning [{0}]: no readable output." -f $slot)
         continue
       }
+      Set-SlotValueSource -Slot $slot -Source "vision"
       Write-Log ("Hero OCR OK [{0}] via {1}/{2}: parsed={3} (raw={4})" -f $slot, $resolved.variant, $resolved.source, $token, $resolved.preview) -Type "ocr_slot" -Data @{
         slot = $slot
         parsed = $token

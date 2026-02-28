@@ -333,6 +333,10 @@ No-engine startup variant:
 - Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
+    - Manual board assignment auto-queues a street solve once the board becomes complete for that street (3 cards = flop, 4 = turn, 5 = river), but only after hero cards are valid.
+    - Cards already assigned anywhere else are removed from the picker, so duplicate hero/community cards cannot be selected accidentally.
+    - Manual card assignment is authoritative for that slot: OCR/vision skips that slot until you clear it.
+    - If you assign community cards before hero cards are set, the tester logs a safety warning so you know hero state is still missing.
   - `Run OCR`
   - `Repick ROI`
   - `Clear ROI`
