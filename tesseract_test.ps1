@@ -176,6 +176,9 @@ $engineLlmPreset = if ($env:ENGINE_LLM_PRESET) { [string]$env:ENGINE_LLM_PRESET 
 $engineRuntimeProfile = "fast"
 if ($env:ENGINE_RUNTIME_PROFILE) {
   $parsedRuntimeProfile = ([string]$env:ENGINE_RUNTIME_PROFILE).Trim().ToLowerInvariant()
+  if ($parsedRuntimeProfile -eq "live_fast") {
+    $parsedRuntimeProfile = "fast_live"
+  }
   if ($parsedRuntimeProfile -in @("fast", "fast_live", "normal")) {
     $engineRuntimeProfile = $parsedRuntimeProfile
   }
@@ -5747,6 +5750,12 @@ function Set-AdviceFromEngineResult {
     $weight = 0.0
     if ($row.PSObject.Properties.Name -contains "avg_frequency" -and $null -ne $row.avg_frequency) {
       try { $weight = [double]$row.avg_frequency } catch { $weight = 0.0 }
+    }
+    elseif ($row.PSObject.Properties.Name -contains "frequency" -and $null -ne $row.frequency) {
+      try { $weight = [double]$row.frequency } catch { $weight = 0.0 }
+    }
+    if ($weight -le 0.0) {
+      continue
     }
     [void]$weightedRows.Add([pscustomobject]@{
       token = $token

@@ -1019,6 +1019,8 @@ def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]
 
 def _normalize_runtime_profile(profile: Optional[str]) -> str:
     value = str(profile or "").strip().lower()
+    if value == "live_fast":
+        value = "fast_live"
     if value in {"fast", "fast_live", "normal"}:
         return value
     return RUNTIME_PROFILE_DEFAULT
@@ -1312,22 +1314,43 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
 
 def _fallback_actions_from_spot(spot: Dict[str, Any]) -> list[str]:
     street = _detect_spot_street(spot)
-    actions: list[str] = ["check"]
+    actions: list[str] = []
     minimum_bet = _to_float_or_none(spot.get("minimum_bet")) or 1.0
     starting_pot = _to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0)
+    facing_bet = 0.0
+    meta = spot.get("meta")
+    if isinstance(meta, dict):
+        facing_bet = max(facing_bet, float(_to_float_or_none(meta.get("facing_bet")) or 0.0))
+    if facing_bet <= 0.0:
+        facing_bet = float(_extract_last_bet_amount_from_active_node_path(str(spot.get("active_node_path", "")).strip()) or 0)
+
+    if facing_bet > 0.0:
+        actions.extend(["fold", "call"])
+    else:
+        actions.append("check")
+
     bet_sizing = spot.get("bet_sizing", {})
     if isinstance(bet_sizing, dict):
         street_cfg = bet_sizing.get(street, {})
         if isinstance(street_cfg, dict):
-            bet_sizes = street_cfg.get("bet_sizes", [])
-            if isinstance(bet_sizes, list):
-                numeric_sizes = [float(x) for x in bet_sizes if isinstance(x, (int, float)) and float(x) > 0.0]
+            size_key = "raise_sizes" if facing_bet > 0.0 else "bet_sizes"
+            action_base = "raise" if facing_bet > 0.0 else "bet"
+            sizes = street_cfg.get(size_key, [])
+            if isinstance(sizes, list):
+                numeric_sizes = [float(x) for x in sizes if isinstance(x, (int, float)) and float(x) > 0.0]
                 if numeric_sizes:
-                    amount = int(max(minimum_bet, round(starting_pot * min(numeric_sizes))))
-                    actions.append(f"bet:{amount}")
-    if all(not token.startswith("bet:") for token in actions):
-        actions.append(f"bet:{int(max(1.0, minimum_bet))}")
-    actions.append("fold")
+                    if facing_bet > 0.0:
+                        amount = int(max(minimum_bet, round(facing_bet * min(numeric_sizes))))
+                    else:
+                        amount = int(max(minimum_bet, round(starting_pot * min(numeric_sizes))))
+                    actions.append(f"{action_base}:{amount}")
+    if facing_bet > 0.0:
+        if all(not token.startswith("raise:") for token in actions):
+            actions.append(f"raise:{int(max(minimum_bet, round(facing_bet * 2.0)))}")
+    else:
+        if all(not token.startswith("bet:") for token in actions):
+            actions.append(f"bet:{int(max(1.0, minimum_bet))}")
+
     out: list[str] = []
     seen: set[str] = set()
     for token in actions:
@@ -1495,6 +1518,41 @@ def _build_fast_live_active_node_flop_fallback_policy(
 
 def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str]) -> str:
     street = _detect_spot_street(spot)
+    facing_bet = 0.0
+    meta = spot.get("meta")
+    if isinstance(meta, dict):
+        facing_bet = max(facing_bet, float(_to_float_or_none(meta.get("facing_bet")) or 0.0))
+    if facing_bet <= 0.0:
+        facing_bet = float(_extract_last_bet_amount_from_active_node_path(str(spot.get("active_node_path", "")).strip()) or 0)
+
+    if facing_bet > 0.0:
+        minimum_bet = _to_float_or_none(spot.get("minimum_bet")) or 1.0
+        starting_pot = _to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0)
+        texture = _extract_board_texture_flags(spot)
+        denominator = max(1.0, starting_pot + facing_bet)
+        mdf = max(0.0, min(1.0, starting_pot / denominator))
+        fold_score = max(0.0, min(1.0, 1.0 - mdf))
+        if texture["paired"]:
+            fold_score = min(1.0, fold_score + 0.10)
+        if texture["monotone"] or texture["four_flush"]:
+            fold_score = min(1.0, fold_score + 0.12)
+        if texture["connected"]:
+            fold_score = min(1.0, fold_score + 0.08)
+        bet_ratio = facing_bet / max(1.0, starting_pot)
+        if bet_ratio >= 1.0:
+            fold_score = min(1.0, fold_score + 0.08)
+        elif bet_ratio <= 0.33:
+            fold_score = max(0.0, fold_score - 0.10)
+
+        if fold_score >= 0.45 and "fold" in allowed_actions:
+            return "fold"
+        if "call" in allowed_actions:
+            return "call"
+        for candidate in allowed_actions:
+            if candidate.startswith("raise:"):
+                return candidate
+        return allowed_actions[0] if allowed_actions else "call"
+
     if street in {"flop", "turn"}:
         smallest_bet = _choose_smallest_sized_action(allowed_actions, "bet")
         if smallest_bet:

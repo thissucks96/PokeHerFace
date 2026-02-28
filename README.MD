@@ -499,7 +499,8 @@ No-engine startup variant:
   - `ENGINE_SPOT_TEMPLATE_PATH` (default `4_LLM_Bridge/examples/spot.sample.json`)
   - `ENGINE_OCR_OUT_DIR` (default `5_Vision_Extraction/out/flop_engine`)
   - `ENGINE_LLM_PRESET` (default `local_qwen3_coder_30b`)
-  - `ENGINE_RUNTIME_PROFILE` (`fast`/`fast_live`/`normal`, default `fast`)
+  - `ENGINE_RUNTIME_PROFILE` (`fast`/`fast_live`/`normal`, default `fast`).
+    - Alias `live_fast` is accepted and normalized to `fast_live`.
   - `ENGINE_ENABLE_MULTI_NODE` (`0`/`1`, default `0`)
   - `ENGINE_SOLVER_TIMEOUT_SEC` (default `180`)
   - `ENGINE_JOB_MAX_AGE_SEC` (default `max(120, ENGINE_SOLVER_TIMEOUT_SEC+45)`) for stale background-job cleanup
