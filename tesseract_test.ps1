@@ -3178,6 +3178,24 @@ function Get-ManualSuitDisplay {
   }
 }
 
+function Get-CardTokenOverlayText {
+  param([string]$Token)
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    return ""
+  }
+  $rank = $normalized.Substring(0, 1)
+  $suit = $normalized.Substring(1, 1)
+  $suitSymbol = switch ($suit) {
+    "S" { [string][char]0x2660 }
+    "H" { [string][char]0x2665 }
+    "D" { [string][char]0x2666 }
+    "C" { [string][char]0x2663 }
+    default { $suit }
+  }
+  return ("{0}{1}" -f $rank, $suitSymbol)
+}
+
 function New-ManualCardRankMenuItem {
   param(
     [Parameter(Mandatory = $true)][string]$SlotKey,
@@ -3305,19 +3323,39 @@ function New-RoiOverlayForm {
     param($sender, $e)
     $state = $sender.Tag
     if ($null -eq $state) { return }
-    $text = [string]$state.key
-    if (-not $text) { return }
+    $slotText = [string]$state.key
+    if (-not $slotText) { return }
     $fontSize = 9.0
     if ($sender.Width -lt 52 -or $sender.Height -lt 22) {
       $fontSize = 7.0
     }
     $font = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold)
     $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(235, 245, 255))
+    $cardText = ""
+    if (($state.key -in $cardSlotOrder) -or ($state.key -in $playerSlotOrder)) {
+      $cardText = Get-CardTokenOverlayText -Token (Get-AssignedCardTokenForSlot -Slot ([string]$state.key))
+    }
+    $cardFont = $null
+    $cardBrush = $null
+    $fmt = $null
     try {
       $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
-      $e.Graphics.DrawString($text, $font, $brush, 4, 2)
+      $e.Graphics.DrawString($slotText, $font, $brush, 4, 2)
+      if ($cardText) {
+        $cardFontSize = [Math]::Max(10.0, [Math]::Min([double]($sender.Height * 0.38), [double]($sender.Width * 0.28)))
+        $cardFont = New-Object System.Drawing.Font("Segoe UI Symbol", [single]$cardFontSize, [System.Drawing.FontStyle]::Bold)
+        $cardBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(250, 255, 255))
+        $fmt = New-Object System.Drawing.StringFormat
+        $fmt.Alignment = [System.Drawing.StringAlignment]::Center
+        $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+        $rect = New-Object System.Drawing.RectangleF(0, 0, [single]$sender.ClientSize.Width, [single]$sender.ClientSize.Height)
+        $e.Graphics.DrawString($cardText, $cardFont, $cardBrush, $rect, $fmt)
+      }
     }
     finally {
+      if ($null -ne $fmt) { $fmt.Dispose() }
+      if ($null -ne $cardBrush) { $cardBrush.Dispose() }
+      if ($null -ne $cardFont) { $cardFont.Dispose() }
       $brush.Dispose()
       $font.Dispose()
     }
@@ -3381,6 +3419,7 @@ function Refresh-RoiOverlays {
     if ($overlay.Width -ne $rect.Width -or $overlay.Height -ne $rect.Height) {
       $overlay.Bounds = $rect
     }
+    $overlay.Invalidate()
     $overlay.BringToFront()
   }
 }
