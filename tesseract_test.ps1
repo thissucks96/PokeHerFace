@@ -191,11 +191,15 @@ $stateOverlayPotLabel = $null
 $stateOverlayChipsLabel = $null
 $currentPotAmount = 0
 $currentHeroChips = 0
+$currentVillainChips = 0
 $currentFacingBetAmount = 0
 $currentHeroStreetCommit = 0
 $currentVillainStreetCommit = 0
 $configuredVillainCount = 0
 $activeVillainCount = 0
+$heroFolded = $false
+$villainFolded = $false
+$currentDeckShoe = @()
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
@@ -203,6 +207,10 @@ $suppressHeroAutoSend = $false
 $heroCards = @{
   hero1 = "??"
   hero2 = "??"
+}
+$villainCards = @{
+  villain1 = "??"
+  villain2 = "??"
 }
 $lastBoardTokens = @()
 $lastHeroAutoSendKey = ""
@@ -719,7 +727,7 @@ function Find-AssignedSlotForToken {
 }
 
 function Reset-BoardAssignmentState {
-  $script:lastBoardTokens = @()
+  Set-LastBoardTokensWithStreetTransition -Tokens @()
   foreach ($slot in $cardSlotOrder) {
     Set-SlotValueSource -Slot $slot -Source "none"
   }
@@ -736,6 +744,88 @@ function Get-BoardReadyFromTokens {
     }
   }
   return $true
+}
+
+function Get-ValidBoardCardCount {
+  param([string[]]$Tokens)
+  $count = 0
+  foreach ($tk in @($Tokens)) {
+    if (Test-CardTokenStrict -Token $tk) {
+      $count++
+    }
+  }
+  return [int]$count
+}
+
+function Get-AllDeckCardTokens {
+  $cards = New-Object System.Collections.Generic.List[string]
+  foreach ($rank in @("A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2")) {
+    foreach ($suit in @("S", "H", "D", "C")) {
+      [void]$cards.Add(("{0}{1}" -f $rank, $suit))
+    }
+  }
+  return @($cards)
+}
+
+function Get-VisibleAssignedCardTokens {
+  $tokens = New-Object System.Collections.Generic.List[string]
+  foreach ($slot in @($playerSlotOrder + $cardSlotOrder)) {
+    $token = Get-AssignedCardTokenForSlot -Slot ([string]$slot)
+    if (Test-CardTokenStrict -Token $token) {
+      [void]$tokens.Add(([string]$token).Trim().ToUpperInvariant())
+    }
+  }
+  foreach ($slot in @("villain1", "villain2")) {
+    $token = Normalize-CardToken -Text ([string]$script:villainCards[$slot])
+    if (Test-CardTokenStrict -Token $token) {
+      [void]$tokens.Add(([string]$token).Trim().ToUpperInvariant())
+    }
+  }
+  return @($tokens)
+}
+
+function Rebuild-DeckShoeState {
+  $available = New-Object System.Collections.Generic.List[string]
+  $blocked = @{}
+  foreach ($token in @(Get-VisibleAssignedCardTokens)) {
+    $key = ([string]$token).Trim().ToUpperInvariant()
+    if ($key) {
+      $blocked[$key] = $true
+    }
+  }
+  foreach ($token in @(Get-AllDeckCardTokens)) {
+    $key = ([string]$token).Trim().ToUpperInvariant()
+    if (-not $blocked.ContainsKey($key)) {
+      [void]$available.Add($key)
+    }
+  }
+  $script:currentDeckShoe = @($available)
+}
+
+function Reset-HiddenVillainState {
+  param(
+    [int]$StartingChips = 0
+  )
+  $defaults = Get-DefaultTableStateFromStakes
+  $baseChips = if ($StartingChips -gt 0) { [int]$StartingChips } else { [int]$defaults.hero_chips }
+  $script:currentVillainChips = [int]$baseChips
+  $script:villainCards["villain1"] = "??"
+  $script:villainCards["villain2"] = "??"
+  $script:heroFolded = $false
+  $script:villainFolded = $false
+}
+
+function Set-LastBoardTokensWithStreetTransition {
+  param([string[]]$Tokens)
+
+  $oldCount = Get-ValidBoardCardCount -Tokens @($script:lastBoardTokens)
+  $newTokens = @($Tokens)
+  $newCount = Get-ValidBoardCardCount -Tokens $newTokens
+  if (($newCount -in @(3, 4, 5)) -and ($newCount -gt $oldCount)) {
+    Reset-StreetActionState
+  }
+  $script:lastBoardTokens = @($newTokens)
+  Rebuild-DeckShoeState
 }
 
 function Update-LastBoardTokenFromSlot {
@@ -771,7 +861,7 @@ function Update-LastBoardTokenFromSlot {
   else {
     $arr[$idx] = "??"
   }
-  $script:lastBoardTokens = @($arr)
+  Set-LastBoardTokensWithStreetTransition -Tokens @($arr)
 }
 
 function Get-BoardTokensText {
@@ -1255,11 +1345,14 @@ function Get-CurrentGameStateSnapshot {
   return [pscustomobject]@{
     current_pot = [int]$script:currentPotAmount
     current_hero_chips = [int]$script:currentHeroChips
+    current_villain_chips = [int]$script:currentVillainChips
     facing_bet = [int]$script:currentFacingBetAmount
     hero_street_commit = [int]$script:currentHeroStreetCommit
     villain_street_commit = [int]$script:currentVillainStreetCommit
     configured_villains = [int]$script:configuredVillainCount
     active_villains = [int]$script:activeVillainCount
+    hero_folded = [bool]$script:heroFolded
+    villain_folded = [bool]$script:villainFolded
   }
 }
 
@@ -1354,6 +1447,8 @@ function Reset-TableStateToCurrentStakes {
   $script:currentPotAmount = [int]$defaults.starting_pot
   $script:currentHeroChips = [int]$defaults.hero_chips
   Reset-StreetActionState
+  Reset-HiddenVillainState -StartingChips ([int]$script:currentHeroChips)
+  Rebuild-DeckShoeState
   Update-TableStateDisplay
 }
 
@@ -1411,11 +1506,14 @@ function Build-EngineSpotPayload {
   $state = Get-CurrentGameStateSnapshot
   $spot.meta.current_pot = [int]$state.current_pot
   $spot.meta.current_hero_chips = [int]$state.current_hero_chips
+  $spot.meta.current_villain_chips = [int]$state.current_villain_chips
   $spot.meta.facing_bet = [int]$state.facing_bet
   $spot.meta.hero_street_commit = [int]$state.hero_street_commit
   $spot.meta.villain_street_commit = [int]$state.villain_street_commit
   $spot.meta.active_villains = [int]$state.active_villains
   $spot.meta.configured_villains = [int]$state.configured_villains
+  $spot.meta.hero_folded = [bool]$state.hero_folded
+  $spot.meta.villain_folded = [bool]$state.villain_folded
   if ($HeroCards.Count -eq 2) {
     $spot.meta.hero_cards = @(
       ([string]$HeroCards[0]).Trim()
@@ -4400,6 +4498,7 @@ function Clear-RoiForSlot {
     $heroCards[$Key] = "??"
     $script:lastHeroAutoSendKey = ""
     $script:lastHeroStageKey = ""
+    Rebuild-DeckShoeState
   }
   elseif ($Key -in $cardSlotOrder) {
     Update-LastBoardTokenFromSlot -Slot $Key -Token "??"
@@ -4441,6 +4540,7 @@ function Apply-ManualCardTokenToSlot {
   if ($Slot -in $playerSlotOrder) {
     $heroCards[$Slot] = $normalized
     Set-SlotValueSource -Slot $Slot -Source "manual"
+    Rebuild-DeckShoeState
     if (-not $suppressHeroAutoSend) {
       Try-AutoSendHeroCardsToEngine
     }
@@ -5980,7 +6080,7 @@ function Run-OcrBoardSetAndQueueEngine {
       }
     }
     $boardReady = Get-BoardReadyFromTokens -Tokens $boardTokens
-    $script:lastBoardTokens = @($boardTokens)
+    Set-LastBoardTokensWithStreetTransition -Tokens @($boardTokens)
     Refresh-RoiOverlays
 
     $outLines = @(
@@ -6065,6 +6165,8 @@ function Start-NewHandPreserveChips {
     $script:currentHeroChips = [int]$defaultState.hero_chips
   }
   $script:currentPotAmount = [int]$defaultState.starting_pot
+  Reset-HiddenVillainState -StartingChips ([int]$script:currentHeroChips)
+  Rebuild-DeckShoeState
   $txtLatest.Text = @(
     "run:   new_hand"
     ("hero_cards: {0}" -f (Get-HeroCardsText))
@@ -6199,6 +6301,7 @@ function Run-OcrHeroSet {
     }
 
     $heroReady = Get-HeroCardsReady
+    Rebuild-DeckShoeState
     $elapsed = ((Get-Date) - $started).TotalSeconds
     Refresh-RoiOverlays
     $txtLatest.Text = @(
