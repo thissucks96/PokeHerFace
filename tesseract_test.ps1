@@ -4897,6 +4897,25 @@ function Get-AmountFromActionToken {
   return 0
 }
 
+function Normalize-AdviceTokenForCurrentHeroState {
+  param([string]$Token)
+  $tokenValue = ([string]$Token).Trim().ToLowerInvariant()
+  if (-not $tokenValue) {
+    return ""
+  }
+  $facingBetNow = ([int]$script:currentFacingBetAmount -gt 0)
+  if ($facingBetNow) {
+    if ($tokenValue -eq "check") {
+      return "call"
+    }
+    return $tokenValue
+  }
+  if ($tokenValue -eq "call" -or $tokenValue -like "call:*") {
+    return "check"
+  }
+  return $tokenValue
+}
+
 function Get-ActionTokenForSlot {
   param(
     [Parameter(Mandatory = $true)][string]$Slot
@@ -5721,6 +5740,7 @@ function Set-AdviceFromEngineResult {
       continue
     }
     $token = Convert-ActionSummaryRowToToken -Row $row
+    $token = Normalize-AdviceTokenForCurrentHeroState -Token $token
     if (-not $token) {
       continue
     }
@@ -5737,19 +5757,10 @@ function Set-AdviceFromEngineResult {
     return
   }
 
-  $normalizedRows = @()
-  try {
-    $normalizedRows = @(Normalize-AdviceWeightedRowsToHeroLegal -WeightedRows @($weightedRows))
-  }
-  catch {
-    Write-Log ("Advice normalization fallback: {0}" -f $_.Exception.Message) -Type "advice_normalize_error"
-    $normalizedRows = @($weightedRows)
-  }
-  if ($normalizedRows.Count -le 0) {
+  if ($weightedRows.Count -le 0) {
     return
   }
-
-  $sortedRows = @($normalizedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
