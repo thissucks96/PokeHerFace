@@ -360,11 +360,15 @@ function Get-EngineLogicalStateKey {
   }
   $heroNorm = @($heroInput | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() }) -join ","
   $stageNorm = ([string]$StageLabel).Trim().ToLowerInvariant()
+  $boardCount = $boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count
   $streetNorm = "flop"
-  if ($boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count -ge 5) {
+  if ($boardCount -eq 0) {
+    $streetNorm = "preflop"
+  }
+  elseif ($boardCount -ge 5) {
     $streetNorm = "river"
   }
-  elseif ($boardNorm.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries).Count -eq 4) {
+  elseif ($boardCount -eq 4) {
     $streetNorm = "turn"
   }
   return ("street={0}|board={1}|hero={2}|stage={3}" -f $streetNorm, $boardNorm, $heroNorm, $stageNorm)
@@ -374,6 +378,7 @@ function Get-EngineStagePriority {
   param([string]$StageLabel)
   $stage = ([string]$StageLabel).Trim().ToLowerInvariant()
   switch ($stage) {
+    "preflop" { return 140 }
     "hero_auto" { return 130 }
     "manual_single" { return 120 }
     "flop" { return 110 }
@@ -1120,8 +1125,11 @@ function Build-EngineSpotPayload {
     [string]$Label = "board",
     [string[]]$HeroCards = @()
   )
-  if ($BoardCards.Count -lt 3 -or $BoardCards.Count -gt 5) {
-    throw "Build-EngineSpotPayload requires 3 to 5 board cards."
+  if ($BoardCards.Count -gt 5) {
+    throw "Build-EngineSpotPayload requires 0 to 5 board cards."
+  }
+  if ($BoardCards.Count -gt 0 -and $BoardCards.Count -lt 3) {
+    throw "Build-EngineSpotPayload requires either 0 board cards (preflop) or 3 to 5 board cards."
   }
   foreach ($card in $BoardCards) {
     if (-not (Test-CardTokenStrict -Token $card)) {
@@ -3146,6 +3154,117 @@ function Get-AdviceDecisionPrimary {
   return (Convert-AdviceActionTokenToLabel -Token $topToken)
 }
 
+function Get-CardRankStrength {
+  param([Parameter(Mandatory = $true)][string]$Token)
+  switch (([string]$Token).Substring(0, 1).ToUpperInvariant()) {
+    "A" { return 14 }
+    "K" { return 13 }
+    "Q" { return 12 }
+    "J" { return 11 }
+    "T" { return 10 }
+    "9" { return 9 }
+    "8" { return 8 }
+    "7" { return 7 }
+    "6" { return 6 }
+    "5" { return 5 }
+    "4" { return 4 }
+    "3" { return 3 }
+    "2" { return 2 }
+    default { return 0 }
+  }
+}
+
+function Build-PreflopHeuristicRootActions {
+  param([Parameter(Mandatory = $true)][string[]]$HeroCards)
+
+  if ($HeroCards.Count -ne 2) {
+    return @()
+  }
+  $cardA = ([string]$HeroCards[0]).Trim().ToUpperInvariant()
+  $cardB = ([string]$HeroCards[1]).Trim().ToUpperInvariant()
+  if ((-not (Test-CardTokenStrict -Token $cardA)) -or (-not (Test-CardTokenStrict -Token $cardB))) {
+    return @()
+  }
+
+  $rankA = Get-CardRankStrength -Token $cardA
+  $rankB = Get-CardRankStrength -Token $cardB
+  $highRank = [Math]::Max($rankA, $rankB)
+  $lowRank = [Math]::Min($rankA, $rankB)
+  $isPair = $rankA -eq $rankB
+  $isSuited = $cardA.Substring(1, 1) -eq $cardB.Substring(1, 1)
+  $gap = [Math]::Abs($rankA - $rankB) - 1
+  if ($gap -lt 0) {
+    $gap = 0
+  }
+
+  $strength = 0
+  if ($isPair) {
+    if ($highRank -ge 13) { $strength += 6 }
+    elseif ($highRank -ge 11) { $strength += 5 }
+    elseif ($highRank -ge 9) { $strength += 4 }
+    elseif ($highRank -ge 7) { $strength += 3 }
+    else { $strength += 2 }
+  }
+  else {
+    if ($highRank -eq 14 -and $lowRank -ge 13) { $strength += 5 }
+    elseif ($highRank -eq 14 -and $lowRank -ge 11) { $strength += 4 }
+    elseif ($highRank -ge 13 -and $lowRank -ge 11) { $strength += 3 }
+    elseif ($highRank -ge 11 -and $lowRank -ge 10) { $strength += 2 }
+    elseif ($highRank -eq 14) { $strength += 2 }
+    elseif ($highRank -ge 10) { $strength += 1 }
+    if ($isSuited) { $strength += 1 }
+    if ($gap -le 1) { $strength += 1 }
+  }
+
+  $foldWeight = 0.0
+  $callWeight = 0.0
+  $raiseWeight = 0.0
+  if ($strength -ge 6) {
+    $foldWeight = 0.00; $callWeight = 0.15; $raiseWeight = 0.85
+  }
+  elseif ($strength -ge 4) {
+    $foldWeight = 0.05; $callWeight = 0.35; $raiseWeight = 0.60
+  }
+  elseif ($strength -ge 2) {
+    $foldWeight = 0.20; $callWeight = 0.60; $raiseWeight = 0.20
+  }
+  elseif ($strength -ge 1) {
+    $foldWeight = 0.50; $callWeight = 0.40; $raiseWeight = 0.10
+  }
+  else {
+    $foldWeight = 0.70; $callWeight = 0.25; $raiseWeight = 0.05
+  }
+
+  return @(
+    [pscustomobject]@{ action = "fold"; avg_frequency = [double]$foldWeight }
+    [pscustomobject]@{ action = "call"; avg_frequency = [double]$callWeight }
+    [pscustomobject]@{ action = "raise"; amount = 6; avg_frequency = [double]$raiseWeight }
+  )
+}
+
+function Apply-PreflopHeuristicAdvice {
+  param([Parameter(Mandatory = $true)][string[]]$HeroCards)
+
+  $rootActions = @(Build-PreflopHeuristicRootActions -HeroCards $HeroCards)
+  if ($rootActions.Count -eq 0) {
+    return $false
+  }
+  $engineResult = [pscustomobject]@{
+    selected_strategy = "preflop_heuristic"
+    elapsed_sec = 0.0
+    root_actions = @($rootActions)
+  }
+  Set-AdviceFromEngineResult -EngineResult $engineResult
+  $txtLatest.Text = @(
+    "run:   preflop_hero"
+    ("hero1: {0}" -f [string]$HeroCards[0])
+    ("hero2: {0}" -f [string]$HeroCards[1])
+    "street: preflop"
+    "source:preflop_heuristic"
+  ) -join "`r`n"
+  return $true
+}
+
 function Set-AdviceFromEngineResult {
   param(
     [Parameter(Mandatory = $true)]$EngineResult
@@ -4599,10 +4718,20 @@ function Queue-EngineSolveForBoard {
     return $false
   }
 
-  $boardText = ($BoardTokens -join " ")
-  Write-Log ("Engine handoff queued ({0}): board {1} -> {2}" -f $StageLabel, $boardText, $bridgeSolveEndpoint) -Type "engine_queue" -Data @{
+  $boardTokensInput = @($BoardTokens)
+  $boardText = ($boardTokensInput -join " ")
+  $stateSummary = if ($boardTokensInput.Count -gt 0) {
+    "board $boardText"
+  }
+  elseif ($heroReady) {
+    "hero " + ($heroTokens -join " ")
+  }
+  else {
+    "empty_state"
+  }
+  Write-Log ("Engine handoff queued ({0}): {1} -> {2}" -f $StageLabel, $stateSummary, $bridgeSolveEndpoint) -Type "engine_queue" -Data @{
     stage = $StageLabel
-    board = $BoardTokens
+    board = $boardTokensInput
     hero_cards = if ($heroReady) { $heroTokens } else { @() }
     endpoint = $bridgeSolveEndpoint
     runtime_profile = $engineRuntimeProfile
@@ -4611,7 +4740,7 @@ function Queue-EngineSolveForBoard {
   }
 
   try {
-    $spot = Build-EngineSpotPayload -BoardCards $BoardTokens -Label $StageLabel -HeroCards $heroTokens
+    $spot = Build-EngineSpotPayload -BoardCards $boardTokensInput -Label $StageLabel -HeroCards $heroTokens
     $requestPayload = [ordered]@{
       spot = $spot
       timeout_sec = [int]$engineSolverTimeoutSec
@@ -4733,7 +4862,7 @@ function Queue-EngineSolveForBoard {
       payload_path = $payloadPath
       response_path = $responsePath
       stage = $StageLabel
-      board = $BoardTokens
+      board = $boardTokensInput
       state_hash = $stateHash
       logical_key = $logicalStateKey
       state_version = [int]$stateVersion
@@ -4753,7 +4882,7 @@ function Queue-EngineSolveForBoard {
       state_version = [int]$stateVersion
       state_hash = $stateHash
       stage = $StageLabel
-      board = $BoardTokens
+      board = $boardTokensInput
       max_age_sec = [int]$engineJobMaxAgeSec
       payload_path = $payloadPath
       response_path = $responsePath
@@ -4777,7 +4906,8 @@ function Try-AutoSendHeroCardsToEngine {
 
   $heroStageKey = ("{0}|{1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
   $boardReadyNow = Get-BoardReadyFromTokens -Tokens $lastBoardTokens
-  if ($heroStageKey -ne $lastHeroStageKey) {
+  $isNewHeroStage = $heroStageKey -ne $lastHeroStageKey
+  if ($isNewHeroStage) {
     if ($enginePendingJobs.Count -gt 0) {
       Stop-AllEngineJobs -Reason "new_hand_hero_staged"
     }
@@ -4788,25 +4918,31 @@ function Try-AutoSendHeroCardsToEngine {
     $script:engineLastCompletedLogicalKey = ""
     Ensure-BackendsRunning
     $script:lastHeroStageKey = $heroStageKey
-    if (-not $boardReadyNow) {
-      Write-Log ("Hero cards staged for next hand ({0}); waiting for flop before first solve." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
-        hero1 = [string]$heroCards["hero1"]
-        hero2 = [string]$heroCards["hero2"]
-        stage_key = $heroStageKey
-      }
+  }
+
+  if (-not $boardReadyNow) {
+    $preflopSolveKey = ("preflop|{0}|{1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    if ($preflopSolveKey -eq $lastHeroAutoSendKey) {
       return
     }
+    $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    Write-Log ("Hero cards ready ({0}); applied immediate preflop advice and warmed backends. Full solve begins on flop." -f (Get-HeroCardsText)) -Type "hero_prestaged" -Data @{
+      hero1 = [string]$heroCards["hero1"]
+      hero2 = [string]$heroCards["hero2"]
+      stage_key = $heroStageKey
+      preflop_key = $preflopSolveKey
+    }
+    $script:lastHeroAutoSendKey = $preflopSolveKey
+    return
+  }
+
+  if ($isNewHeroStage) {
     Write-Log ("Hero cards completed with board already ready ({0}); queuing immediate solve." -f (Get-BoardTokensText)) -Type "hero_prestaged_board_ready" -Data @{
       hero1 = [string]$heroCards["hero1"]
       hero2 = [string]$heroCards["hero2"]
       board = @($lastBoardTokens)
       stage_key = $heroStageKey
     }
-  }
-
-  if (-not $boardReadyNow) {
-    Write-Log ("Hero cards ready ({0}) but board not ready; auto-send waiting for flop/turn/river capture." -f (Get-HeroCardsText)) -Type "hero_waiting_board"
-    return
   }
 
   $solveKey = ("{0}|{1}|{2}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"], ($lastBoardTokens -join ","))
