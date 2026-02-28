@@ -2525,7 +2525,7 @@ $btnFold.Location = New-Object System.Drawing.Point(840, 18)
 $btnFold.Size = New-Object System.Drawing.Size(84, 28)
 $btnFold.FlatStyle = "Flat"
 $btnFold.ForeColor = [System.Drawing.Color]::White
-$btnFold.BackColor = [System.Drawing.Color]::FromArgb(125, 36, 36)
+$btnFold.BackColor = [System.Drawing.Color]::FromArgb(112, 118, 126)
 $btnFold.Add_Click({ Write-Log "Placeholder action clicked: FOLD (no-op)." })
 $form.Controls.Add($btnFold)
 
@@ -2535,7 +2535,7 @@ $btnCall.Location = New-Object System.Drawing.Point(930, 18)
 $btnCall.Size = New-Object System.Drawing.Size(84, 28)
 $btnCall.FlatStyle = "Flat"
 $btnCall.ForeColor = [System.Drawing.Color]::White
-$btnCall.BackColor = [System.Drawing.Color]::FromArgb(35, 90, 140)
+$btnCall.BackColor = [System.Drawing.Color]::FromArgb(38, 120, 68)
 $btnCall.Add_Click({ Write-Log "Placeholder action clicked: CALL (no-op)." })
 $form.Controls.Add($btnCall)
 
@@ -2545,7 +2545,7 @@ $btnBet.Location = New-Object System.Drawing.Point(1020, 18)
 $btnBet.Size = New-Object System.Drawing.Size(84, 28)
 $btnBet.FlatStyle = "Flat"
 $btnBet.ForeColor = [System.Drawing.Color]::White
-$btnBet.BackColor = [System.Drawing.Color]::FromArgb(40, 110, 70)
+$btnBet.BackColor = [System.Drawing.Color]::FromArgb(38, 120, 68)
 $btnBet.Add_Click({ Write-Log "Placeholder action clicked: BET (no-op)." })
 $form.Controls.Add($btnBet)
 
@@ -2555,7 +2555,7 @@ $btnRaise.Location = New-Object System.Drawing.Point(1110, 18)
 $btnRaise.Size = New-Object System.Drawing.Size(84, 28)
 $btnRaise.FlatStyle = "Flat"
 $btnRaise.ForeColor = [System.Drawing.Color]::White
-$btnRaise.BackColor = [System.Drawing.Color]::FromArgb(150, 96, 30)
+$btnRaise.BackColor = [System.Drawing.Color]::FromArgb(152, 48, 48)
 $btnRaise.Add_Click({ Write-Log "Placeholder action clicked: RAISE (no-op)." })
 $form.Controls.Add($btnRaise)
 
@@ -2862,17 +2862,74 @@ function Set-AdviceState {
   if (-not $script:adviceSecondary) {
     $script:adviceSecondary = "No actionable advice yet."
   }
+  $primaryColor = Get-AdvicePrimaryColor -Primary $script:advicePrimary
   if ($null -ne $lblAdviceValue) {
     $lblAdviceValue.Text = $script:advicePrimary
+    $lblAdviceValue.ForeColor = $primaryColor
   }
   if ($null -ne $txtAdviceDetail) {
     $txtAdviceDetail.Text = $script:adviceSecondary
   }
   if ($null -ne $adviceOverlayValueLabel) {
     $adviceOverlayValueLabel.Text = $script:advicePrimary
+    $adviceOverlayValueLabel.ForeColor = $primaryColor
   }
   if ($null -ne $adviceOverlayTitleLabel) {
     $adviceOverlayTitleLabel.Text = ("Advice: {0}" -f $script:adviceSecondary)
+  }
+}
+
+function Get-AdvicePrimaryColor {
+  param(
+    [string]$Primary
+  )
+  switch (([string]$Primary).Trim().ToUpperInvariant()) {
+    "FOLD" { return [System.Drawing.Color]::FromArgb(208, 214, 222) }
+    "CALL" { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
+    "CALL ANY" { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
+    "CHECK" { return [System.Drawing.Color]::FromArgb(120, 235, 150) }
+    "BET" { return [System.Drawing.Color]::FromArgb(255, 128, 128) }
+    "RAISE" { return [System.Drawing.Color]::FromArgb(255, 128, 128) }
+    "ALL IN" { return [System.Drawing.Color]::FromArgb(255, 110, 110) }
+    "THINKING" { return [System.Drawing.Color]::FromArgb(255, 235, 160) }
+    default { return [System.Drawing.Color]::FromArgb(255, 235, 160) }
+  }
+}
+
+function Get-ActionTokenForSlot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot
+  )
+  switch (([string]$Slot).ToLowerInvariant()) {
+    "fold_btn" { return "FOLD" }
+    "call_btn" { return "CALL" }
+    "bet_btn" { return "BET" }
+    "raise_btn" { return "RAISE" }
+    default { return "" }
+  }
+}
+
+function Get-ActionSlotOverlayText {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot
+  )
+  return (Get-ActionTokenForSlot -Slot $Slot)
+}
+
+function Invoke-ManualActionSelection {
+  param(
+    [Parameter(Mandatory = $true)][string]$ActionToken
+  )
+  $normalizedAction = ([string]$ActionToken).Trim().ToUpperInvariant()
+  if (-not $normalizedAction) {
+    return
+  }
+  $script:adviceActionPrimary = $normalizedAction
+  $script:adviceActionSecondary = "Manual action override."
+  $script:adviceHasAction = $true
+  Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
+  Write-Log ("Manual action selected: {0}" -f $normalizedAction) -Type "manual_action_set" -Data @{
+    action = $normalizedAction
   }
 }
 
@@ -2914,6 +2971,59 @@ function Convert-ActionSummaryRowToToken {
     }
   }
   return $actionName
+}
+
+function Get-AdviceDecisionPrimary {
+  param(
+    [Parameter(Mandatory = $true)]$WeightedRows
+  )
+
+  $topToken = ""
+  if ($WeightedRows.Count -gt 0) {
+    $topToken = [string]$WeightedRows[0].token
+  }
+  $foldWeight = 0.0
+  $callWeight = 0.0
+  $checkWeight = 0.0
+  $raiseWeight = 0.0
+
+  foreach ($row in @($WeightedRows)) {
+    $token = ([string]$row.token).Trim().ToLowerInvariant()
+    $weight = 0.0
+    try { $weight = [double]$row.weight } catch { $weight = 0.0 }
+    if ($token -eq "fold") {
+      $foldWeight += $weight
+      continue
+    }
+    if ($token -eq "call") {
+      $callWeight += $weight
+      continue
+    }
+    if ($token -eq "check") {
+      $checkWeight += $weight
+      continue
+    }
+    if ($token -like "bet:*" -or $token -like "raise:*" -or $token -eq "bet" -or $token -eq "raise") {
+      $raiseWeight += $weight
+    }
+  }
+
+  if ($checkWeight -ge 0.95 -and $callWeight -le 0.05 -and $foldWeight -le 0.05 -and $raiseWeight -le 0.05) {
+    return "CHECK"
+  }
+  if ($callWeight -ge 0.85 -and $foldWeight -le 0.10 -and $raiseWeight -le 0.15) {
+    return "CALL ANY"
+  }
+  if ($raiseWeight -ge $callWeight -and $raiseWeight -ge $foldWeight -and $raiseWeight -gt 0.20) {
+    return "RAISE"
+  }
+  if ($foldWeight -ge $callWeight -and $foldWeight -ge $raiseWeight -and $foldWeight -gt 0.0) {
+    return "FOLD"
+  }
+  if ($callWeight -gt 0.0 -or $checkWeight -gt 0.0) {
+    return "CALL"
+  }
+  return (Convert-AdviceActionTokenToLabel -Token $topToken)
 }
 
 function Set-AdviceFromEngineResult {
@@ -2968,7 +3078,7 @@ function Set-AdviceFromEngineResult {
     catch {}
   }
 
-  $script:adviceActionPrimary = Convert-AdviceActionTokenToLabel -Token $primaryToken
+  $script:adviceActionPrimary = Get-AdviceDecisionPrimary -WeightedRows $sortedRows
   $secondaryLines = New-Object System.Collections.Generic.List[string]
   if ($mixParts.Count -gt 0) {
     [void]$secondaryLines.Add(($mixParts -join " | "))
@@ -3561,6 +3671,22 @@ function New-ManualCardMenu {
   return $menu
 }
 
+function New-ManualActionMenu {
+  param(
+    [Parameter(Mandatory = $true)][string]$SlotKey
+  )
+  $actionToken = Get-ActionTokenForSlot -Slot $SlotKey
+  if (-not $actionToken) {
+    return $null
+  }
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem
+  $item.Text = ("Use {0}" -f $actionToken)
+  $item.Add_Click({
+    Invoke-ManualActionSelection -ActionToken $actionToken
+  }.GetNewClosure())
+  return $item
+}
+
 function New-RoiSlotContextMenu {
   param(
     [Parameter(Mandatory = $true)][string]$Key
@@ -3573,15 +3699,24 @@ function New-RoiSlotContextMenu {
   $title.Enabled = $false
   [void]$menu.Items.Add($title)
 
-  [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-  [void]$menu.Items.Add((New-ManualCardMenu -SlotKey $slotKey))
+  if (($slotKey -in $cardSlotOrder) -or ($slotKey -in $playerSlotOrder)) {
+    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    [void]$menu.Items.Add((New-ManualCardMenu -SlotKey $slotKey))
 
-  $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
-  $runItem.Text = "Run OCR"
-  $runItem.Add_Click({
-    Run-OcrSingleSlot -Slot $slotKey
-  }.GetNewClosure())
-  [void]$menu.Items.Add($runItem)
+    $runItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $runItem.Text = "Run OCR"
+    $runItem.Add_Click({
+      Run-OcrSingleSlot -Slot $slotKey
+    }.GetNewClosure())
+    [void]$menu.Items.Add($runItem)
+  }
+  elseif ($slotKey -in $actionSlotOrder) {
+    $actionMenu = New-ManualActionMenu -SlotKey $slotKey
+    if ($null -ne $actionMenu) {
+      [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+      [void]$menu.Items.Add($actionMenu)
+    }
+  }
 
   $repickItem = New-Object System.Windows.Forms.ToolStripMenuItem
   $repickItem.Text = "Repick ROI"
@@ -3624,7 +3759,7 @@ function New-RoiOverlayForm {
     offsetX = 0
     offsetY = 0
   }
-  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder)) {
+  if (($Key -in $cardSlotOrder) -or ($Key -in $playerSlotOrder) -or ($Key -in $actionSlotOrder)) {
     $overlay.ContextMenuStrip = New-RoiSlotContextMenu -Key $Key
   }
   $overlay.Add_Paint({
@@ -3640,8 +3775,13 @@ function New-RoiOverlayForm {
     $font = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold)
     $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(235, 245, 255))
     $cardText = ""
+    $cardColor = [System.Drawing.Color]::FromArgb(250, 255, 255)
     if (($state.key -in $cardSlotOrder) -or ($state.key -in $playerSlotOrder)) {
       $cardText = Get-CardTokenOverlayText -Token (Get-AssignedCardTokenForSlot -Slot ([string]$state.key))
+    }
+    elseif ($state.key -in $actionSlotOrder) {
+      $cardText = Get-ActionSlotOverlayText -Slot ([string]$state.key)
+      $cardColor = Get-AdvicePrimaryColor -Primary $cardText
     }
     $cardFont = $null
     $cardBrush = $null
@@ -3652,7 +3792,7 @@ function New-RoiOverlayForm {
       if ($cardText) {
         $cardFontSize = [Math]::Max(10.0, [Math]::Min([double]($sender.Height * 0.38), [double]($sender.Width * 0.28)))
         $cardFont = New-Object System.Drawing.Font("Segoe UI Symbol", [single]$cardFontSize, [System.Drawing.FontStyle]::Bold)
-        $cardBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(250, 255, 255))
+        $cardBrush = New-Object System.Drawing.SolidBrush($cardColor)
         $fmt = New-Object System.Drawing.StringFormat
         $fmt.Alignment = [System.Drawing.StringAlignment]::Center
         $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
