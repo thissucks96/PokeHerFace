@@ -178,6 +178,9 @@ $engineQueueCompletedCount = 0
 $engineLastResultSummary = "none"
 $advicePrimary = "WAIT"
 $adviceSecondary = "No actionable advice yet."
+$numSmallBlind = $null
+$numBigBlind = $null
+$numBuyIn = $null
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
@@ -1124,6 +1127,32 @@ function Resolve-EngineTemplatePath {
   return [System.IO.Path]::GetFullPath($p)
 }
 
+function Get-StakeSettings {
+  $smallBlind = 1
+  $bigBlind = 2
+  $buyIn = 100
+
+  if ($null -ne $script:numSmallBlind) {
+    $smallBlind = [int][decimal]$script:numSmallBlind.Value
+  }
+  if ($null -ne $script:numBigBlind) {
+    $bigBlind = [int][decimal]$script:numBigBlind.Value
+  }
+  if ($null -ne $script:numBuyIn) {
+    $buyIn = [int][decimal]$script:numBuyIn.Value
+  }
+
+  if ($smallBlind -lt 1) { $smallBlind = 1 }
+  if ($bigBlind -lt $smallBlind) { $bigBlind = $smallBlind }
+  if ($buyIn -lt $bigBlind) { $buyIn = $bigBlind }
+
+  return [pscustomobject]@{
+    small_blind = [int]$smallBlind
+    big_blind = [int]$bigBlind
+    buy_in = [int]$buyIn
+  }
+}
+
 function Build-EngineSpotPayload {
   param(
     [Parameter(Mandatory = $true)][string[]]$BoardCards,
@@ -1156,19 +1185,47 @@ function Build-EngineSpotPayload {
   }
   $templateRaw = Get-Content -Path $templatePath -Raw -Encoding UTF8
   $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
+  $stakes = Get-StakeSettings
+  $templateMinBet = 2
+  if ($spot.PSObject.Properties.Name -contains "minimum_bet" -and $null -ne $spot.minimum_bet) {
+    $templateMinBet = [int]$spot.minimum_bet
+  }
+  if ($templateMinBet -lt 1) {
+    $templateMinBet = 2
+  }
+  $templatePot = 10
+  if ($spot.PSObject.Properties.Name -contains "starting_pot" -and $null -ne $spot.starting_pot) {
+    $templatePot = [int]$spot.starting_pot
+  }
+  $templatePotBb = 5.0
+  if ($templateMinBet -gt 0) {
+    $templatePotBb = [double]$templatePot / [double]$templateMinBet
+  }
+  $scaledStartingPot = [int][Math]::Round(($templatePotBb * $stakes.big_blind), [System.MidpointRounding]::AwayFromZero)
+  $forcedBlindPot = [int]($stakes.small_blind + $stakes.big_blind)
+  if ($scaledStartingPot -lt $forcedBlindPot) {
+    $scaledStartingPot = $forcedBlindPot
+  }
+
+  $spot.starting_stack = [int]$stakes.buy_in
+  $spot.minimum_bet = [int]$stakes.big_blind
+  $spot.starting_pot = [int]$scaledStartingPot
   $spot.board = @()
   foreach ($card in $BoardCards) {
     $spot.board += ([string]$card).Trim()
   }
+  if (-not ($spot.PSObject.Properties.Name -contains "meta") -or $null -eq $spot.meta) {
+    $spot | Add-Member -NotePropertyName meta -NotePropertyValue @{} -Force
+  }
+  $spot.meta.small_blind = [int]$stakes.small_blind
+  $spot.meta.big_blind = [int]$stakes.big_blind
+  $spot.meta.buy_in = [int]$stakes.buy_in
+  $spot.meta.capture_source = "vision_tester"
   if ($HeroCards.Count -eq 2) {
-    if (-not ($spot.PSObject.Properties.Name -contains "meta") -or $null -eq $spot.meta) {
-      $spot | Add-Member -NotePropertyName meta -NotePropertyValue @{} -Force
-    }
     $spot.meta.hero_cards = @(
       ([string]$HeroCards[0]).Trim()
       ([string]$HeroCards[1]).Trim()
     )
-    $spot.meta.capture_source = "vision_tester"
   }
   return $spot
 }
@@ -2670,12 +2727,90 @@ $adviceMetaTitle = New-Object System.Windows.Forms.Label
 $adviceMetaTitle.Text = "Advice Detail"
 $adviceMetaTitle.ForeColor = [System.Drawing.Color]::White
 $adviceMetaTitle.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$adviceMetaTitle.Location = New-Object System.Drawing.Point(18, 176)
+$adviceMetaTitle.Location = New-Object System.Drawing.Point(18, 272)
 $adviceMetaTitle.AutoSize = $true
 $advicePanel.Controls.Add($adviceMetaTitle)
 
+$stakesTitle = New-Object System.Windows.Forms.Label
+$stakesTitle.Text = "Stakes"
+$stakesTitle.ForeColor = [System.Drawing.Color]::White
+$stakesTitle.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$stakesTitle.Location = New-Object System.Drawing.Point(18, 176)
+$stakesTitle.AutoSize = $true
+$advicePanel.Controls.Add($stakesTitle)
+
+$lblSmallBlind = New-Object System.Windows.Forms.Label
+$lblSmallBlind.Text = "SB"
+$lblSmallBlind.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblSmallBlind.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblSmallBlind.Location = New-Object System.Drawing.Point(18, 204)
+$lblSmallBlind.AutoSize = $true
+$advicePanel.Controls.Add($lblSmallBlind)
+
+$numSmallBlind = New-Object System.Windows.Forms.NumericUpDown
+$numSmallBlind.Location = New-Object System.Drawing.Point(44, 200)
+$numSmallBlind.Size = New-Object System.Drawing.Size(58, 24)
+$numSmallBlind.Minimum = 1
+$numSmallBlind.Maximum = 10000
+$numSmallBlind.Value = 1
+$numSmallBlind.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$advicePanel.Controls.Add($numSmallBlind)
+
+$lblBigBlind = New-Object System.Windows.Forms.Label
+$lblBigBlind.Text = "BB"
+$lblBigBlind.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblBigBlind.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblBigBlind.Location = New-Object System.Drawing.Point(118, 204)
+$lblBigBlind.AutoSize = $true
+$advicePanel.Controls.Add($lblBigBlind)
+
+$numBigBlind = New-Object System.Windows.Forms.NumericUpDown
+$numBigBlind.Location = New-Object System.Drawing.Point(146, 200)
+$numBigBlind.Size = New-Object System.Drawing.Size(58, 24)
+$numBigBlind.Minimum = 1
+$numBigBlind.Maximum = 10000
+$numBigBlind.Value = 2
+$numBigBlind.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$advicePanel.Controls.Add($numBigBlind)
+
+$lblBuyIn = New-Object System.Windows.Forms.Label
+$lblBuyIn.Text = "Buy-In"
+$lblBuyIn.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblBuyIn.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblBuyIn.Location = New-Object System.Drawing.Point(18, 236)
+$lblBuyIn.AutoSize = $true
+$advicePanel.Controls.Add($lblBuyIn)
+
+$numBuyIn = New-Object System.Windows.Forms.NumericUpDown
+$numBuyIn.Location = New-Object System.Drawing.Point(72, 232)
+$numBuyIn.Size = New-Object System.Drawing.Size(132, 24)
+$numBuyIn.Minimum = 2
+$numBuyIn.Maximum = 100000
+$numBuyIn.Value = 100
+$numBuyIn.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$advicePanel.Controls.Add($numBuyIn)
+
+$numSmallBlind.Add_ValueChanged({
+  if ($numBigBlind.Value -lt $numSmallBlind.Value) {
+    $numBigBlind.Value = $numSmallBlind.Value
+  }
+})
+$numBigBlind.Add_ValueChanged({
+  if ($numSmallBlind.Value -gt $numBigBlind.Value) {
+    $numSmallBlind.Value = $numBigBlind.Value
+  }
+  if ($numBuyIn.Value -lt $numBigBlind.Value) {
+    $numBuyIn.Value = $numBigBlind.Value
+  }
+})
+$numBuyIn.Add_ValueChanged({
+  if ($numBuyIn.Value -lt $numBigBlind.Value) {
+    $numBuyIn.Value = $numBigBlind.Value
+  }
+})
+
 $txtAdviceDetail = New-Object System.Windows.Forms.TextBox
-$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 202)
+$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 298)
 $txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 176)
 $txtAdviceDetail.Multiline = $true
 $txtAdviceDetail.ReadOnly = $true
@@ -2828,7 +2963,13 @@ function Update-MainLayout {
   $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
   $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
   $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
-  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(220, [int]($advicePanel.ClientSize.Height - 230)))
+  $stakesControlWidth = [Math]::Max(56, [int](($innerWidth - 72) / 2))
+  $numSmallBlind.Size = New-Object System.Drawing.Size($stakesControlWidth, 24)
+  $lblBigBlind.Location = New-Object System.Drawing.Point(($numSmallBlind.Right + 16), 204)
+  $numBigBlind.Location = New-Object System.Drawing.Point(($lblBigBlind.Right + 6), 200)
+  $numBigBlind.Size = New-Object System.Drawing.Size([Math]::Max(56, [int]($innerWidth - ($numBigBlind.Left - 18))), 24)
+  $numBuyIn.Size = New-Object System.Drawing.Size([Math]::Max(96, [int]($innerWidth - 54)), 24)
+  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(180, [int]($advicePanel.ClientSize.Height - 326)))
 }
 
 function Write-Log {
@@ -3210,10 +3351,13 @@ function Build-PreflopHeuristicRootActions {
     $foldWeight = 0.70; $callWeight = 0.25; $raiseWeight = 0.05
   }
 
+  $stakes = Get-StakeSettings
+  $raiseAmount = [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+
   return @(
     [pscustomobject]@{ action = "fold"; avg_frequency = [double]$foldWeight }
     [pscustomobject]@{ action = "call"; avg_frequency = [double]$callWeight }
-    [pscustomobject]@{ action = "raise"; amount = 6; avg_frequency = [double]$raiseWeight }
+    [pscustomobject]@{ action = "raise"; amount = [int]$raiseAmount; avg_frequency = [double]$raiseWeight }
   )
 }
 
