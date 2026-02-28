@@ -3828,6 +3828,48 @@ function Get-CardTokenOverlayText {
   return ("{0}{1}" -f $rank, $suitSymbol)
 }
 
+function Get-ManualAssignableCardTokens {
+  param(
+    [Parameter(Mandatory = $true)][string]$SlotKey
+  )
+  $capturedSlot = [string]$SlotKey
+  $tokens = New-Object System.Collections.Generic.List[string]
+  foreach ($suitToken in @("S", "H", "D", "C")) {
+    foreach ($rankToken in @("A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2")) {
+      $candidate = ("{0}{1}" -f $rankToken, $suitToken).ToUpperInvariant()
+      $occupiedBy = Find-AssignedSlotForToken -Token $candidate -ExcludeSlot $capturedSlot
+      if (-not $occupiedBy) {
+        [void]$tokens.Add($candidate)
+      }
+    }
+  }
+  return @($tokens)
+}
+
+function New-ManualCardRandomMenuItem {
+  param(
+    [Parameter(Mandatory = $true)][string]$SlotKey
+  )
+  $capturedSlot = [string]$SlotKey
+  $choices = @(Get-ManualAssignableCardTokens -SlotKey $capturedSlot)
+  $item = New-Object System.Windows.Forms.ToolStripMenuItem
+  $item.Text = "Random Card"
+  if ($choices.Count -le 0) {
+    $item.Enabled = $false
+    return $item
+  }
+  $item.Add_Click({
+    $available = @(Get-ManualAssignableCardTokens -SlotKey $capturedSlot)
+    if ($available.Count -le 0) {
+      Write-Log ("Random card assign skipped for {0}: no legal cards remain." -f $capturedSlot)
+      return
+    }
+    $picked = Get-Random -InputObject $available
+    Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token ([string]$picked)
+  }.GetNewClosure())
+  return $item
+}
+
 function New-ManualCardRankMenuItem {
   param(
     [Parameter(Mandatory = $true)][string]$SlotKey,
@@ -3879,6 +3921,8 @@ function New-ManualCardMenu {
   $capturedSlot = [string]$SlotKey
   $menu = New-Object System.Windows.Forms.ToolStripMenuItem
   $menu.Text = "Set Card"
+  [void]$menu.DropDownItems.Add((New-ManualCardRandomMenuItem -SlotKey $capturedSlot))
+  [void]$menu.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
   foreach ($suitToken in @("S", "H", "D", "C")) {
     [void]$menu.DropDownItems.Add((New-ManualCardSuitMenuItem -SlotKey $capturedSlot -SuitToken $suitToken))
   }
