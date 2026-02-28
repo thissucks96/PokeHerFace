@@ -10,6 +10,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -270,6 +271,29 @@ CANARY_KILL_SWITCH_MODE = str(os.environ.get("CANARY_KILL_SWITCH_MODE", "baselin
 if CANARY_KILL_SWITCH_MODE not in {"baseline_only", "reject"}:
     CANARY_KILL_SWITCH_MODE = "baseline_only"
 CANARY_AUTO_EXIT_ON_TRIP = os.environ.get("CANARY_AUTO_EXIT_ON_TRIP", "0").strip() not in {"0", "false", "False"}
+NEURAL_BRAIN_ENABLED = os.environ.get("NEURAL_BRAIN_ENABLED", "0").strip() not in {"0", "false", "False"}
+NEURAL_BRAIN_MODE = str(os.environ.get("NEURAL_BRAIN_MODE", "shadow")).strip().lower()
+if NEURAL_BRAIN_MODE not in {"shadow", "prefer", "prefer_on_fast_failover"}:
+    NEURAL_BRAIN_MODE = "shadow"
+NEURAL_BRAIN_ADAPTER_PATH = Path(
+    os.environ.get("NEURAL_BRAIN_ADAPTER_PATH", str(ROOT / "4_LLM_Bridge" / "neural_brain_adapter.py"))
+).expanduser()
+NEURAL_BRAIN_PYTHON = str(os.environ.get("NEURAL_BRAIN_PYTHON", "")).strip()
+try:
+    NEURAL_BRAIN_TIMEOUT_SEC = int(os.environ.get("NEURAL_BRAIN_TIMEOUT_SEC", "3"))
+except ValueError:
+    NEURAL_BRAIN_TIMEOUT_SEC = 3
+NEURAL_BRAIN_TIMEOUT_SEC = max(1, NEURAL_BRAIN_TIMEOUT_SEC)
+try:
+    NEURAL_BRAIN_CFR_ITERS = int(os.environ.get("NEURAL_BRAIN_CFR_ITERS", "120"))
+except ValueError:
+    NEURAL_BRAIN_CFR_ITERS = 120
+NEURAL_BRAIN_CFR_ITERS = max(1, NEURAL_BRAIN_CFR_ITERS)
+try:
+    NEURAL_BRAIN_CFR_SKIP_ITERS = int(os.environ.get("NEURAL_BRAIN_CFR_SKIP_ITERS", "60"))
+except ValueError:
+    NEURAL_BRAIN_CFR_SKIP_ITERS = 60
+NEURAL_BRAIN_CFR_SKIP_ITERS = max(0, min(NEURAL_BRAIN_CFR_SKIP_ITERS, NEURAL_BRAIN_CFR_ITERS - 1))
 TESSERACT_PATH_ENV = os.environ.get("TESSERACT_PATH", "").strip()
 _CANARY_LOCK = threading.Lock()
 _CANARY_RECENT: deque[Dict[str, Any]] = deque(maxlen=CANARY_WINDOW_CALLS)
@@ -660,6 +684,170 @@ def _run_shark_cli(
             "result": result,
             "solver_wall_time_sec": elapsed,
         }
+
+
+def _resolve_neural_python_command() -> str:
+    if NEURAL_BRAIN_PYTHON:
+        return NEURAL_BRAIN_PYTHON
+    if sys.executable:
+        return sys.executable
+    return "python"
+
+
+def _extract_json_object_from_stdout(raw_stdout: str) -> Optional[Dict[str, Any]]:
+    text = str(raw_stdout or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _spot_has_valid_hero_cards(spot: Dict[str, Any]) -> bool:
+    meta = spot.get("meta", {})
+    if not isinstance(meta, dict):
+        return False
+    hero_cards = meta.get("hero_cards")
+    if not isinstance(hero_cards, list) or len(hero_cards) != 2:
+        return False
+    for card in hero_cards:
+        token = str(card or "").strip()
+        if len(token) < 2:
+            return False
+    return True
+
+
+def _normalize_action_token(token: str) -> str:
+    raw = str(token or "").strip().lower()
+    if not raw:
+        return ""
+    if raw in {"fold", "check", "call"}:
+        return raw
+    if raw == "all_in":
+        return "raise"
+    if ":" in raw:
+        action, amount = raw.split(":", 1)
+        action = action.strip()
+        if action in {"bet", "raise"}:
+            try:
+                amt = int(float(amount))
+            except ValueError:
+                return action
+            return f"raise:{amt}"
+        return action
+    if raw in {"bet", "raise"}:
+        return "raise"
+    return raw
+
+
+def _run_neural_brain_adapter(
+    *,
+    spot: Dict[str, Any],
+    allowed_actions: list[str],
+    timeout_sec: int,
+) -> tuple[Optional[Dict[str, Any]], Optional[str], float]:
+    if not NEURAL_BRAIN_ENABLED:
+        return None, "neural_brain_disabled", 0.0
+    if not _spot_has_valid_hero_cards(spot):
+        return None, "missing_or_invalid_hero_cards", 0.0
+    if not NEURAL_BRAIN_ADAPTER_PATH.exists():
+        return None, f"neural_adapter_missing:{NEURAL_BRAIN_ADAPTER_PATH}", 0.0
+
+    normalized_allowed = []
+    seen = set()
+    for token in allowed_actions:
+        normalized = _normalize_action_token(token)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_allowed.append(normalized)
+
+    effective_timeout = max(1, min(int(timeout_sec), int(NEURAL_BRAIN_TIMEOUT_SEC)))
+    cmd = [
+        _resolve_neural_python_command(),
+        str(NEURAL_BRAIN_ADAPTER_PATH),
+        "--timeout-sec",
+        str(effective_timeout),
+    ]
+    payload = {
+        "spot": spot,
+        "allowed_actions": normalized_allowed,
+    }
+    env = os.environ.copy()
+    env["DYYPHOLDEM_CFR_ITERS"] = str(NEURAL_BRAIN_CFR_ITERS)
+    env["DYYPHOLDEM_CFR_SKIP_ITERS"] = str(NEURAL_BRAIN_CFR_SKIP_ITERS)
+
+    started = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=effective_timeout,
+            check=False,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed = time.perf_counter() - started
+        return None, f"neural_adapter_timeout_{effective_timeout}s", elapsed
+    except Exception as exc:  # pylint: disable=broad-except
+        elapsed = time.perf_counter() - started
+        return None, f"neural_adapter_exec_error:{exc}", elapsed
+    elapsed = time.perf_counter() - started
+
+    parsed = _extract_json_object_from_stdout(proc.stdout)
+    if proc.returncode != 0:
+        stderr_tail = (proc.stderr or "")[-600:]
+        return None, f"neural_adapter_failed_rc={proc.returncode}:{stderr_tail}", elapsed
+    if not isinstance(parsed, dict):
+        stdout_tail = (proc.stdout or "")[-600:]
+        return None, f"neural_adapter_invalid_json:{stdout_tail}", elapsed
+    if not bool(parsed.get("ok", False)):
+        return None, str(parsed.get("error", "neural_adapter_returned_not_ok")), elapsed
+
+    root_actions = parsed.get("root_actions")
+    chosen_action = str(parsed.get("chosen_action", "")).strip().lower()
+    if not isinstance(root_actions, list) or not root_actions:
+        return None, "neural_adapter_missing_root_actions", elapsed
+    if not chosen_action:
+        return None, "neural_adapter_missing_chosen_action", elapsed
+    parsed["chosen_action"] = _normalize_action_token(chosen_action)
+    return parsed, None, elapsed
+
+
+def _apply_neural_overlay_to_result(base_result: Dict[str, Any], neural_payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(base_result)
+    root_actions = neural_payload.get("root_actions")
+    if isinstance(root_actions, list) and root_actions:
+        result["root_actions"] = root_actions
+    decision_raw = result.get("decision", {})
+    decision = dict(decision_raw) if isinstance(decision_raw, dict) else {}
+    chosen_action = _normalize_action_token(str(neural_payload.get("chosen_action", "")).strip().lower())
+    if chosen_action:
+        decision["action"] = chosen_action
+    decision["policy"] = "neural_brain"
+    result["decision"] = decision
+    warnings_raw = result.get("warnings", [])
+    warnings = list(warnings_raw) if isinstance(warnings_raw, list) else []
+    if "neural_brain_overlay" not in warnings:
+        warnings.append("neural_brain_overlay")
+    result["warnings"] = warnings
+    return result
 
 
 def _to_float_or_none(value: Any) -> Optional[float]:
@@ -1369,6 +1557,9 @@ def _build_fast_failover_response(
     selection_reason: str = "fast_profile_baseline_failed_lookup_fallback",
     multi_node_policy_reason: str = "fast_failover_lookup",
 ) -> Dict[str, Any]:
+    neural_elapsed = 0.0
+    neural_error: Optional[str] = None
+    neural_applied = False
     active_node_path = str(request.spot.get("active_node_path", "")).strip()
     use_active_node_flop_policy = (
         runtime_profile == "fast_live"
@@ -1381,6 +1572,28 @@ def _build_fast_failover_response(
         allowed_actions = _fallback_actions_from_spot(request.spot)
         chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
         root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+    neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
+        spot=request.spot,
+        allowed_actions=allowed_actions,
+        timeout_sec=NEURAL_BRAIN_TIMEOUT_SEC,
+    )
+    if isinstance(neural_payload, dict):
+        neural_root_actions = neural_payload.get("root_actions")
+        neural_allowed = _normalize_action_summary_tokens(neural_root_actions)
+        neural_choice = _normalize_action_token(str(neural_payload.get("chosen_action", "")).strip().lower())
+        if isinstance(neural_root_actions, list) and neural_root_actions:
+            root_actions = neural_root_actions
+        if neural_allowed:
+            allowed_actions = neural_allowed
+        if neural_choice:
+            chosen_action = neural_choice
+        if NEURAL_BRAIN_MODE in {"prefer", "prefer_on_fast_failover"}:
+            neural_applied = True
+
+    selected_strategy = "neural_brain" if neural_applied else "fallback_lookup_policy"
+    effective_selection_reason = (
+        "neural_brain_preferred_on_fast_failover" if neural_applied else selection_reason
+    )
     result_payload = {
         "runtime_fallback": True,
         "final_exploitability_pct": None,
@@ -1394,7 +1607,7 @@ def _build_fast_failover_response(
         "decision": {
             "action": chosen_action,
             "street": _detect_spot_street(request.spot),
-            "policy": "lookup_fallback",
+            "policy": ("neural_brain" if neural_applied else "lookup_fallback"),
         },
         "warnings": [f"fast_failover_applied:{baseline_error}"],
     }
@@ -1402,8 +1615,8 @@ def _build_fast_failover_response(
         "status": "ok",
         "node_lock": None,
         "node_lock_kept": False,
-        "selected_strategy": "fallback_lookup_policy",
-        "selection_reason": selection_reason,
+        "selected_strategy": selected_strategy,
+        "selection_reason": effective_selection_reason,
         "allowed_root_actions": allowed_actions,
         "multi_node_policy": {
             "requested": bool(request.enable_multi_node_locks),
@@ -1443,6 +1656,10 @@ def _build_fast_failover_response(
             "multi_node_enabled": False,
             "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": baseline_error,
+            "neural_time_sec": neural_elapsed,
+            "neural_error": neural_error,
+            "neural_mode": NEURAL_BRAIN_MODE,
+            "neural_applied": neural_applied,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
@@ -1480,6 +1697,12 @@ def health() -> Dict[str, Any]:
         "turn_candidate_count": TURN_CANDIDATE_COUNT,
         "river_candidate_count": RIVER_CANDIDATE_COUNT,
         "runtime_profile_default": RUNTIME_PROFILE_DEFAULT,
+        "neural_brain_enabled": NEURAL_BRAIN_ENABLED,
+        "neural_brain_mode": NEURAL_BRAIN_MODE,
+        "neural_brain_adapter_path": str(NEURAL_BRAIN_ADAPTER_PATH),
+        "neural_brain_timeout_sec": NEURAL_BRAIN_TIMEOUT_SEC,
+        "neural_brain_cfr_iters": NEURAL_BRAIN_CFR_ITERS,
+        "neural_brain_cfr_skip_iters": NEURAL_BRAIN_CFR_SKIP_ITERS,
         "fast_baseline_timeout_sec": FAST_BASELINE_TIMEOUT_SEC,
         "fast_baseline_timeout_flop_sec": FAST_BASELINE_TIMEOUT_FLOP_SEC,
         "fast_baseline_timeout_turn_sec": FAST_BASELINE_TIMEOUT_TURN_SEC,
@@ -1997,6 +2220,33 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     else:
         selection_reason = "locked_result_missing_metric_using_baseline"
 
+    neural_payload = None
+    neural_error: Optional[str] = None
+    neural_elapsed = 0.0
+    neural_applied = False
+    neural_timeout_effective = 0
+    if NEURAL_BRAIN_ENABLED:
+        neural_budget_remaining = max(0.0, request_deadline - time.perf_counter())
+        if neural_budget_remaining >= 1.0:
+            neural_timeout_effective = int(max(1, min(NEURAL_BRAIN_TIMEOUT_SEC, int(math.ceil(neural_budget_remaining)))))
+            neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
+                spot=request.spot,
+                allowed_actions=allowed_root_actions,
+                timeout_sec=neural_timeout_effective,
+            )
+            if isinstance(neural_payload, dict):
+                neural_allowed = _normalize_action_summary_tokens(neural_payload.get("root_actions", []))
+                if NEURAL_BRAIN_MODE == "prefer":
+                    result = _apply_neural_overlay_to_result(result, neural_payload)
+                    selected_strategy = "neural_brain"
+                    selection_reason = "neural_brain_preferred"
+                    node_lock_kept = False
+                    if neural_allowed:
+                        allowed_root_actions = neural_allowed
+                    neural_applied = True
+        else:
+            neural_error = "global_budget_exhausted_before_neural_stage"
+
     lock_confidence = _avg_lock_confidence(node_lock)
     lock_quality_score = (
         (0.5 if node_lock_kept else 0.0)
@@ -2064,6 +2314,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "multi_node_enabled": multi_node_enabled,
             "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": llm_error,
+            "neural_time_sec": neural_elapsed,
+            "neural_error": neural_error,
+            "neural_mode": NEURAL_BRAIN_MODE,
+            "neural_applied": neural_applied,
+            "neural_timeout_sec": neural_timeout_effective,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,

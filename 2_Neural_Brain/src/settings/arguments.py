@@ -1,3 +1,4 @@
+import os
 import sys
 
 import torch
@@ -5,6 +6,20 @@ import torch
 from utils.timer import Timer
 import utils.pseudo_random as pseudo_random
 import utils.output as output
+
+
+# PyTorch 2.6 changed torch.load default to weights_only=True. DyypHoldem assets
+# include pickled objects/tensors, so keep legacy behavior unless explicitly set.
+_torch_load_original = torch.load
+
+
+def _torch_load_legacy_default(*args, **kwargs):
+    if "weights_only" not in kwargs:
+        kwargs["weights_only"] = False
+    return _torch_load_original(*args, **kwargs)
+
+
+torch.load = _torch_load_legacy_default
 
 
 """Section Data Management and Paths"""
@@ -41,6 +56,20 @@ use_sqlite = True
 cfr_iters = 1000
 # the number of preliminary CFR iterations which DyypHoldem doesn't factor into the average strategy (included in cfr_iters)
 cfr_skip_iters = 500
+_cfr_iters_env = os.environ.get("DYYPHOLDEM_CFR_ITERS", "").strip()
+if _cfr_iters_env:
+    try:
+        cfr_iters = max(1, int(_cfr_iters_env))
+    except ValueError:
+        pass
+_cfr_skip_iters_env = os.environ.get("DYYPHOLDEM_CFR_SKIP_ITERS", "").strip()
+if _cfr_skip_iters_env:
+    try:
+        cfr_skip_iters = max(0, int(_cfr_skip_iters_env))
+    except ValueError:
+        pass
+if cfr_skip_iters >= cfr_iters:
+    cfr_skip_iters = max(0, cfr_iters // 2)
 
 
 """Section Data Generation"""
@@ -67,7 +96,15 @@ resume_training = False
 
 """Section Torch"""
 # flag to use GPU for calculations
-use_gpu = True
+_use_gpu_env = os.environ.get("DYYPHOLDEM_USE_GPU", "auto").strip().lower()
+if _use_gpu_env in {"1", "true", "yes", "on"}:
+    use_gpu = True
+elif _use_gpu_env in {"0", "false", "no", "off"}:
+    use_gpu = False
+else:
+    use_gpu = torch.cuda.is_available()
+if use_gpu and (not torch.cuda.is_available()):
+    use_gpu = False
 # default tensor types
 if not use_gpu:
     Tensor = torch.FloatTensor
@@ -93,6 +130,9 @@ if use_pseudo_random:
 """Section Global Objects"""
 # global logger
 use_loguru = True
+_use_loguru_env = os.environ.get("DYYPHOLDEM_USE_LOGURU", "").strip().lower()
+if _use_loguru_env in {"0", "false", "no", "off"}:
+    use_loguru = False
 if use_loguru:
     import loguru
     logger = loguru.logger

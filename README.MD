@@ -318,6 +318,26 @@ Bridge runtime profile budgets (`POST /solve`):
   - locked solve timeout cap: `NORMAL_LOCKED_TIMEOUT_SEC` (default `900`)
   - locked stage total budget: `NORMAL_LOCKED_STAGE_TOTAL_SEC` (default `900`)
 
+Optional neural-brain stage (`2_Neural_Brain` DyypHoldem adapter):
+- disabled by default; bridge remains solver-first unless enabled.
+- env toggles:
+  - `NEURAL_BRAIN_ENABLED` (`0`/`1`, default `0`)
+  - `NEURAL_BRAIN_MODE` (`shadow`, `prefer`, `prefer_on_fast_failover`; default `shadow`)
+  - `NEURAL_BRAIN_TIMEOUT_SEC` (default `3`)
+  - `NEURAL_BRAIN_CFR_ITERS` (default `120`)
+  - `NEURAL_BRAIN_CFR_SKIP_ITERS` (default `60`)
+  - `NEURAL_BRAIN_ADAPTER_PATH` (default `4_LLM_Bridge/neural_brain_adapter.py`)
+  - `NEURAL_BRAIN_PYTHON` (optional override interpreter path)
+- behavior:
+  - `shadow`: runs neural inference and reports metrics without overriding selected strategy.
+  - `prefer`: overlays neural action mix onto the selected result when neural inference succeeds.
+  - `prefer_on_fast_failover`: applies neural preference only on fast/failover paths.
+- neural runtime now also supports these compatibility envs in `2_Neural_Brain`:
+  - `DYYPHOLDEM_USE_GPU` (`auto`/`1`/`0`)
+  - `DYYPHOLDEM_CFR_ITERS`
+  - `DYYPHOLDEM_CFR_SKIP_ITERS`
+  - `DYYPHOLDEM_USE_LOGURU`
+
 In `runtime_profile=fast`, bridge metrics now include `fast_spot_profile` so timing reports can confirm exactly which spot reductions were applied.
 
 Run live per-call progress in the terminal for API/local benchmark calls:
