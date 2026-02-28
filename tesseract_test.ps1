@@ -3114,6 +3114,7 @@ function Apply-ManualCardTokenToSlot {
     hero_cards = @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
     board = @($lastBoardTokens)
   }
+  Refresh-RoiOverlays
   if ($queueManualBoardSolve) {
     [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel $manualStageLabel)
   }
@@ -3918,6 +3919,7 @@ function Run-OcrSingleSlot {
         ("hero_cards: {0}" -f (Get-HeroCardsText))
         ("board: {0}" -f (Get-BoardTokensText))
       ) -join "`r`n"
+      Refresh-RoiOverlays
       if (($Slot -in $playerSlotOrder) -and (-not $suppressHeroAutoSend)) {
         Try-AutoSendHeroCardsToEngine
       }
@@ -3939,6 +3941,7 @@ function Run-OcrSingleSlot {
         ("hero_cards: {0}" -f (Get-HeroCardsText))
         ("board: {0}" -f (Get-BoardTokensText))
       ) -join "`r`n"
+      Refresh-RoiOverlays
       if (($Slot -in $playerSlotOrder) -and (-not $suppressHeroAutoSend)) {
         Try-AutoSendHeroCardsToEngine
       }
@@ -3990,6 +3993,7 @@ function Run-OcrSingleSlot {
       ("board_ready: {0}" -f (Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)))
       ("source:{0}/{1}" -f [string]$resolved.variant, [string]$resolved.source)
     ) -join "`r`n"
+    Refresh-RoiOverlays
   }
   catch {
     Write-Log ("OCR ERROR: {0}" -f $_.Exception.Message)
@@ -4395,6 +4399,7 @@ function Run-OcrBoardSetAndQueueEngine {
     }
     $boardReady = Get-BoardReadyFromTokens -Tokens $boardTokens
     $script:lastBoardTokens = @($boardTokens)
+    Refresh-RoiOverlays
 
     $outLines = @(
       ("run:   {0}_only" -f $StageLabel.ToLowerInvariant())
@@ -4585,6 +4590,7 @@ function Run-OcrHeroSet {
 
     $heroReady = Get-HeroCardsReady
     $elapsed = ((Get-Date) - $started).TotalSeconds
+    Refresh-RoiOverlays
     $txtLatest.Text = @(
       "run:   hero_only"
       ("hero1: {0}" -f [string]$heroCards["hero1"])
