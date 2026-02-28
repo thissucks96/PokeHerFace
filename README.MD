@@ -374,6 +374,10 @@ No-engine startup variant:
 - The target picker now only exposes the visible action language (`fold_btn`, `call_btn`, `raise_btn`); legacy `bet_btn` remains supported internally as a compatibility alias for older saved ROIs.
 - The advice panel was simplified: the low-value static "Planned Outputs" block was removed so the live advice detail gets more vertical space.
 - The advice panel now also includes editable stake controls for `SB`, `BB`, and `Buy-In`. The tester rescales engine payloads from the current template in big-blind units, so `minimum_bet`, `starting_pot`, `starting_stack`, and the local preflop raise size all follow the configured stakes instead of staying hardcoded at `1/2` blinds and `100` buy-in.
+- The tester now tracks a simple live table state:
+  - `Current Pot`
+  - `Hero Stack`
+  - these values are shown in the right-side panel and in a draggable floating state overlay, and the engine payload now uses them directly so manual action updates affect subsequent solves.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - `Set Card` -> `Random Card` for a legal non-duplicate assignment, or suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
     - Manual board assignment auto-queues a street solve once the board becomes complete for that street (3 cards = flop, 4 = turn, 5 = river), but only after hero cards are valid.
@@ -384,7 +388,9 @@ No-engine startup variant:
   - `Repick ROI`
   - `Clear ROI`
 - Right-click any action ROI overlay (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`) to use that action directly as a manual advice override; those overlays now render their action text in the center and share the same fold/call/raise color language as the advice panel. (`bet_btn` remains accepted as a legacy internal alias, but the visible UI now uses `Raise` as the single aggressive action.)
+- `CALL` and `RAISE` manual actions now prompt for an amount, subtract that commitment from `Hero Stack`, and add it to `Current Pot`, so the tester's state stays aligned with what is being sent to the engine.
 - The single-slot quick-test strip can now be hidden/shown with `Hide Quick Tests` / `Show Quick Tests` so the main staged controls have more space when you do not need per-slot debug runs.
+- A top-level `Random Card` button is also available in the main control strip; it assigns a legal non-duplicate card to the currently selected card target (or the next unresolved hero slot when `hero` is selected).
 - `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
 - `Run Engine` starts Ollama + bridge on demand (same action on both tester variants).
 - Fast testing controls:

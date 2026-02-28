@@ -181,6 +181,13 @@ $adviceSecondary = "No actionable advice yet."
 $numSmallBlind = $null
 $numBigBlind = $null
 $numBuyIn = $null
+$lblCurrentPotValue = $null
+$lblCurrentChipsValue = $null
+$stateOverlay = $null
+$stateOverlayPotLabel = $null
+$stateOverlayChipsLabel = $null
+$currentPotAmount = 0
+$currentHeroChips = 0
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
 $adviceHasAction = $false
@@ -1153,6 +1160,69 @@ function Get-StakeSettings {
   }
 }
 
+function Get-DefaultTableStateFromStakes {
+  $templatePath = Resolve-EngineTemplatePath
+  $stakes = Get-StakeSettings
+  $defaultPot = [int]($stakes.small_blind + $stakes.big_blind)
+  $buyIn = [int]$stakes.buy_in
+
+  if (Test-Path $templatePath) {
+    try {
+      $templateRaw = Get-Content -Path $templatePath -Raw -Encoding UTF8
+      $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
+      $templateMinBet = 2
+      if ($spot.PSObject.Properties.Name -contains "minimum_bet" -and $null -ne $spot.minimum_bet) {
+        $templateMinBet = [int]$spot.minimum_bet
+      }
+      if ($templateMinBet -lt 1) {
+        $templateMinBet = 2
+      }
+      $templatePot = 10
+      if ($spot.PSObject.Properties.Name -contains "starting_pot" -and $null -ne $spot.starting_pot) {
+        $templatePot = [int]$spot.starting_pot
+      }
+      $templatePotBb = 5.0
+      if ($templateMinBet -gt 0) {
+        $templatePotBb = [double]$templatePot / [double]$templateMinBet
+      }
+      $scaledStartingPot = [int][Math]::Round(($templatePotBb * $stakes.big_blind), [System.MidpointRounding]::AwayFromZero)
+      if ($scaledStartingPot -gt $defaultPot) {
+        $defaultPot = $scaledStartingPot
+      }
+    }
+    catch {}
+  }
+
+  return [pscustomobject]@{
+    starting_pot = [int]$defaultPot
+    hero_chips = [int]$buyIn
+  }
+}
+
+function Update-TableStateDisplay {
+  $potText = ("Pot: {0}" -f [int]$script:currentPotAmount)
+  $chipsText = ("Hero Chips: {0}" -f [int]$script:currentHeroChips)
+  if ($null -ne $script:lblCurrentPotValue) {
+    $script:lblCurrentPotValue.Text = $potText
+  }
+  if ($null -ne $script:lblCurrentChipsValue) {
+    $script:lblCurrentChipsValue.Text = $chipsText
+  }
+  if ($null -ne $script:stateOverlayPotLabel) {
+    $script:stateOverlayPotLabel.Text = $potText
+  }
+  if ($null -ne $script:stateOverlayChipsLabel) {
+    $script:stateOverlayChipsLabel.Text = $chipsText
+  }
+}
+
+function Reset-TableStateToCurrentStakes {
+  $defaults = Get-DefaultTableStateFromStakes
+  $script:currentPotAmount = [int]$defaults.starting_pot
+  $script:currentHeroChips = [int]$defaults.hero_chips
+  Update-TableStateDisplay
+}
+
 function Build-EngineSpotPayload {
   param(
     [Parameter(Mandatory = $true)][string[]]$BoardCards,
@@ -1186,30 +1256,13 @@ function Build-EngineSpotPayload {
   $templateRaw = Get-Content -Path $templatePath -Raw -Encoding UTF8
   $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
   $stakes = Get-StakeSettings
-  $templateMinBet = 2
-  if ($spot.PSObject.Properties.Name -contains "minimum_bet" -and $null -ne $spot.minimum_bet) {
-    $templateMinBet = [int]$spot.minimum_bet
-  }
-  if ($templateMinBet -lt 1) {
-    $templateMinBet = 2
-  }
-  $templatePot = 10
-  if ($spot.PSObject.Properties.Name -contains "starting_pot" -and $null -ne $spot.starting_pot) {
-    $templatePot = [int]$spot.starting_pot
-  }
-  $templatePotBb = 5.0
-  if ($templateMinBet -gt 0) {
-    $templatePotBb = [double]$templatePot / [double]$templateMinBet
-  }
-  $scaledStartingPot = [int][Math]::Round(($templatePotBb * $stakes.big_blind), [System.MidpointRounding]::AwayFromZero)
-  $forcedBlindPot = [int]($stakes.small_blind + $stakes.big_blind)
-  if ($scaledStartingPot -lt $forcedBlindPot) {
-    $scaledStartingPot = $forcedBlindPot
-  }
+  $defaults = Get-DefaultTableStateFromStakes
+  $effectiveStack = if ([int]$script:currentHeroChips -gt 0) { [int]$script:currentHeroChips } else { [int]$defaults.hero_chips }
+  $effectivePot = if ([int]$script:currentPotAmount -gt 0) { [int]$script:currentPotAmount } else { [int]$defaults.starting_pot }
 
-  $spot.starting_stack = [int]$stakes.buy_in
+  $spot.starting_stack = [int]$effectiveStack
   $spot.minimum_bet = [int]$stakes.big_blind
-  $spot.starting_pot = [int]$scaledStartingPot
+  $spot.starting_pot = [int]$effectivePot
   $spot.board = @()
   foreach ($card in $BoardCards) {
     $spot.board += ([string]$card).Trim()
@@ -2417,11 +2470,20 @@ $btnOnce.ForeColor = [System.Drawing.Color]::White
 $btnOnce.BackColor = [System.Drawing.Color]::FromArgb(20, 95, 62)
 $form.Controls.Add($btnOnce)
 
+$btnRandomCard = New-Object System.Windows.Forms.Button
+$btnRandomCard.Text = "Random Card"
+$btnRandomCard.Location = New-Object System.Drawing.Point(370, 136)
+$btnRandomCard.Size = New-Object System.Drawing.Size(110, 34)
+$btnRandomCard.FlatStyle = "Flat"
+$btnRandomCard.ForeColor = [System.Drawing.Color]::White
+$btnRandomCard.BackColor = [System.Drawing.Color]::FromArgb(82, 58, 112)
+$form.Controls.Add($btnRandomCard)
+
 $lblAuto = New-Object System.Windows.Forms.Label
 $lblAuto.Text = "Auto OCR interval (sec)"
 $lblAuto.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
 $lblAuto.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblAuto.Location = New-Object System.Drawing.Point(380, 143)
+$lblAuto.Location = New-Object System.Drawing.Point(490, 143)
 $lblAuto.AutoSize = $true
 $form.Controls.Add($lblAuto)
 
@@ -2606,7 +2668,7 @@ $btnFold.Size = New-Object System.Drawing.Size(84, 28)
 $btnFold.FlatStyle = "Flat"
 $btnFold.ForeColor = [System.Drawing.Color]::White
 $btnFold.BackColor = [System.Drawing.Color]::FromArgb(112, 118, 126)
-$btnFold.Add_Click({ Write-Log "Placeholder action clicked: FOLD (no-op)." })
+$btnFold.Add_Click({ Invoke-ManualActionSelection -ActionToken "FOLD" })
 $form.Controls.Add($btnFold)
 
 $btnCall = New-Object System.Windows.Forms.Button
@@ -2616,7 +2678,7 @@ $btnCall.Size = New-Object System.Drawing.Size(84, 28)
 $btnCall.FlatStyle = "Flat"
 $btnCall.ForeColor = [System.Drawing.Color]::White
 $btnCall.BackColor = [System.Drawing.Color]::FromArgb(38, 120, 68)
-$btnCall.Add_Click({ Write-Log "Placeholder action clicked: CALL (no-op)." })
+$btnCall.Add_Click({ Invoke-ManualActionSelection -ActionToken "CALL" })
 $form.Controls.Add($btnCall)
 
 $btnRaise = New-Object System.Windows.Forms.Button
@@ -2626,7 +2688,7 @@ $btnRaise.Size = New-Object System.Drawing.Size(84, 28)
 $btnRaise.FlatStyle = "Flat"
 $btnRaise.ForeColor = [System.Drawing.Color]::White
 $btnRaise.BackColor = [System.Drawing.Color]::FromArgb(152, 48, 48)
-$btnRaise.Add_Click({ Write-Log "Placeholder action clicked: RAISE (no-op)." })
+$btnRaise.Add_Click({ Invoke-ManualActionSelection -ActionToken "RAISE" })
 $form.Controls.Add($btnRaise)
 
 $hint = New-Object System.Windows.Forms.Label
@@ -2790,9 +2852,44 @@ $numBuyIn.Value = 100
 $numBuyIn.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $advicePanel.Controls.Add($numBuyIn)
 
+$lblCurrentPotTitle = New-Object System.Windows.Forms.Label
+$lblCurrentPotTitle.Text = "Current Pot"
+$lblCurrentPotTitle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblCurrentPotTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblCurrentPotTitle.Location = New-Object System.Drawing.Point(18, 272)
+$lblCurrentPotTitle.AutoSize = $true
+$advicePanel.Controls.Add($lblCurrentPotTitle)
+
+$lblCurrentPotValue = New-Object System.Windows.Forms.Label
+$lblCurrentPotValue.Text = "Pot: 0"
+$lblCurrentPotValue.ForeColor = [System.Drawing.Color]::White
+$lblCurrentPotValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+$lblCurrentPotValue.Location = New-Object System.Drawing.Point(18, 292)
+$lblCurrentPotValue.Size = New-Object System.Drawing.Size(210, 22)
+$advicePanel.Controls.Add($lblCurrentPotValue)
+
+$lblCurrentChipsTitle = New-Object System.Windows.Forms.Label
+$lblCurrentChipsTitle.Text = "Hero Stack"
+$lblCurrentChipsTitle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblCurrentChipsTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblCurrentChipsTitle.Location = New-Object System.Drawing.Point(18, 318)
+$lblCurrentChipsTitle.AutoSize = $true
+$advicePanel.Controls.Add($lblCurrentChipsTitle)
+
+$lblCurrentChipsValue = New-Object System.Windows.Forms.Label
+$lblCurrentChipsValue.Text = "Hero Chips: 0"
+$lblCurrentChipsValue.ForeColor = [System.Drawing.Color]::White
+$lblCurrentChipsValue.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+$lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, 338)
+$lblCurrentChipsValue.Size = New-Object System.Drawing.Size(210, 22)
+$advicePanel.Controls.Add($lblCurrentChipsValue)
+
 $numSmallBlind.Add_ValueChanged({
   if ($numBigBlind.Value -lt $numSmallBlind.Value) {
     $numBigBlind.Value = $numSmallBlind.Value
+  }
+  if (([string]$heroCards["hero1"]).Trim().ToUpperInvariant() -eq "??" -and ([string]$heroCards["hero2"]).Trim().ToUpperInvariant() -eq "??") {
+    Reset-TableStateToCurrentStakes
   }
 })
 $numBigBlind.Add_ValueChanged({
@@ -2802,15 +2899,21 @@ $numBigBlind.Add_ValueChanged({
   if ($numBuyIn.Value -lt $numBigBlind.Value) {
     $numBuyIn.Value = $numBigBlind.Value
   }
+  if (([string]$heroCards["hero1"]).Trim().ToUpperInvariant() -eq "??" -and ([string]$heroCards["hero2"]).Trim().ToUpperInvariant() -eq "??") {
+    Reset-TableStateToCurrentStakes
+  }
 })
 $numBuyIn.Add_ValueChanged({
   if ($numBuyIn.Value -lt $numBigBlind.Value) {
     $numBuyIn.Value = $numBigBlind.Value
   }
+  if (([string]$heroCards["hero1"]).Trim().ToUpperInvariant() -eq "??" -and ([string]$heroCards["hero2"]).Trim().ToUpperInvariant() -eq "??") {
+    Reset-TableStateToCurrentStakes
+  }
 })
 
 $txtAdviceDetail = New-Object System.Windows.Forms.TextBox
-$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 298)
+$txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 394)
 $txtAdviceDetail.Size = New-Object System.Drawing.Size(210, 176)
 $txtAdviceDetail.Multiline = $true
 $txtAdviceDetail.ReadOnly = $true
@@ -2892,7 +2995,9 @@ function Update-MainLayout {
   $btnPick.Location = New-Object System.Drawing.Point($x, $row1Y)
   $x += [int]$btnPick.Width + $gap
   $btnOnce.Location = New-Object System.Drawing.Point($x, $row1Y)
-  $x += [int]$btnOnce.Width + 20
+  $x += [int]$btnOnce.Width + $gap
+  $btnRandomCard.Location = New-Object System.Drawing.Point($x, $row1Y)
+  $x += [int]$btnRandomCard.Width + 20
   $lblAuto.Location = New-Object System.Drawing.Point($x, ($row1Y + 7))
   $x += 138
   $numInterval.Location = New-Object System.Drawing.Point($x, ($row1Y + 4))
@@ -2969,7 +3074,11 @@ function Update-MainLayout {
   $numBigBlind.Location = New-Object System.Drawing.Point(($lblBigBlind.Right + 6), 200)
   $numBigBlind.Size = New-Object System.Drawing.Size([Math]::Max(56, [int]($innerWidth - ($numBigBlind.Left - 18))), 24)
   $numBuyIn.Size = New-Object System.Drawing.Size([Math]::Max(96, [int]($innerWidth - 54)), 24)
-  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(180, [int]($advicePanel.ClientSize.Height - 326)))
+  $lblCurrentPotValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
+  $lblCurrentChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
+  $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, 370)
+  $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, 394)
+  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(140, [int]($advicePanel.ClientSize.Height - 414)))
 }
 
 function Write-Log {
@@ -3160,6 +3269,64 @@ function Get-ActionSlotOverlayText {
   return (Get-ActionTokenForSlot -Slot $Slot)
 }
 
+function Prompt-ForChipAmount {
+  param(
+    [Parameter(Mandatory = $true)][string]$Title,
+    [Parameter(Mandatory = $true)][string]$Prompt,
+    [int]$DefaultValue = 0,
+    [int]$MaxValue = 0
+  )
+  $dialog = New-Object System.Windows.Forms.Form
+  $dialog.Text = $Title
+  $dialog.StartPosition = "CenterParent"
+  $dialog.FormBorderStyle = "FixedDialog"
+  $dialog.MinimizeBox = $false
+  $dialog.MaximizeBox = $false
+  $dialog.ShowInTaskbar = $false
+  $dialog.ClientSize = New-Object System.Drawing.Size(330, 136)
+
+  $label = New-Object System.Windows.Forms.Label
+  $label.Text = $Prompt
+  $label.Location = New-Object System.Drawing.Point(14, 14)
+  $label.Size = New-Object System.Drawing.Size(300, 34)
+  $dialog.Controls.Add($label)
+
+  $numAmount = New-Object System.Windows.Forms.NumericUpDown
+  $numAmount.Location = New-Object System.Drawing.Point(18, 56)
+  $numAmount.Size = New-Object System.Drawing.Size(120, 26)
+  $numAmount.Minimum = 0
+  $numAmount.Maximum = [decimal]([Math]::Max(0, $MaxValue))
+  $numAmount.Value = [decimal]([Math]::Min([Math]::Max(0, $DefaultValue), [Math]::Max(0, $MaxValue)))
+  $numAmount.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $dialog.Controls.Add($numAmount)
+
+  $btnOk = New-Object System.Windows.Forms.Button
+  $btnOk.Text = "OK"
+  $btnOk.Location = New-Object System.Drawing.Point(156, 96)
+  $btnOk.Size = New-Object System.Drawing.Size(72, 28)
+  $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+  $dialog.Controls.Add($btnOk)
+
+  $btnCancel = New-Object System.Windows.Forms.Button
+  $btnCancel.Text = "Cancel"
+  $btnCancel.Location = New-Object System.Drawing.Point(238, 96)
+  $btnCancel.Size = New-Object System.Drawing.Size(72, 28)
+  $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  $dialog.Controls.Add($btnCancel)
+
+  $dialog.AcceptButton = $btnOk
+  $dialog.CancelButton = $btnCancel
+
+  $result = $dialog.ShowDialog($form)
+  if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+    $dialog.Dispose()
+    return $null
+  }
+  $value = [int][decimal]$numAmount.Value
+  $dialog.Dispose()
+  return $value
+}
+
 function Invoke-ManualActionSelection {
   param(
     [Parameter(Mandatory = $true)][string]$ActionToken
@@ -3168,12 +3335,46 @@ function Invoke-ManualActionSelection {
   if (-not $normalizedAction) {
     return
   }
+
+  $committedAmount = 0
+  if ($normalizedAction -in @("CALL", "RAISE")) {
+    $stakes = Get-StakeSettings
+    $defaultAmount = if ($normalizedAction -eq "RAISE") {
+      [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+    }
+    else {
+      [int]$stakes.big_blind
+    }
+    $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
+    $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount
+    if ($null -eq $enteredAmount) {
+      Write-Log ("Manual action canceled: {0}" -f $normalizedAction)
+      return
+    }
+    $committedAmount = [int]$enteredAmount
+    if ($committedAmount -gt 0) {
+      if ($committedAmount -gt $script:currentHeroChips) {
+        $committedAmount = [int]$script:currentHeroChips
+      }
+      $script:currentHeroChips = [Math]::Max(0, ([int]$script:currentHeroChips - $committedAmount))
+      $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $committedAmount))
+      Update-TableStateDisplay
+    }
+  }
   $script:adviceActionPrimary = $normalizedAction
-  $script:adviceActionSecondary = "Manual action override."
+  if ($committedAmount -gt 0) {
+    $script:adviceActionSecondary = ("Manual action override. Amount: {0}" -f [int]$committedAmount)
+  }
+  else {
+    $script:adviceActionSecondary = "Manual action override."
+  }
   $script:adviceHasAction = $true
   Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
   Write-Log ("Manual action selected: {0}" -f $normalizedAction) -Type "manual_action_set" -Data @{
     action = $normalizedAction
+    amount = [int]$committedAmount
+    current_pot = [int]$script:currentPotAmount
+    current_hero_chips = [int]$script:currentHeroChips
   }
 }
 
@@ -3518,6 +3719,82 @@ function New-AdviceOverlayForm {
   $script:adviceOverlayTitleLabel = $titleLabel
   $script:adviceOverlayValueLabel = $valueLabel
   Set-AdviceState -Primary $script:advicePrimary -Secondary $script:adviceSecondary
+  return $overlay
+}
+
+function New-TableStateOverlayForm {
+  $overlay = New-Object System.Windows.Forms.Form
+  $overlay.FormBorderStyle = "None"
+  $overlay.StartPosition = "Manual"
+  $overlay.ShowInTaskbar = $false
+  $overlay.TopMost = $true
+  $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+  $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
+  $overlay.Opacity = 0.92
+  $overlay.Size = New-Object System.Drawing.Size(220, 86)
+  $overlay.Location = New-Object System.Drawing.Point(40, 182)
+  $overlay.Tag = [pscustomobject]@{
+    down = $false
+    offsetX = 0
+    offsetY = 0
+  }
+
+  $titleLabel = New-Object System.Windows.Forms.Label
+  $titleLabel.Text = "Table State"
+  $titleLabel.ForeColor = [System.Drawing.Color]::White
+  $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+  $titleLabel.Location = New-Object System.Drawing.Point(10, 8)
+  $titleLabel.Size = New-Object System.Drawing.Size(200, 20)
+  $overlay.Controls.Add($titleLabel)
+
+  $potLabel = New-Object System.Windows.Forms.Label
+  $potLabel.Text = "Pot: 0"
+  $potLabel.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
+  $potLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $potLabel.Location = New-Object System.Drawing.Point(10, 34)
+  $potLabel.Size = New-Object System.Drawing.Size(200, 20)
+  $overlay.Controls.Add($potLabel)
+
+  $chipsLabel = New-Object System.Windows.Forms.Label
+  $chipsLabel.Text = "Hero Chips: 0"
+  $chipsLabel.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
+  $chipsLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $chipsLabel.Location = New-Object System.Drawing.Point(10, 56)
+  $chipsLabel.Size = New-Object System.Drawing.Size(200, 20)
+  $overlay.Controls.Add($chipsLabel)
+
+  $dragHandlerDown = {
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+      $state = $overlay.Tag
+      $state.down = $true
+      $state.offsetX = [int]$e.X
+      $state.offsetY = [int]$e.Y
+    }
+  }.GetNewClosure()
+  $dragHandlerMove = {
+    param($sender, $e)
+    $state = $overlay.Tag
+    if ($state.down) {
+      $overlay.Left = [int]($overlay.Left + $e.X - $state.offsetX)
+      $overlay.Top = [int]($overlay.Top + $e.Y - $state.offsetY)
+    }
+  }.GetNewClosure()
+  $dragHandlerUp = {
+    param($sender, $e)
+    $state = $overlay.Tag
+    $state.down = $false
+  }.GetNewClosure()
+
+  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel)) {
+    $ctl.Add_MouseDown($dragHandlerDown)
+    $ctl.Add_MouseMove($dragHandlerMove)
+    $ctl.Add_MouseUp($dragHandlerUp)
+  }
+
+  $script:stateOverlayPotLabel = $potLabel
+  $script:stateOverlayChipsLabel = $chipsLabel
+  Update-TableStateDisplay
   return $overlay
 }
 
@@ -4012,6 +4289,39 @@ function New-ManualCardRandomMenuItem {
     Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token ([string]$picked)
   }.GetNewClosure())
   return $item
+}
+
+function Invoke-RandomCardForSelectedTarget {
+  $target = ""
+  if ($null -ne $cmbTarget -and $cmbTarget.SelectedItem) {
+    $target = [string]$cmbTarget.SelectedItem
+  }
+  if (-not $target) {
+    $target = "flop1"
+  }
+  $slot = $target
+  if ($target -eq "hero") {
+    if (([string]$heroCards["hero1"]).Trim().ToUpperInvariant() -eq "??") {
+      $slot = "hero1"
+    }
+    elseif (([string]$heroCards["hero2"]).Trim().ToUpperInvariant() -eq "??") {
+      $slot = "hero2"
+    }
+    else {
+      $slot = "hero1"
+    }
+  }
+  if ((-not ($slot -in $cardSlotOrder)) -and (-not ($slot -in $playerSlotOrder))) {
+    Write-Log ("Random card skipped for target {0}: only hero/community card slots support random assignment." -f $target)
+    return
+  }
+  $available = @(Get-ManualAssignableCardTokens -SlotKey $slot)
+  if ($available.Count -le 0) {
+    Write-Log ("Random card skipped for {0}: no legal cards remain." -f $slot)
+    return
+  }
+  $picked = Get-Random -InputObject $available
+  Apply-ManualCardTokenToSlot -Slot $slot -Token ([string]$picked)
 }
 
 function New-ManualCardRankMenuItem {
@@ -5080,6 +5390,7 @@ function Try-AutoSendHeroCardsToEngine {
     $script:engineLastQueuedLogicalKey = ""
     $script:engineLastCompletedLogicalKey = ""
     Ensure-BackendsRunning
+    Reset-TableStateToCurrentStakes
     $script:lastHeroStageKey = $heroStageKey
   }
 
@@ -5338,6 +5649,7 @@ function Reset-NewHandState {
   foreach ($slot in $playerSlotOrder) {
     Set-SlotValueSource -Slot $slot -Source "none"
   }
+  Reset-TableStateToCurrentStakes
   Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
 }
 
@@ -5909,6 +6221,10 @@ $btnOnce.Add_Click({
   Run-Ocr
 })
 
+$btnRandomCard.Add_Click({
+  Invoke-RandomCardForSelectedTarget
+})
+
 $btnRunFlop1.Add_Click({
   Run-OcrSingleSlot -Slot "flop1"
 })
@@ -6078,12 +6394,19 @@ $form.Add_Shown({
   $hint.Text = "Individual mode: select target -> Pick ROI -> repeat for board, hero, and action ROIs."
   $cardStatusLabel.Text = Format-CardSlotStatus
   Update-TargetsButtonText
+  Reset-TableStateToCurrentStakes
   Refresh-RoiOverlays
   if ($null -eq $adviceOverlay -or $adviceOverlay.IsDisposed) {
     $script:adviceOverlay = New-AdviceOverlayForm
   }
   if ($null -ne $adviceOverlay -and -not $adviceOverlay.Visible) {
     $adviceOverlay.Show()
+  }
+  if ($null -eq $stateOverlay -or $stateOverlay.IsDisposed) {
+    $script:stateOverlay = New-TableStateOverlayForm
+  }
+  if ($null -ne $stateOverlay -and -not $stateOverlay.Visible) {
+    $stateOverlay.Show()
   }
   Ensure-BackendsRunning
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
@@ -6133,6 +6456,16 @@ $form.Add_FormClosing({
     }
     catch {}
     $script:adviceOverlay = $null
+  }
+  if ($null -ne $stateOverlay) {
+    try {
+      if (-not $stateOverlay.IsDisposed) {
+        $stateOverlay.Close()
+        $stateOverlay.Dispose()
+      }
+    }
+    catch {}
+    $script:stateOverlay = $null
   }
   Save-RoiState
   Close-RoiOverlays
