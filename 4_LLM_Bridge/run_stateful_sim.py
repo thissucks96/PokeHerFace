@@ -243,7 +243,10 @@ def main() -> int:
                 r.raise_for_status()
                 resp_json = r.json()
             except Exception as e:
-                hand_record["streets"].append({"street": street_name, "error": str(e)}) # type: ignore
+                error_msg = str(e)
+                if isinstance(e, RequestException) and e.response is not None:
+                    error_msg += f" | Body: {e.response.text}"
+                hand_record["streets"].append({"street": street_name, "error": error_msg}) # type: ignore
                 active = False
                 break
             t_elapsed = time.perf_counter() - t_start
