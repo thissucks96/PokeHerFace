@@ -5906,7 +5906,7 @@ function Invoke-VillainActionSelection {
   # Preflop safeguard: when villain acts and it immediately becomes hero's turn,
   # publish hero preflop advice directly here (independent of auto-send lock timing).
   if ((Get-CurrentStreetName) -eq "preflop" -and (Get-HeroCardsReady) -and (Test-IsHeroTurn)) {
-    $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    $null = Ensure-PreflopHeroAdvice
     Write-Log ("Preflop advice refreshed after villain action: facing_bet={0}, hero_commit={1}, villain_commit={2}." -f `
       [int]$script:currentFacingBetAmount, [int]$script:currentHeroStreetCommit, [int]$script:currentVillainStreetCommit) -Type "hero_preflop_refresh_post_villain" -Data @{
       hero1 = [string]$heroCards["hero1"]
@@ -6279,6 +6279,51 @@ function Apply-PreflopHeuristicAdvice {
     "street: preflop"
     "source:preflop_heuristic"
   ) -join "`r`n"
+  return $true
+}
+
+function Ensure-PreflopHeroAdvice {
+  if ((Get-CurrentStreetName) -ne "preflop") {
+    return $false
+  }
+  if (-not (Get-HeroCardsReady)) {
+    return $false
+  }
+  if (-not (Test-IsHeroTurn)) {
+    return $false
+  }
+
+  $applied = $false
+  try {
+    $applied = [bool](Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"]))
+  }
+  catch {
+    $applied = $false
+  }
+  if ($applied) {
+    return $true
+  }
+
+  $legal = @(Get-HeroLegalActionTokens)
+  $fallbackPrimary = ""
+  if ($legal -contains "CALL") { $fallbackPrimary = "CALL" }
+  elseif ($legal -contains "CHECK") { $fallbackPrimary = "CHECK" }
+  elseif ($legal -contains "FOLD") { $fallbackPrimary = "FOLD" }
+  elseif ($legal -contains "RAISE") { $fallbackPrimary = "RAISE" }
+  elseif ($legal -contains "ALL IN") { $fallbackPrimary = "ALL IN" }
+  if (-not $fallbackPrimary) {
+    return $false
+  }
+  $script:adviceActionPrimary = $fallbackPrimary
+  $script:adviceActionSecondary = "Preflop fallback advice (heuristic unavailable)."
+  $script:adviceHasAction = $true
+  Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
+  Write-Log ("Preflop advice fallback applied: {0}" -f $fallbackPrimary) -Type "hero_preflop_fallback" -Data @{
+    hero1 = [string]$heroCards["hero1"]
+    hero2 = [string]$heroCards["hero2"]
+    legal_actions = @($legal)
+    facing_bet = [int]$script:currentFacingBetAmount
+  }
   return $true
 }
 
@@ -8459,12 +8504,7 @@ function Try-AutoSendHeroCardsToEngine {
       return
     }
     if (Test-IsHeroTurn) {
-      $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
-    }
-    if ($villainActed) {
-      if (Test-IsHeroTurn) {
-        $null = Apply-PreflopHeuristicAdvice -HeroCards @([string]$heroCards["hero1"], [string]$heroCards["hero2"])
-      }
+      $null = Ensure-PreflopHeroAdvice
     }
     $preflopSolveKey = ("preflop|{0}|{1}|sb={2}|fb={3}|hc={4}|vc={5}|ha={6}|va={7}" -f `
       [string]$heroCards["hero1"], `
@@ -8810,6 +8850,9 @@ function Start-NewHandPreserveChips {
     first_to_act_preflop = $firstToActPreflop
   }
   Try-AutoSendHeroCardsToEngine
+  if ((Get-CurrentStreetName) -eq "preflop" -and (Test-IsHeroTurn) -and (Get-HeroCardsReady) -and (-not [bool]$script:adviceHasAction)) {
+    $null = Ensure-PreflopHeroAdvice
+  }
 }
 
 function Invoke-NewHandCycle {

@@ -67,6 +67,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - screen-capture/OCR execution paths are now disabled by default for local manual-state testing; set `POKERBOT_ENABLE_SCREEN_CAPTURE=1` to re-enable capture-based OCR runs.
   - preflop villain-action flow now forces an immediate hero preflop advice refresh when turn passes back to hero, preventing `WAIT` stalls after auto/scripted villain raises.
   - table status/logs now include explicit preflop facing context (`TO CALL X (villain total Y)` and villain action commit fields) to make blind/raise math auditable at a glance.
+  - preflop hero advice now has a centralized fallback path (`Ensure-PreflopHeroAdvice`) so hero-facing preflop states never remain stuck on `WAIT` when legal actions exist.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,
