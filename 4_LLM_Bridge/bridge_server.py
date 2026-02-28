@@ -1052,7 +1052,44 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         "river": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
     }
     if preserve_donk_tree and isinstance(tuned.get("bet_sizing"), dict):
-        changes["bet_sizing"] = "preserved_for_active_node_path"
+        old_bet_sizing = tuned.get("bet_sizing")
+        active_street = _detect_spot_street(tuned)
+        active_bet_sizing = json.loads(json.dumps(target_bet_sizing))
+        source_sizing = old_bet_sizing if isinstance(old_bet_sizing, dict) else {}
+        active_cfg = source_sizing.get(active_street, {}) if isinstance(source_sizing, dict) else {}
+
+        source_bets = active_cfg.get("bet_sizes", []) if isinstance(active_cfg, dict) else []
+        if isinstance(source_bets, list):
+            kept_bets = []
+            for value in source_bets:
+                fval = _to_float_or_none(value)
+                if fval is not None and fval > 0:
+                    kept_bets.append(float(fval))
+                    break
+            if kept_bets:
+                active_bet_sizing[active_street]["bet_sizes"] = kept_bets
+
+        source_raises = active_cfg.get("raise_sizes", []) if isinstance(active_cfg, dict) else []
+        if isinstance(source_raises, list):
+            kept_raises = []
+            raise_cap_limit = raise_sizes[0] if raise_sizes else None
+            for value in source_raises:
+                fval = _to_float_or_none(value)
+                if fval is None or fval <= 0:
+                    continue
+                trimmed = float(fval)
+                if raise_cap_limit is not None:
+                    trimmed = min(trimmed, float(raise_cap_limit))
+                kept_raises.append(trimmed)
+                break
+            if kept_raises:
+                active_bet_sizing[active_street]["raise_sizes"] = kept_raises
+
+        tuned["bet_sizing"] = active_bet_sizing
+        if old_bet_sizing != active_bet_sizing:
+            changes["bet_sizing"] = "reduced_to_fast_live_active_node_profile"
+        else:
+            changes["bet_sizing"] = "preserved_for_active_node_path"
     else:
         old_bet_sizing = tuned.get("bet_sizing")
         tuned["bet_sizing"] = target_bet_sizing
