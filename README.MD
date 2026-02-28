@@ -404,6 +404,8 @@ No-engine startup variant:
   - `CHECK / CALL` dynamically becomes `Call` whenever a bet is being faced,
   - `RAISE / ALL IN` dynamically becomes `All In` when a normal raise is no longer legal (for example when the required raise reaches or exceeds the remaining stack).
   - Hero manual actions are validated against that same live legality state, so stale `CHECK` clicks are remapped or rejected when hero is actually facing a bet.
+  - A new lead now correctly reopens action for the other player, so raises do not stall the betting round.
+- Preflop advice now re-evaluates when blind/facing state changes, so big-blind check spots no longer stay stuck on stale `CALL` advice after villain completes.
 - `New Hand` now starts a real heads-up hand cycle while preserving both bankrolls:
   - it alternates who is `SB / BTN` and `BB`,
   - posts blinds automatically,
@@ -412,6 +414,7 @@ No-engine startup variant:
   - tracks a hidden burn pile,
   - and then auto-advances streets (`Burn + Flop`, `Burn + Turn`, `Burn + River`) whenever a betting round resolves.
 - The initial hero advice stage no longer resets the live table state, so the posted blinds and dealt villain hole cards stay intact after `New Hand`.
+- The floating `Table State` overlay now includes the current heads-up position text alongside pot and stack state.
 - The floating `Table State` overlay `New Hand` shortcut now routes through the same deferred hand-cycle path as the main button, so it uses the identical reset/deal flow without running that work inside the menu-click context.
 - Pot settlement is now automatic:
   - folding awards the pot immediately,

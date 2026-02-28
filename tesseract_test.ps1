@@ -1843,6 +1843,9 @@ function Apply-HeroCommitmentToPot {
   $script:currentHeroChips = [Math]::Max(0, ([int]$script:currentHeroChips - $commit))
   $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $commit))
   $script:currentHeroStreetCommit = [int]$script:currentHeroStreetCommit + $commit
+  if ([int]$script:currentHeroStreetCommit -gt [int]$script:currentVillainStreetCommit) {
+    $script:villainActedThisRound = $false
+  }
   if ($ClearFacingBet) {
     Clear-FacingBetAmount
   }
@@ -1866,6 +1869,9 @@ function Apply-VillainCommitmentToPot {
   $script:currentVillainChips = [Math]::Max(0, ([int]$script:currentVillainChips - $commit))
   $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $commit))
   $script:currentVillainStreetCommit = [int]$script:currentVillainStreetCommit + $commit
+  if ([int]$script:currentVillainStreetCommit -gt [int]$script:currentHeroStreetCommit) {
+    $script:heroActedThisRound = $false
+  }
   if ($SetAsFacingBet) {
     $callGap = [int]([Math]::Max(0, ([int]$script:currentVillainStreetCommit - [int]$script:currentHeroStreetCommit)))
     Set-FacingBetAmount -Amount $callGap
@@ -4855,6 +4861,12 @@ function Get-HeroLegalActionTokensForSlot {
 }
 
 function Get-HeroLegalActionTokens {
+  if ($script:handResolved -or $script:heroFolded -or $script:villainFolded) {
+    return @()
+  }
+  if ([int]$script:currentHeroChips -le 0) {
+    return @()
+  }
   $tokens = New-Object System.Collections.Generic.List[string]
   $checkCall = ([string]$script:checkCallButtonToken).Trim().ToUpperInvariant()
   if ($checkCall -notin @("CHECK", "CALL")) {
@@ -5385,6 +5397,12 @@ function Build-PreflopHeuristicRootActions {
 
   $stakes = Get-StakeSettings
   $raiseAmount = [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+  if ([int]$script:currentFacingBetAmount -le 0) {
+    return @(
+      [pscustomobject]@{ action = "check"; avg_frequency = [double]($foldWeight + $callWeight) }
+      [pscustomobject]@{ action = "raise"; amount = [int]$raiseAmount; avg_frequency = [double]$raiseWeight }
+    )
+  }
 
   return @(
     [pscustomobject]@{ action = "fold"; avg_frequency = [double]$foldWeight }
@@ -5611,7 +5629,7 @@ function New-TableStateOverlayForm {
   $overlay.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
   $overlay.BackColor = [System.Drawing.Color]::FromArgb(16, 22, 30)
   $overlay.Opacity = 0.92
-  $overlay.Size = New-Object System.Drawing.Size(240, 134)
+  $overlay.Size = New-Object System.Drawing.Size(240, 156)
   $overlay.Location = $(if ($null -ne $script:savedStateOverlayLocation) {
     New-Object System.Drawing.Point([int]$script:savedStateOverlayLocation.X, [int]$script:savedStateOverlayLocation.Y)
   } else {
@@ -5656,11 +5674,19 @@ function New-TableStateOverlayForm {
   $villainChipsLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($villainChipsLabel)
 
+  $positionLabel = New-Object System.Windows.Forms.Label
+  $positionLabel.Text = "Position: Unknown"
+  $positionLabel.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
+  $positionLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $positionLabel.Location = New-Object System.Drawing.Point(10, 100)
+  $positionLabel.Size = New-Object System.Drawing.Size(220, 20)
+  $overlay.Controls.Add($positionLabel)
+
   $villainLabel = New-Object System.Windows.Forms.Label
   $villainLabel.Text = "Villain Cards: Hidden"
   $villainLabel.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
   $villainLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-  $villainLabel.Location = New-Object System.Drawing.Point(10, 102)
+  $villainLabel.Location = New-Object System.Drawing.Point(10, 122)
   $villainLabel.Size = New-Object System.Drawing.Size(220, 20)
   $overlay.Controls.Add($villainLabel)
 
@@ -5689,7 +5715,7 @@ function New-TableStateOverlayForm {
     Save-RoiState
   }.GetNewClosure()
 
-  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainChipsLabel, $villainLabel)) {
+  foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainChipsLabel, $positionLabel, $villainLabel)) {
     $ctl.ContextMenuStrip = $overlay.ContextMenuStrip
     $ctl.Add_MouseDown($dragHandlerDown)
     $ctl.Add_MouseMove($dragHandlerMove)
@@ -5699,6 +5725,7 @@ function New-TableStateOverlayForm {
   $script:stateOverlayPotLabel = $potLabel
   $script:stateOverlayChipsLabel = $chipsLabel
   $script:stateOverlayVillainChipsLabel = $villainChipsLabel
+  $script:stateOverlayPositionLabel = $positionLabel
   $script:stateOverlayVillainLabel = $villainLabel
   Update-TableStateDisplay
   return $overlay
@@ -7426,7 +7453,15 @@ function Try-AutoSendHeroCardsToEngine {
   }
 
   if (-not $boardReadyNow) {
-    $preflopSolveKey = ("preflop|{0}|{1}" -f [string]$heroCards["hero1"], [string]$heroCards["hero2"])
+    $preflopSolveKey = ("preflop|{0}|{1}|sb={2}|fb={3}|hc={4}|vc={5}|ha={6}|va={7}" -f `
+      [string]$heroCards["hero1"], `
+      [string]$heroCards["hero2"], `
+      [int]([bool]$script:heroIsSmallBlind), `
+      [int]$script:currentFacingBetAmount, `
+      [int]$script:currentHeroStreetCommit, `
+      [int]$script:currentVillainStreetCommit, `
+      [int]([bool]$script:heroActedThisRound), `
+      [int]([bool]$script:villainActedThisRound))
     if ($preflopSolveKey -eq $lastHeroAutoSendKey) {
       return
     }
