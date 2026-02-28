@@ -394,6 +394,10 @@ No-engine startup variant:
   - `Manual` keeps the explicit `Villain Action` menu enabled,
   - `Scripted` auto-plays villain turns with a deterministic, easy-to-debug policy using the existing pot/stack state,
   - `Engine Random` uses weighted random sampling from the current postflop engine action mix when available, and falls back to the scripted policy if no valid engine mix exists.
+- Villain auto play now also has a `Villain Style` selector with only two policies:
+  - `Tight`
+  - `Aggressive`
+  - `Balanced` is intentionally removed; the adaptive profile will replace that slot in a later phase.
 - The tester also supports an optional `villain` ROI rectangle:
   - it shows villain chips remaining,
   - villain chips invested on the current street only,

@@ -266,6 +266,7 @@ $numBigBlind = $null
 $numBuyIn = $null
 $btnToggleVillainCards = $null
 $cmbVillainMode = $null
+$cmbVillainStyle = $null
 $lblCurrentPotValue = $null
 $lblCurrentChipsValue = $null
 $lblCurrentVillainChipsValue = $null
@@ -305,6 +306,7 @@ $heroIsSmallBlind = $true
 $lastHandSummaryText = ""
 $showVillainCards = $false
 $villainMode = "Manual"
+$villainStyle = "Tight"
 $autoVillainBusy = $false
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
@@ -1621,7 +1623,22 @@ function Set-VillainMode {
   }
   if ($null -ne $script:btnVillainActionMenu) {
     $script:btnVillainActionMenu.Enabled = ($normalized -eq "Manual")
-    $script:btnVillainActionMenu.Text = $(if ($normalized -eq "Manual") { "Villain Action" } else { ("Villain: {0}" -f $normalized) })
+    $script:btnVillainActionMenu.Text = $(if ($normalized -eq "Manual") { "Villain Action" } else { ("Villain: {0} ({1})" -f $normalized, [string]$script:villainStyle) })
+  }
+}
+
+function Set-VillainStyle {
+  param([string]$Style)
+  $normalized = ([string]$Style).Trim()
+  if ($normalized -notin @("Tight", "Aggressive")) {
+    $normalized = "Tight"
+  }
+  $script:villainStyle = $normalized
+  if ($null -ne $script:cmbVillainStyle -and ([string]$script:cmbVillainStyle.SelectedItem -ne $normalized)) {
+    $script:cmbVillainStyle.SelectedItem = $normalized
+  }
+  if ($null -ne $script:btnVillainActionMenu -and [string]$script:villainMode -ne "Manual") {
+    $script:btnVillainActionMenu.Text = ("Villain: {0} ({1})" -f [string]$script:villainMode, [string]$script:villainStyle)
   }
 }
 
@@ -1632,6 +1649,30 @@ function Get-RecommendedVillainRaiseAmount {
     return [int]([Math]::Max(($facingGap + $stakes.big_blind), $stakes.big_blind))
   }
   return [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+}
+
+function Get-VillainStyleWeightMultiplier {
+  param([Parameter(Mandatory = $true)][string]$NormalizedToken)
+  $token = ([string]$NormalizedToken).Trim().ToUpperInvariant()
+  $style = ([string]$script:villainStyle).Trim().ToLowerInvariant()
+  if ($style -eq "aggressive") {
+    switch ($token) {
+      "FOLD" { return 0.35 }
+      "CHECK" { return 0.60 }
+      "CALL" { return 0.95 }
+      "RAISE" { return 1.80 }
+      "ALL IN" { return 1.50 }
+      default { return 1.0 }
+    }
+  }
+  switch ($token) {
+    "FOLD" { return 1.60 }
+    "CHECK" { return 1.35 }
+    "CALL" { return 1.10 }
+    "RAISE" { return 0.55 }
+    "ALL IN" { return 0.45 }
+    default { return 1.0 }
+  }
 }
 
 function Get-VillainLegalActionTokens {
@@ -1710,6 +1751,8 @@ function Get-WeightedRandomActionToken {
     }
     if (-not $normalizedToken) { continue }
     if (-not ($LegalTokens -contains $normalizedToken)) { continue }
+    $weight = [double]$weight * [double](Get-VillainStyleWeightMultiplier -NormalizedToken $normalizedToken)
+    if ($weight -le 0.0) { continue }
     [void]$candidates.Add([pscustomobject]@{
       token = $normalizedToken
       weight = [double]$weight
@@ -1744,11 +1787,19 @@ function Get-ScriptedVillainActionToken {
     return ""
   }
 
+  $style = ([string]$script:villainStyle).Trim().ToLowerInvariant()
   $facingGap = Get-VillainFacingBetAmount
   if ($facingGap -le 0) {
-    if ($legal -contains "CHECK") { return "CHECK" }
-    if ($legal -contains "RAISE") { return "RAISE" }
-    if ($legal -contains "ALL IN") { return "ALL IN" }
+    if ($style -eq "aggressive") {
+      if ($legal -contains "RAISE") { return "RAISE" }
+      if ($legal -contains "ALL IN") { return "ALL IN" }
+      if ($legal -contains "CHECK") { return "CHECK" }
+    }
+    else {
+      if ($legal -contains "CHECK") { return "CHECK" }
+      if ($legal -contains "RAISE") { return "RAISE" }
+      if ($legal -contains "ALL IN") { return "ALL IN" }
+    }
     return [string]$legal[0]
   }
 
@@ -1769,18 +1820,35 @@ function Get-ScriptedVillainActionToken {
     }
   }
 
-  if (($topPreflopToken -eq "fold") -and ($facingGap -gt [int]$stakes.big_blind) -and ($legal -contains "FOLD")) {
-    return "FOLD"
+  if ($style -eq "aggressive") {
+    $jamThreshold = [int]([Math]::Ceiling([double][Math]::Max(1, $script:currentVillainChips) * 0.60))
+    if (($legal -contains "ALL IN") -and ($facingGap -ge $jamThreshold)) {
+      return "ALL IN"
+    }
+    if (($topPreflopToken -like "raise*") -and ($legal -contains "RAISE")) {
+      return "RAISE"
+    }
+    if (($legal -contains "RAISE") -and ([int]$script:currentVillainChips -gt ([int]$facingGap + [int]$stakes.big_blind))) {
+      return "RAISE"
+    }
+    if ($legal -contains "CALL") { return "CALL" }
+    if ($legal -contains "ALL IN") { return "ALL IN" }
+    if ($legal -contains "FOLD") { return "FOLD" }
   }
-  if (($topPreflopToken -like "raise*") -and ($legal -contains "RAISE")) {
-    return "RAISE"
+  else {
+    if (($topPreflopToken -eq "fold") -and ($facingGap -gt [int]$stakes.big_blind) -and ($legal -contains "FOLD")) {
+      return "FOLD"
+    }
+    if (($topPreflopToken -like "raise*") -and ($legal -contains "RAISE") -and ($facingGap -le ([int]$stakes.big_blind * 4))) {
+      return "RAISE"
+    }
+    if (($facingGap -ge [int]([Math]::Max([Math]::Ceiling([double]$script:currentPotAmount * 0.60), $stakes.big_blind * 3))) -and ($legal -contains "FOLD")) {
+      return "FOLD"
+    }
+    if ($legal -contains "CALL") { return "CALL" }
+    if ($legal -contains "ALL IN") { return "ALL IN" }
+    if ($legal -contains "FOLD") { return "FOLD" }
   }
-  if (($facingGap -ge [int]([Math]::Max([Math]::Ceiling([double]$script:currentPotAmount * 0.75), $stakes.big_blind * 4))) -and ($legal -contains "FOLD")) {
-    return "FOLD"
-  }
-  if ($legal -contains "CALL") { return "CALL" }
-  if ($legal -contains "ALL IN") { return "ALL IN" }
-  if ($legal -contains "FOLD") { return "FOLD" }
   return [string]$legal[0]
 }
 
@@ -1818,8 +1886,9 @@ function Try-RunAutomaticVillainTurn {
     if ($token -eq "RAISE") {
       $amountOverride = [int](Get-RecommendedVillainRaiseAmount)
     }
-    Write-Log ("Auto villain ({0}) selected: {1}" -f [string]$script:villainMode, $token) -Type "auto_villain_action" -Data @{
+    Write-Log ("Auto villain ({0}/{1}) selected: {2}" -f [string]$script:villainMode, [string]$script:villainStyle, $token) -Type "auto_villain_action" -Data @{
       mode = [string]$script:villainMode
+      style = [string]$script:villainStyle
       action = $token
       current_pot = [int]$script:currentPotAmount
       current_hero_chips = [int]$script:currentHeroChips
@@ -4222,9 +4291,29 @@ $cmbVillainMode.Add_SelectedIndexChanged({
 $advicePanel.Controls.Add($cmbVillainMode)
 $script:cmbVillainMode = $cmbVillainMode
 
+$lblVillainStyle = New-Object System.Windows.Forms.Label
+$lblVillainStyle.Text = "Villain Style"
+$lblVillainStyle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblVillainStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblVillainStyle.Location = New-Object System.Drawing.Point(18, 588)
+$lblVillainStyle.AutoSize = $true
+$advicePanel.Controls.Add($lblVillainStyle)
+
+$cmbVillainStyle = New-Object System.Windows.Forms.ComboBox
+$cmbVillainStyle.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+$cmbVillainStyle.Items.AddRange(@("Tight", "Aggressive"))
+$cmbVillainStyle.SelectedItem = "Tight"
+$cmbVillainStyle.Location = New-Object System.Drawing.Point(18, 608)
+$cmbVillainStyle.Size = New-Object System.Drawing.Size(210, 24)
+$cmbVillainStyle.Add_SelectedIndexChanged({
+  Set-VillainStyle -Style ([string]$cmbVillainStyle.SelectedItem)
+}.GetNewClosure())
+$advicePanel.Controls.Add($cmbVillainStyle)
+$script:cmbVillainStyle = $cmbVillainStyle
+
 $btnVillainActionMenu = New-Object System.Windows.Forms.Button
 $btnVillainActionMenu.Text = "Villain Action"
-$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 594)
+$btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, 638)
 $btnVillainActionMenu.Size = New-Object System.Drawing.Size(210, 28)
 $btnVillainActionMenu.FlatStyle = "Flat"
 $btnVillainActionMenu.ForeColor = [System.Drawing.Color]::White
@@ -4308,6 +4397,7 @@ foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btn
 
 Set-VillainCardsVisibility -Visible:$false
 Set-VillainMode -Mode "Manual"
+Set-VillainStyle -Style "Tight"
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -4484,14 +4574,17 @@ function Update-MainLayout {
   $lblVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 368))
   $cmbVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 388))
   $cmbVillainMode.Size = New-Object System.Drawing.Size($innerWidth, 24)
-  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 420))
+  $lblVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 418))
+  $cmbVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 438))
+  $cmbVillainStyle.Size = New-Object System.Drawing.Size($innerWidth, 24)
+  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 470))
   $btnVillainActionMenu.Size = New-Object System.Drawing.Size($innerWidth, 28)
   $settleButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
-  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 456))
+  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 506))
   $btnHeroWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stakesTopY + 456))
+  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stakesTopY + 506))
   $btnVillainWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $detailTopY = $stakesTopY + 494
+  $detailTopY = $stakesTopY + 544
   $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
   $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
   $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(120, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
@@ -4702,7 +4795,7 @@ function Update-VillainActionControlState {
   }
   $isManual = ([string]$script:villainMode -eq "Manual")
   $script:btnVillainActionMenu.Enabled = $isManual -and (-not $script:handResolved) -and ([int]$script:activeVillainCount -gt 0) -and ([int]$script:currentVillainChips -gt 0)
-  $script:btnVillainActionMenu.Text = $(if ($isManual) { "Villain Action" } else { ("Villain: {0}" -f [string]$script:villainMode) })
+  $script:btnVillainActionMenu.Text = $(if ($isManual) { "Villain Action" } else { ("Villain: {0} ({1})" -f [string]$script:villainMode, [string]$script:villainStyle) })
 }
 
 function Update-CheckCallButtonModeFromState {
