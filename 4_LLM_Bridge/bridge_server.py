@@ -1232,6 +1232,79 @@ def _choose_smallest_sized_action(allowed_actions: list[str], action_base: str) 
     return best_action
 
 
+def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> Optional[int]:
+    path_value = str(active_node_path or "").strip().lower()
+    if not path_value:
+        return None
+    for segment in reversed(path_value.split("/")):
+        token = segment.strip()
+        if ":bet:" not in token:
+            continue
+        try:
+            return int(float(token.rsplit(":", 1)[1]))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _build_fast_live_active_node_flop_fallback_policy(
+    spot: Dict[str, Any],
+) -> tuple[list[str], str, list[Dict[str, Any]]]:
+    minimum_bet = float(_to_float_or_none(spot.get("minimum_bet")) or 1.0)
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0))
+    active_node_path = str(spot.get("active_node_path", "")).strip()
+    bet_amount = float(
+        _extract_last_bet_amount_from_active_node_path(active_node_path)
+        or max(int(minimum_bet), int(round(starting_pot * 0.5)))
+    )
+    denominator = max(1.0, starting_pot + bet_amount)
+    mdf = max(0.0, min(1.0, starting_pot / denominator))
+    texture = _extract_board_texture_flags(spot)
+
+    fold_freq = max(0.20, min(0.80, 1.0 - mdf))
+    if texture["paired"]:
+        fold_freq = min(0.90, fold_freq + 0.10)
+    if texture["monotone"] or texture["four_flush"]:
+        fold_freq = min(0.95, fold_freq + 0.15)
+    if texture["connected"]:
+        fold_freq = min(0.95, fold_freq + 0.05)
+
+    raise_freq = 0.0
+    bet_ratio = bet_amount / max(1.0, starting_pot)
+    if texture["dry"] and not texture["paired"] and not texture["monotone"] and bet_ratio <= 0.50:
+        raise_freq = min(0.15, max(0.05, mdf * 0.20))
+        fold_freq = max(0.10, fold_freq - (raise_freq * 0.5))
+
+    call_freq = max(0.0, 1.0 - fold_freq - raise_freq)
+    total = fold_freq + call_freq + raise_freq
+    if total <= 0.0:
+        fold_freq, call_freq, raise_freq = 0.34, 0.66, 0.0
+        total = 1.0
+    fold_freq /= total
+    call_freq /= total
+    raise_freq /= total
+
+    allowed_actions: list[str] = ["fold", "call"]
+    raise_token: Optional[str] = None
+    if raise_freq > 0.0:
+        raise_amount = int(max(minimum_bet, round(bet_amount * 4.0)))
+        raise_token = f"raise:{raise_amount}"
+        allowed_actions.append(raise_token)
+
+    weighted_rows: list[tuple[str, float]] = [
+        ("fold", fold_freq),
+        ("call", call_freq),
+    ]
+    if raise_token is not None:
+        weighted_rows.append((raise_token, raise_freq))
+
+    chosen_action = max(weighted_rows, key=lambda row: row[1])[0]
+    root_actions = [_token_to_root_action(token, chosen_action) for token, _ in weighted_rows]
+    for row, (_, freq) in zip(root_actions, weighted_rows):
+        row["frequency"] = float(freq)
+    return allowed_actions, chosen_action, root_actions
+
+
 def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str]) -> str:
     street = _detect_spot_street(spot)
     if street in {"flop", "turn"}:
@@ -1296,9 +1369,18 @@ def _build_fast_failover_response(
     selection_reason: str = "fast_profile_baseline_failed_lookup_fallback",
     multi_node_policy_reason: str = "fast_failover_lookup",
 ) -> Dict[str, Any]:
-    allowed_actions = _fallback_actions_from_spot(request.spot)
-    chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
-    root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+    active_node_path = str(request.spot.get("active_node_path", "")).strip()
+    use_active_node_flop_policy = (
+        runtime_profile == "fast_live"
+        and _detect_spot_street(request.spot) == "flop"
+        and bool(active_node_path)
+    )
+    if use_active_node_flop_policy:
+        allowed_actions, chosen_action, root_actions = _build_fast_live_active_node_flop_fallback_policy(request.spot)
+    else:
+        allowed_actions = _fallback_actions_from_spot(request.spot)
+        chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
+        root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
     result_payload = {
         "runtime_fallback": True,
         "final_exploitability_pct": None,

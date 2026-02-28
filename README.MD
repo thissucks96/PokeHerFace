@@ -294,6 +294,7 @@ Bridge runtime profile budgets (`POST /solve`):
     - `FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC` (default `4`) only applies when `spot.active_node_path` is present, so non-root decision tests can get a slightly larger budget without slowing all root-level `fast_live` solves.
     - `FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC` (default `6`) overrides that active-node cap only for non-root flop solves, because flop is currently the only street still overrunning the tighter active-node budget.
     - `FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY` (default `1`) skips the expensive non-root flop solve entirely and returns the immediate lookup fallback on that path, while preserving real non-root solver math for turn and river.
+    - that non-root flop fallback is now deterministic and MDF-based: it parses the facing bet from `active_node_path`, uses pot geometry plus simple board texture flags to emit a lightweight weighted `fold` / `call` / (sometimes) `raise` mix instead of the old hardcoded `call`.
     - when `spot.active_node_path` is present, `fast_live` also reduces the action tree instead of fully preserving caller sizing: it keeps only the active street's first lead size, trims that street to one reduced raise size, and applies the compact `fast_live` sizing profile on later streets.
   - compact live mini-solve spot profile:
     - `FAST_LIVE_SPOT_MAX_ITERATIONS` (default `1`)
