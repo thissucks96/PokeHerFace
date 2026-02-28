@@ -2215,10 +2215,11 @@ function Get-TableStatusText {
     ([int]$script:currentVillainStreetCommit -eq [int]$stakes.big_blind)
   if (Test-IsHeroTurn) {
     if ($heroFacing -gt 0) {
+      $villainTotalCommit = [int]([Math]::Max(0, $script:currentVillainStreetCommit))
       if ($isBlindPostingState) {
-        return ("STATUS: PRE-FLOP (SB posted). TO CALL {0}." -f $heroFacing)
+        return ("STATUS: PRE-FLOP (SB posted). TO CALL {0} (villain total {1})." -f $heroFacing, $villainTotalCommit)
       }
-      return ("STATUS: TO CALL {0}" -f $heroFacing)
+      return ("STATUS: TO CALL {0} (villain total {1})" -f $heroFacing, $villainTotalCommit)
     }
     return "STATUS: YOUR TURN"
   }
@@ -5886,13 +5887,20 @@ function Invoke-VillainActionSelection {
     }
   }
 
-  Write-Log ("Villain action selected: {0}" -f $normalizedAction) -Type "villain_action_set" -Data @{
+  $villainCommitNow = [int]([Math]::Max(0, $script:currentVillainStreetCommit))
+  $heroCommitNow = [int]([Math]::Max(0, $script:currentHeroStreetCommit))
+  $heroToCallNow = [int]([Math]::Max(0, $script:currentFacingBetAmount))
+  Write-Log ("Villain action selected: {0} (put_in={1}, villain_commit={2}, hero_commit={3}, hero_to_call={4}, pot={5})" -f `
+    $normalizedAction, [int]$committedAmount, $villainCommitNow, $heroCommitNow, $heroToCallNow, [int]$script:currentPotAmount) -Type "villain_action_set" -Data @{
     action = $normalizedAction
     amount = [int]$committedAmount
     current_pot = [int]$script:currentPotAmount
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
     facing_bet = [int]$script:currentFacingBetAmount
+    hero_commit = $heroCommitNow
+    villain_commit = $villainCommitNow
+    hero_to_call = $heroToCallNow
   }
 
   # Preflop safeguard: when villain acts and it immediately becomes hero's turn,
