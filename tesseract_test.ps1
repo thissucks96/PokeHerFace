@@ -178,6 +178,7 @@ $engineQueueCompletedCount = 0
 $engineLastResultSummary = "none"
 $advicePrimary = "WAIT"
 $adviceSecondary = "No actionable advice yet."
+$checkCallButtonToken = "CHECK"
 $lastRecommendedCallAmount = 0
 $lastRecommendedRaiseAmount = 0
 $numSmallBlind = $null
@@ -2741,8 +2742,9 @@ $btnCheck.Size = New-Object System.Drawing.Size(84, 28)
 $btnCheck.FlatStyle = "Flat"
 $btnCheck.ForeColor = [System.Drawing.Color]::White
 $btnCheck.BackColor = [System.Drawing.Color]::FromArgb(40, 108, 88)
-$btnCheck.Add_Click({ Invoke-ManualActionSelection -ActionToken "CHECK" })
+$btnCheck.Add_Click({ Invoke-ManualActionSelection -ActionToken ([string]$script:checkCallButtonToken) })
 $form.Controls.Add($btnCheck)
+$script:btnCheck = $btnCheck
 
 $btnCall = New-Object System.Windows.Forms.Button
 $btnCall.Text = "Call"
@@ -2752,6 +2754,7 @@ $btnCall.FlatStyle = "Flat"
 $btnCall.ForeColor = [System.Drawing.Color]::White
 $btnCall.BackColor = [System.Drawing.Color]::FromArgb(38, 120, 68)
 $btnCall.Add_Click({ Invoke-ManualActionSelection -ActionToken "CALL" })
+$btnCall.Visible = $false
 $form.Controls.Add($btnCall)
 
 $btnRaise = New-Object System.Windows.Forms.Button
@@ -3146,16 +3149,16 @@ function Update-MainLayout {
   $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
   $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
   $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
-  $manualActionButtons = @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)
-  $manualActionButtonWidth = [Math]::Max(76, [int](($innerWidth - (2 * $gap)) / 3))
+  $manualActionButtons = @($btnCheck, $btnFold, $btnRaise, $btnAllIn)
+  $manualActionButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
   foreach ($btn in $manualActionButtons) {
     $btn.Size = New-Object System.Drawing.Size($manualActionButtonWidth, 28)
   }
   $btnCheck.Location = New-Object System.Drawing.Point(18, 176)
   $btnFold.Location = New-Object System.Drawing.Point(($btnCheck.Right + $gap), 176)
-  $btnCall.Location = New-Object System.Drawing.Point(($btnFold.Right + $gap), 176)
   $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
   $btnAllIn.Location = New-Object System.Drawing.Point(($btnRaise.Right + $gap), 214)
+  $btnCall.Visible = $false
 
   $stakesTopY = 258
   $stakesTitle.Location = New-Object System.Drawing.Point(18, $stakesTopY)
@@ -3330,6 +3333,39 @@ function Set-AdviceState {
   if ($null -ne $adviceOverlayTitleLabel) {
     $adviceOverlayTitleLabel.Text = ("Advice: {0}" -f $script:adviceSecondary)
   }
+}
+
+function Set-CheckCallButtonMode {
+  param([Parameter(Mandatory = $true)][string]$ActionToken)
+
+  $normalized = ([string]$ActionToken).Trim().ToUpperInvariant()
+  if ($normalized -ne "CALL") {
+    $normalized = "CHECK"
+  }
+  $script:checkCallButtonToken = $normalized
+  if ($null -ne $script:btnCheck) {
+    $script:btnCheck.Text = $(if ($normalized -eq "CALL") { "Call" } else { "Check" })
+    $script:btnCheck.BackColor = $(if ($normalized -eq "CALL") {
+      [System.Drawing.Color]::FromArgb(38, 120, 68)
+    } else {
+      [System.Drawing.Color]::FromArgb(40, 108, 88)
+    })
+  }
+}
+
+function Get-CheckCallButtonModeFromWeightedRows {
+  param([Parameter(Mandatory = $true)]$WeightedRows)
+
+  foreach ($row in @($WeightedRows)) {
+    if ($null -eq $row) {
+      continue
+    }
+    $token = ([string]$row.token).Trim().ToLowerInvariant()
+    if ($token -eq "call" -or $token -like "call:*") {
+      return "CALL"
+    }
+  }
+  return "CHECK"
 }
 
 function Get-AdvicePrimaryColor {
@@ -3782,6 +3818,7 @@ function Set-AdviceFromEngineResult {
   }
 
   $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  Set-CheckCallButtonMode -ActionToken (Get-CheckCallButtonModeFromWeightedRows -WeightedRows $sortedRows)
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
@@ -3825,6 +3862,7 @@ function Set-AdviceFromEngineResult {
 }
 
 Set-AdviceState -Primary $advicePrimary -Secondary $adviceSecondary
+Set-CheckCallButtonMode -ActionToken "CHECK"
 
 function New-AdviceOverlayForm {
   $overlay = New-Object System.Windows.Forms.Form
@@ -3902,6 +3940,17 @@ function New-AdviceOverlayForm {
   return $overlay
 }
 
+function New-TableStateOverlayContextMenu {
+  $menu = New-Object System.Windows.Forms.ContextMenuStrip
+  $itemNewHand = New-Object System.Windows.Forms.ToolStripMenuItem
+  $itemNewHand.Text = "New Hand"
+  $itemNewHand.Add_Click({
+    Start-NewHandPreserveChips
+  }.GetNewClosure())
+  [void]$menu.Items.Add($itemNewHand)
+  return $menu
+}
+
 function New-TableStateOverlayForm {
   $overlay = New-Object System.Windows.Forms.Form
   $overlay.FormBorderStyle = "None"
@@ -3922,6 +3971,7 @@ function New-TableStateOverlayForm {
     offsetX = 0
     offsetY = 0
   }
+  $overlay.ContextMenuStrip = New-TableStateOverlayContextMenu
 
   $titleLabel = New-Object System.Windows.Forms.Label
   $titleLabel.Text = "Table State"
@@ -3973,6 +4023,7 @@ function New-TableStateOverlayForm {
   }.GetNewClosure()
 
   foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel)) {
+    $ctl.ContextMenuStrip = $overlay.ContextMenuStrip
     $ctl.Add_MouseDown($dragHandlerDown)
     $ctl.Add_MouseMove($dragHandlerMove)
     $ctl.Add_MouseUp($dragHandlerUp)
@@ -5910,6 +5961,7 @@ function Reset-NewHandState {
     Set-SlotValueSource -Slot $slot -Source "none"
   }
   Reset-TableStateToCurrentStakes
+  Set-CheckCallButtonMode -ActionToken "CHECK"
   Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
 }
 

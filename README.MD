@@ -370,7 +370,7 @@ No-engine startup variant:
 - The tester UI includes a dedicated `ADVICE` panel plus a draggable floating advice overlay that auto-opens on startup. While the engine is busy it shows `THINKING`; after a completed solve it now renders the bridge recommendation plus the top two weighted actions from `result.root_actions`, with strategy/time metadata on a second line for readability.
 - The advice primary label now buckets engine output into clearer user actions (`CHECK`, `CALL`, `CALL ANY`, `FOLD`, `RAISE`) and preserves explicit amounts when the bridge returns them (for example `CALL 3`, `RAISE 12`).
 - Manual `CALL` / `RAISE` prompts now default to the last recommended engine amount when one is available, so the user can accept or edit the suggested size instead of retyping from scratch.
-- The header action controls now use `Check`, `Fold`, `Call`, `Raise`, and `All In`; `Raise` is the standard aggressive button while `All In` commits the entire remaining hero stack immediately.
+- The visible manual action controls now use a dynamic `Check` / `Call` button, `Fold`, `Raise`, and `All In`; the first button automatically flips to `Call` whenever the current advice/action mix includes a call path, otherwise it stays `Check`. `All In` commits the entire remaining hero stack immediately.
 - The main tester window now reflows on resize: the left workspace expands/contracts, the advice panel stays pinned to the right, and the log/output panes scale with the window instead of colliding.
 - The manual action buttons were moved into the right-side advice panel so the header rows stay focused on capture/run controls instead of stacking every control in one strip.
 - The target picker now exposes the simplified live labels (`hero`, `pot`, `check`, `fold`, `call`, `raise`, `all_in`) while still mapping those controls back to the underlying ROI keys internally. Legacy `bet_btn` remains supported as a compatibility alias for older saved ROIs.
@@ -397,6 +397,7 @@ No-engine startup variant:
 - The hidden/shown quick-test state is persisted across restarts, and the floating `Advice` / `Table State` overlay windows now remember their last screen positions.
 - A top-level `Random Card` button is also available in the main control strip; it assigns a legal non-duplicate card to the currently selected card target (or the next unresolved hero slot when `hero` is selected).
 - A `New Hand` button clears the staged hero/board cards and solver hand state while preserving the current hero chip count; it resets the pot to the configured blinds for the next hand.
+- Right-clicking the floating `Table State` overlay now exposes a `New Hand` shortcut as well, so the state reset is available without returning to the main form.
 - `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
 - `Run Engine` starts Ollama + bridge on demand (same action on both tester variants).
 - Fast testing controls:
