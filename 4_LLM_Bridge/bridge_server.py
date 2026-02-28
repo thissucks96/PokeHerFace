@@ -34,7 +34,7 @@ DEFAULT_LLM_CONFIG = {
     "preset": "local_qwen3_coder_30b",
 }
 RUNTIME_PROFILE_DEFAULT = str(os.environ.get("RUNTIME_PROFILE_DEFAULT", "normal")).strip().lower()
-if RUNTIME_PROFILE_DEFAULT not in {"fast", "normal"}:
+if RUNTIME_PROFILE_DEFAULT not in {"fast", "fast_live", "normal"}:
     RUNTIME_PROFILE_DEFAULT = "normal"
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
 PROD_CLASS1_MULTI_NODE_LIVE = os.environ.get("PROD_CLASS1_MULTI_NODE_LIVE", "1").strip() not in {"0", "false", "False"}
@@ -136,6 +136,73 @@ FAST_FAILOVER_DEFAULT_TURN_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_TU
 FAST_FAILOVER_DEFAULT_RIVER_ACTION = str(os.environ.get("FAST_FAILOVER_DEFAULT_RIVER_ACTION", "check")).strip().lower()
 FAST_FORCE_ROOT_ONLY = os.environ.get("FAST_FORCE_ROOT_ONLY", "1").strip() not in {"0", "false", "False"}
 FAST_SKIP_LLM_STAGE = os.environ.get("FAST_SKIP_LLM_STAGE", "1").strip() not in {"0", "false", "False"}
+try:
+    FAST_LIVE_BASELINE_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_BASELINE_TIMEOUT_SEC", "3"))
+except ValueError:
+    FAST_LIVE_BASELINE_TIMEOUT_SEC = 3
+try:
+    FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC = int(os.environ.get("FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC", "3"))
+except ValueError:
+    FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC = 3
+try:
+    FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC = int(os.environ.get("FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC", "2"))
+except ValueError:
+    FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC = 2
+try:
+    FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC = int(os.environ.get("FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC", "1"))
+except ValueError:
+    FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC = 1
+try:
+    FAST_LIVE_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_LLM_TIMEOUT_SEC", "1"))
+except ValueError:
+    FAST_LIVE_LLM_TIMEOUT_SEC = 1
+try:
+    FAST_LIVE_LOCKED_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_LOCKED_TIMEOUT_SEC", "2"))
+except ValueError:
+    FAST_LIVE_LOCKED_TIMEOUT_SEC = 2
+try:
+    FAST_LIVE_LOCKED_STAGE_TOTAL_SEC = int(os.environ.get("FAST_LIVE_LOCKED_STAGE_TOTAL_SEC", "5"))
+except ValueError:
+    FAST_LIVE_LOCKED_STAGE_TOTAL_SEC = 5
+try:
+    FAST_LIVE_MAX_TOKENS = int(os.environ.get("FAST_LIVE_MAX_TOKENS", "160"))
+except ValueError:
+    FAST_LIVE_MAX_TOKENS = 160
+try:
+    FAST_LIVE_SPOT_MAX_ITERATIONS = int(os.environ.get("FAST_LIVE_SPOT_MAX_ITERATIONS", "2"))
+except ValueError:
+    FAST_LIVE_SPOT_MAX_ITERATIONS = 2
+try:
+    FAST_LIVE_SPOT_MAX_THREADS = int(os.environ.get("FAST_LIVE_SPOT_MAX_THREADS", "4"))
+except ValueError:
+    FAST_LIVE_SPOT_MAX_THREADS = 4
+try:
+    FAST_LIVE_SPOT_MAX_RAISE_CAP = int(os.environ.get("FAST_LIVE_SPOT_MAX_RAISE_CAP", "2"))
+except ValueError:
+    FAST_LIVE_SPOT_MAX_RAISE_CAP = 2
+try:
+    FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = float(os.environ.get("FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD", "0.80"))
+except ValueError:
+    FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = 0.80
+FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY = os.environ.get("FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,0.75")
+FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0")
+FAST_LIVE_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_LIVE_FAILOVER_ON_BASELINE_ERROR", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_LIVE_FORCE_ROOT_ONLY = os.environ.get("FAST_LIVE_FORCE_ROOT_ONLY", "1").strip() not in {"0", "false", "False"}
+FAST_LIVE_SKIP_LLM_STAGE = os.environ.get("FAST_LIVE_SKIP_LLM_STAGE", "1").strip() not in {"0", "false", "False"}
 try:
     NORMAL_BASELINE_TIMEOUT_SEC = int(os.environ.get("NORMAL_BASELINE_TIMEOUT_SEC", "900"))
 except ValueError:
@@ -742,15 +809,16 @@ def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]
 
 def _normalize_runtime_profile(profile: Optional[str]) -> str:
     value = str(profile or "").strip().lower()
-    if value in {"fast", "normal"}:
+    if value in {"fast", "fast_live", "normal"}:
         return value
     return RUNTIME_PROFILE_DEFAULT
 
 
-def _stage_budget_value(request_timeout: int, cap: int) -> int:
-    timeout = max(10, int(request_timeout))
-    cap_val = max(10, int(cap))
-    return max(10, min(timeout, cap_val))
+def _stage_budget_value(request_timeout: int, cap: int, min_floor: int = 10) -> int:
+    floor_val = max(1, int(min_floor))
+    timeout = max(floor_val, int(request_timeout))
+    cap_val = max(floor_val, int(cap))
+    return max(floor_val, min(timeout, cap_val))
 
 
 def _resolve_stage_budgets(runtime_profile: str, request_timeout: int, spot: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
@@ -759,27 +827,35 @@ def _resolve_stage_budgets(runtime_profile: str, request_timeout: int, spot: Opt
         llm_cap = FAST_LLM_TIMEOUT_SEC
         locked_cap = FAST_LOCKED_TIMEOUT_SEC
         locked_total_cap = FAST_LOCKED_STAGE_TOTAL_SEC
+        min_floor = 10
+    elif runtime_profile == "fast_live":
+        baseline_cap = FAST_LIVE_BASELINE_TIMEOUT_SEC
+        llm_cap = FAST_LIVE_LLM_TIMEOUT_SEC
+        locked_cap = FAST_LIVE_LOCKED_TIMEOUT_SEC
+        locked_total_cap = FAST_LIVE_LOCKED_STAGE_TOTAL_SEC
+        min_floor = 1
     else:
         baseline_cap = NORMAL_BASELINE_TIMEOUT_SEC
         llm_cap = NORMAL_LLM_TIMEOUT_SEC
         locked_cap = NORMAL_LOCKED_TIMEOUT_SEC
         locked_total_cap = NORMAL_LOCKED_STAGE_TOTAL_SEC
+        min_floor = 10
 
-    baseline_timeout = _stage_budget_value(request_timeout, baseline_cap)
-    if runtime_profile == "fast" and isinstance(spot, dict):
+    baseline_timeout = _stage_budget_value(request_timeout, baseline_cap, min_floor=min_floor)
+    if runtime_profile in {"fast", "fast_live"} and isinstance(spot, dict):
         spot_street = _detect_spot_street(spot)
         street_cap = None
         if spot_street == "flop":
-            street_cap = FAST_BASELINE_TIMEOUT_FLOP_SEC
+            street_cap = FAST_BASELINE_TIMEOUT_FLOP_SEC if runtime_profile == "fast" else FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC
         elif spot_street == "turn":
-            street_cap = FAST_BASELINE_TIMEOUT_TURN_SEC
+            street_cap = FAST_BASELINE_TIMEOUT_TURN_SEC if runtime_profile == "fast" else FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC
         elif spot_street == "river":
-            street_cap = FAST_BASELINE_TIMEOUT_RIVER_SEC
+            street_cap = FAST_BASELINE_TIMEOUT_RIVER_SEC if runtime_profile == "fast" else FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC
         if isinstance(street_cap, int):
-            baseline_timeout = _stage_budget_value(baseline_timeout, street_cap)
-    llm_timeout = _stage_budget_value(request_timeout, llm_cap)
-    locked_timeout = _stage_budget_value(request_timeout, locked_cap)
-    locked_total_timeout = _stage_budget_value(request_timeout, locked_total_cap)
+            baseline_timeout = _stage_budget_value(baseline_timeout, street_cap, min_floor=min_floor)
+    llm_timeout = _stage_budget_value(request_timeout, llm_cap, min_floor=min_floor)
+    locked_timeout = _stage_budget_value(request_timeout, locked_cap, min_floor=min_floor)
+    locked_total_timeout = _stage_budget_value(request_timeout, locked_total_cap, min_floor=min_floor)
     return {
         "baseline_timeout_sec": baseline_timeout,
         "llm_timeout_sec": llm_timeout,
@@ -872,11 +948,94 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
         changes["bet_sizing"] = "reduced_to_fast_profile"
 
     summary = {
+        "profile": "fast",
         "applied": True,
         "max_iterations": FAST_SPOT_MAX_ITERATIONS,
         "max_threads": FAST_SPOT_MAX_THREADS,
         "max_raise_cap": FAST_SPOT_MAX_RAISE_CAP,
         "min_all_in_threshold": FAST_SPOT_MIN_ALL_IN_THRESHOLD,
+        "bet_sizes": bet_sizes,
+        "raise_sizes": raise_sizes,
+        "changes": changes,
+    }
+    return tuned, summary
+
+
+def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    tuned = dict(spot)
+    changes: Dict[str, Any] = {}
+
+    iterations = _to_float_or_none(tuned.get("iterations"))
+    if iterations is not None:
+        capped = int(max(1, min(int(iterations), FAST_LIVE_SPOT_MAX_ITERATIONS)))
+        if capped != int(iterations):
+            changes["iterations"] = {"from": int(iterations), "to": capped}
+        tuned["iterations"] = capped
+    else:
+        tuned["iterations"] = max(1, FAST_LIVE_SPOT_MAX_ITERATIONS)
+        changes["iterations"] = {"from": None, "to": tuned["iterations"]}
+
+    thread_count = _to_float_or_none(tuned.get("thread_count"))
+    if thread_count is not None:
+        capped_threads = int(max(1, min(int(thread_count), FAST_LIVE_SPOT_MAX_THREADS)))
+        if capped_threads != int(thread_count):
+            changes["thread_count"] = {"from": int(thread_count), "to": capped_threads}
+        tuned["thread_count"] = capped_threads
+    else:
+        tuned["thread_count"] = max(1, FAST_LIVE_SPOT_MAX_THREADS)
+        changes["thread_count"] = {"from": None, "to": tuned["thread_count"]}
+
+    raise_cap = _to_float_or_none(tuned.get("raise_cap"))
+    if raise_cap is not None:
+        capped_raise = int(max(1, min(int(raise_cap), FAST_LIVE_SPOT_MAX_RAISE_CAP)))
+        if capped_raise != int(raise_cap):
+            changes["raise_cap"] = {"from": int(raise_cap), "to": capped_raise}
+        tuned["raise_cap"] = capped_raise
+    else:
+        tuned["raise_cap"] = max(1, FAST_LIVE_SPOT_MAX_RAISE_CAP)
+        changes["raise_cap"] = {"from": None, "to": tuned["raise_cap"]}
+
+    all_in_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
+    if all_in_threshold is not None:
+        clamped_threshold = max(FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, float(all_in_threshold))
+        clamped_threshold = min(clamped_threshold, 0.99)
+        if abs(clamped_threshold - float(all_in_threshold)) > 1e-9:
+            changes["all_in_threshold"] = {"from": float(all_in_threshold), "to": clamped_threshold}
+        tuned["all_in_threshold"] = clamped_threshold
+    else:
+        tuned["all_in_threshold"] = min(max(FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
+        changes["all_in_threshold"] = {"from": None, "to": tuned["all_in_threshold"]}
+
+    if FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY:
+        old = tuned.get("compress_strategy")
+        tuned["compress_strategy"] = True
+        if old is not True:
+            changes["compress_strategy"] = {"from": old, "to": True}
+    if FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS:
+        old = tuned.get("remove_donk_bets")
+        tuned["remove_donk_bets"] = True
+        if old is not True:
+            changes["remove_donk_bets"] = {"from": old, "to": True}
+
+    bet_sizes = _parse_sizing_env(FAST_LIVE_SPOT_BET_SIZES_RAW, [0.33, 0.75])
+    raise_sizes = _parse_sizing_env(FAST_LIVE_SPOT_RAISE_SIZES_RAW, [1.0])
+    target_bet_sizing = {
+        "flop": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+        "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+        "river": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+    }
+    old_bet_sizing = tuned.get("bet_sizing")
+    tuned["bet_sizing"] = target_bet_sizing
+    if old_bet_sizing != target_bet_sizing:
+        changes["bet_sizing"] = "reduced_to_fast_live_profile"
+
+    summary = {
+        "profile": "fast_live",
+        "applied": True,
+        "max_iterations": FAST_LIVE_SPOT_MAX_ITERATIONS,
+        "max_threads": FAST_LIVE_SPOT_MAX_THREADS,
+        "max_raise_cap": FAST_LIVE_SPOT_MAX_RAISE_CAP,
+        "min_all_in_threshold": FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD,
         "bet_sizes": bet_sizes,
         "raise_sizes": raise_sizes,
         "changes": changes,
@@ -1184,6 +1343,25 @@ def health() -> Dict[str, Any]:
         "fast_failover_default_river_action": FAST_FAILOVER_DEFAULT_RIVER_ACTION,
         "fast_force_root_only": FAST_FORCE_ROOT_ONLY,
         "fast_skip_llm_stage": FAST_SKIP_LLM_STAGE,
+        "fast_live_baseline_timeout_sec": FAST_LIVE_BASELINE_TIMEOUT_SEC,
+        "fast_live_baseline_timeout_flop_sec": FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC,
+        "fast_live_baseline_timeout_turn_sec": FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC,
+        "fast_live_baseline_timeout_river_sec": FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC,
+        "fast_live_llm_timeout_sec": FAST_LIVE_LLM_TIMEOUT_SEC,
+        "fast_live_locked_timeout_sec": FAST_LIVE_LOCKED_TIMEOUT_SEC,
+        "fast_live_locked_stage_total_sec": FAST_LIVE_LOCKED_STAGE_TOTAL_SEC,
+        "fast_live_max_tokens": FAST_LIVE_MAX_TOKENS,
+        "fast_live_spot_max_iterations": FAST_LIVE_SPOT_MAX_ITERATIONS,
+        "fast_live_spot_max_threads": FAST_LIVE_SPOT_MAX_THREADS,
+        "fast_live_spot_max_raise_cap": FAST_LIVE_SPOT_MAX_RAISE_CAP,
+        "fast_live_spot_min_all_in_threshold": FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD,
+        "fast_live_spot_force_compress_strategy": FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY,
+        "fast_live_spot_force_remove_donk_bets": FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS,
+        "fast_live_spot_bet_sizes_raw": FAST_LIVE_SPOT_BET_SIZES_RAW,
+        "fast_live_spot_raise_sizes_raw": FAST_LIVE_SPOT_RAISE_SIZES_RAW,
+        "fast_live_failover_on_baseline_error": FAST_LIVE_FAILOVER_ON_BASELINE_ERROR,
+        "fast_live_force_root_only": FAST_LIVE_FORCE_ROOT_ONLY,
+        "fast_live_skip_llm_stage": FAST_LIVE_SKIP_LLM_STAGE,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
         "normal_locked_timeout_sec": NORMAL_LOCKED_TIMEOUT_SEC,
@@ -1272,6 +1450,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     spot_street = _detect_spot_street(request.spot)
     if runtime_profile == "fast":
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
+    elif runtime_profile == "fast_live":
+        effective_spot, fast_spot_profile_summary = _apply_fast_live_spot_profile(effective_spot)
 
     if runtime_profile == "fast" and spot_street == "flop" and FAST_FLOP_LOOKUP_ONLY:
         total_bridge_time = time.perf_counter() - bridge_started
@@ -1328,7 +1508,12 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         baseline_result = baseline_run["result"]
         baseline_solver_time = baseline_run["solver_wall_time_sec"]
     except HTTPException as exc:
-        if runtime_profile == "fast" and FAST_FAILOVER_ON_BASELINE_ERROR:
+        failover_on_baseline_error = (
+            FAST_FAILOVER_ON_BASELINE_ERROR
+            if runtime_profile == "fast"
+            else (FAST_LIVE_FAILOVER_ON_BASELINE_ERROR if runtime_profile == "fast_live" else False)
+        )
+        if failover_on_baseline_error:
             total_bridge_time = time.perf_counter() - bridge_started
             baseline_error = f"baseline_stage_failed:{exc.detail}"
             _record_canary_observation(
@@ -1433,16 +1618,22 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     spot_street = _detect_spot_street(request.spot)
     candidate_target_count = TURN_CANDIDATE_COUNT if spot_street == "turn" else RIVER_CANDIDATE_COUNT
     llm_mode = str(llm_config.get("mode", "")).strip().lower()
-    if runtime_profile == "fast" and FAST_FORCE_ROOT_ONLY and llm_mode != "benchmark":
+    force_root_only = (
+        FAST_FORCE_ROOT_ONLY
+        if runtime_profile == "fast"
+        else (FAST_LIVE_FORCE_ROOT_ONLY if runtime_profile == "fast_live" else False)
+    )
+    if force_root_only and llm_mode != "benchmark":
         multi_node_enabled = False
-        multi_node_policy_reason = f"{multi_node_policy_reason}+fast_root_only"
+        policy_suffix = "fast_root_only" if runtime_profile == "fast" else "fast_live_root_only"
+        multi_node_policy_reason = f"{multi_node_policy_reason}+{policy_suffix}"
         candidate_target_count = 1
     is_local_request = _is_local_request(llm_config)
     llm_budget_remaining = max(0.0, request_deadline - time.perf_counter())
     llm_timeout_effective = int(max(1, min(stage_budgets["llm_timeout_sec"], int(math.ceil(llm_budget_remaining)))))
     llm_config["timeout_sec"] = float(llm_timeout_effective)
-    if runtime_profile == "fast" and "max_tokens" not in llm_config:
-        llm_config["max_tokens"] = FAST_MAX_TOKENS
+    if runtime_profile in {"fast", "fast_live"} and "max_tokens" not in llm_config:
+        llm_config["max_tokens"] = FAST_MAX_TOKENS if runtime_profile == "fast" else FAST_LIVE_MAX_TOKENS
     if not is_local_request:
         # Keep cloud costs controlled by default. Allow parity search only when explicitly enabled.
         if ENABLE_CLOUD_CANDIDATE_SEARCH and llm_mode == "benchmark":
@@ -1459,8 +1650,13 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     llm_config["opponent_profile"] = dict(request.opponent_profile or {})
     llm_config["enable_multi_node_locks"] = multi_node_enabled
     llm_candidates: list[Dict[str, Any]] = []
-    if runtime_profile == "fast" and FAST_SKIP_LLM_STAGE and llm_mode != "benchmark":
-        llm_error = "fast_profile_llm_stage_skipped"
+    skip_llm_stage = (
+        FAST_SKIP_LLM_STAGE
+        if runtime_profile == "fast"
+        else (FAST_LIVE_SKIP_LLM_STAGE if runtime_profile == "fast_live" else False)
+    )
+    if skip_llm_stage and llm_mode != "benchmark":
+        llm_error = "fast_profile_llm_stage_skipped" if runtime_profile == "fast" else "fast_live_profile_llm_stage_skipped"
     elif llm_budget_remaining < 1.0:
         llm_error = "global_budget_exhausted_before_llm_stage"
     else:

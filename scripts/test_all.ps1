@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$Preset = "local_qwen3_coder_30b",
-  [ValidateSet("fast", "normal")]
+  [ValidateSet("fast", "fast_live", "normal")]
   [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$BacktestSeed = 4090,

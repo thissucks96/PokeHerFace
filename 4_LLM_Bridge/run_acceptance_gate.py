@@ -145,7 +145,7 @@ def main() -> int:
     parser.add_argument("--solver-timeout", type=int, default=1200)
     parser.add_argument(
         "--runtime-profile",
-        choices=["fast", "normal"],
+        choices=["fast", "fast_live", "normal"],
         default=None,
         help="Optional runtime profile forwarded to bridge /solve (fast|normal).",
     )

@@ -2,7 +2,7 @@
 param(
   [string]$Preset = "local_qwen3_coder_30b",
   [string]$ProfileName = "fast_edge_v1",
-  [ValidateSet("fast", "normal")]
+  [ValidateSet("fast", "fast_live", "normal")]
   [string]$RuntimeProfile = "fast",
   [double]$EvKeepMargin = 0.001,
   [int]$TurnCandidateCount = 1,

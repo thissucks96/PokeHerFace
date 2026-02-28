@@ -3,7 +3,7 @@ param(
   [ValidateSet("turn_class1", "river_class23", "canonical_turn_ci")]
   [string]$Suite = "canonical_turn_ci",
   [string]$Preset = "local_qwen3_coder_30b",
-  [ValidateSet("fast", "normal")]
+  [ValidateSet("fast", "fast_live", "normal")]
   [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$CallsPerSpot = 1,

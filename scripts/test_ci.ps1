@@ -1,6 +1,6 @@
 param(
     [string]$Preset = "local_qwen3_coder_30b",
-    [ValidateSet("fast", "normal")]
+  [ValidateSet("fast", "fast_live", "normal")]
     [string]$RuntimeProfile = "",
     [string]$CanonicalManifest = "",
     [string]$Output = "",

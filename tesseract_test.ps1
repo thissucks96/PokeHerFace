@@ -2438,6 +2438,7 @@ $cmbEngineProfile.Location = New-Object System.Drawing.Point(700, 211)
 $cmbEngineProfile.Size = New-Object System.Drawing.Size(100, 24)
 $cmbEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbEngineProfile.Items.Add("fast")
+[void]$cmbEngineProfile.Items.Add("fast_live")
 [void]$cmbEngineProfile.Items.Add("normal")
 $profileIdx = $cmbEngineProfile.Items.IndexOf($engineRuntimeProfile)
 if ($profileIdx -lt 0) { $profileIdx = 0 }

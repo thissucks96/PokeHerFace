@@ -216,7 +216,7 @@ def main() -> int:
     parser.add_argument("--no-shuffle", action="store_true")
     parser.add_argument("--timeout", type=float, default=1800.0, help="HTTP timeout seconds.")
     parser.add_argument("--solver-timeout", type=int, default=1200)
-    parser.add_argument("--runtime-profile", choices=["fast", "normal"], default=None)
+    parser.add_argument("--runtime-profile", choices=["fast", "fast_live", "normal"], default=None)
     parser.add_argument("--ev-keep-margin", type=float, default=0.001)
     parser.add_argument("--shark-cli", default=str(DEFAULT_SHARK_CLI))
     parser.add_argument("--no-opponent-profile", action="store_true")

@@ -115,7 +115,7 @@ def main() -> int:
     parser.add_argument("--pack", default=str(DEFAULT_PACK), help="Path to synthetic hand pack JSON.")
     parser.add_argument("--endpoint", default="http://127.0.0.1:8000/solve", help="Bridge /solve endpoint.")
     parser.add_argument("--preset", default="local_qwen3_coder_30b", help="LLM preset to use (default local_qwen3_coder_30b).")
-    parser.add_argument("--runtime-profile", choices=["fast", "normal"], default=None, help="Optional runtime profile override.")
+    parser.add_argument("--runtime-profile", choices=["fast", "fast_live", "normal"], default=None, help="Optional runtime profile override.")
     parser.add_argument("--solver-timeout", type=int, default=600, help="Per-request solver timeout (sec).")
     parser.add_argument("--http-timeout", type=float, default=900.0, help="HTTP request timeout (sec).")
     parser.add_argument("--ev-keep-margin", type=float, default=0.001, help="Margin gate passed to bridge.")

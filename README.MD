@@ -140,6 +140,9 @@ Runtime profile selection (A_2 toggle):
 # Low-latency profile
 .\scripts\test_acceptance.ps1 -Suite turn_class1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
 
+# Live-capped mini-solve profile
+.\scripts\test_acceptance.ps1 -Suite turn_class1 -Preset local_qwen3_coder_30b -RuntimeProfile fast_live
+
 # Full-latency profile
 .\scripts\test_acceptance.ps1 -Suite turn_class1 -Preset local_qwen3_coder_30b -RuntimeProfile normal
 ```
@@ -156,6 +159,7 @@ With explicit runtime profile:
 
 ```powershell
 .\scripts\test_backtest_abc.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast -MaxSpots 40
+.\scripts\test_backtest_abc.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast_live -MaxSpots 40
 ```
 
 Analyze River shadow diagnostics (where full multi-node underperforms class1-shadow):
@@ -218,6 +222,7 @@ Fast profile end-to-end:
 
 ```powershell
 .\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast
+.\scripts\test_all.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast_live
 ```
 
 Run a cloned fast-edge profile sweep (same acceptance + A/B/C flow, tuned for lower latency):
@@ -277,6 +282,28 @@ Bridge runtime profile budgets (`POST /solve`):
   - fast fallback ladder:
     - `FAST_FAILOVER_ON_BASELINE_ERROR` (default `1`) returns immediate lookup fallback payload instead of HTTP 504 when baseline stage fails.
     - `FAST_FAILOVER_DEFAULT_FLOP_ACTION` / `FAST_FAILOVER_DEFAULT_TURN_ACTION` / `FAST_FAILOVER_DEFAULT_RIVER_ACTION` (defaults `check`).
+- `runtime_profile=fast_live`:
+  - baseline timeout cap: `FAST_LIVE_BASELINE_TIMEOUT_SEC` (default `3`)
+  - street baseline caps:
+    - `FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC` (default `3`)
+    - `FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC` (default `2`)
+    - `FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC` (default `1`)
+  - compact live mini-solve spot profile:
+    - `FAST_LIVE_SPOT_MAX_ITERATIONS` (default `2`)
+    - `FAST_LIVE_SPOT_MAX_THREADS` (default `4`)
+    - `FAST_LIVE_SPOT_MAX_RAISE_CAP` (default `2`)
+    - `FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD` (default `0.80`)
+    - `FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY` (default `1`)
+    - `FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS` (default `1`)
+    - `FAST_LIVE_SPOT_BET_SIZES` csv (default `0.33,0.75`)
+    - `FAST_LIVE_SPOT_RAISE_SIZES` csv (default `1.0`)
+  - live runtime policy router:
+    - `FAST_LIVE_FORCE_ROOT_ONLY` (default `1`) forces root-only, solver-first live behavior.
+    - `FAST_LIVE_SKIP_LLM_STAGE` (default `1`) skips LLM/node-lock generation by default for the capped live path.
+    - `FAST_LIVE_MAX_TOKENS` (default `160`) is applied only if the LLM stage is explicitly re-enabled.
+  - fallback ladder:
+    - `FAST_LIVE_FAILOVER_ON_BASELINE_ERROR` (default `1`) returns the same immediate lookup fallback if the capped baseline stage times out or errors.
+  - intended role: the production-candidate middle tier between `fast` and `normal` (real mini-solve under hard latency caps).
 - `runtime_profile=normal`:
   - baseline timeout cap: `NORMAL_BASELINE_TIMEOUT_SEC` (default `900`)
   - LLM stage timeout cap: `NORMAL_LLM_TIMEOUT_SEC` (default `60`)
@@ -349,7 +376,7 @@ No-engine startup variant:
   - `Run Hero` reads only `hero1` + `hero2` in one optimized pass, with targeted full-pass retry if a hero slot is unresolved. Once both hero cards are valid, the tester warms the backends and stages the hand. If the flop/board is already complete, it immediately queues the first solve; otherwise it waits for the board.
   - `Run Flop (1-3)` for atomic flop capture. When all three flop cards are valid, that is the first actual solve request for the staged hand and it automatically uses the cached hero cards.
   - `Run Turn+E` and `Run River+E` for staged board capture + immediate engine handoff.
-  - `Engine Profile` dropdown (`fast`/`normal`) controls runtime profile sent to bridge `/solve` for each queued engine job.
+  - `Engine Profile` dropdown (`fast`/`fast_live`/`normal`) controls runtime profile sent to bridge `/solve` for each queued engine job.
   - The top status line keeps the last engine result summary while idle (for example `flop:fallback_lookup_policy 0.05s`) so very fast jobs are still visible after completion.
   - Batch stage runs keep vision warm during the pass and include one automatic retry for unresolved slots before final summary/handoff.
 - Engine status is shown in the top header text (`Engine: idle|busy`) instead of changing button labels.
@@ -417,6 +444,7 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
 
 ```powershell
 .\scripts\test_stateful_sim.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile normal
+.\scripts\test_stateful_sim.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast_live
 ```
 
 - Default run is now `30` hands (not `100`) so the reference benchmark stays usable while `normal` is still expensive.

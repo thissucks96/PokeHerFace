@@ -23,7 +23,7 @@ Maximum seconds to wait for a single bridge /solve request (default 60).
 [CmdletBinding()]
 param (
     [string]$Preset = "local_qwen3_coder_30b",
-    [ValidateSet("fast", "normal")]
+    [ValidateSet("fast", "fast_live", "normal")]
     [string]$RuntimeProfile = "fast",
     [int]$Hands = 20,
     [string]$OutputDir = "$PSScriptRoot\..\4_LLM_Bridge\examples\synthetic_hands",
