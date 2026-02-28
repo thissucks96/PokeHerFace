@@ -393,6 +393,9 @@ No-engine startup variant:
   - and the most recent villain action in real time,
   - with the invested amount resetting automatically when a new street starts.
 - `Check/Call` is now state-driven instead of advice-driven: if the villain has an outstanding bet, the primary control flips to `Call`; otherwise it stays `Check`.
+- The action UI now exposes only the two combined action buckets:
+  - `CHECK / CALL` dynamically becomes `Call` whenever a bet is being faced,
+  - `RAISE / ALL IN` dynamically becomes `All In` when a normal raise is no longer legal (for example when the required raise reaches or exceeds the remaining stack).
 - `New Hand` now starts a new cycle by clearing cards/advice while preserving both hero and villain chip stacks, then resetting the pot back to the configured blinds.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - top-level `Random Card` for a legal non-duplicate assignment

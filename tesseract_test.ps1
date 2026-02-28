@@ -179,6 +179,7 @@ $engineLastResultSummary = "none"
 $advicePrimary = "WAIT"
 $adviceSecondary = "No actionable advice yet."
 $checkCallButtonToken = "CHECK"
+$raiseAllInButtonToken = "RAISE"
 $lastRecommendedCallAmount = 0
 $lastRecommendedRaiseAmount = 0
 $numSmallBlind = $null
@@ -650,16 +651,20 @@ function Format-CardSlotStatus {
   }
 
   $missingActions = New-Object System.Collections.Generic.List[string]
-  foreach ($slot in @("check_btn", "fold_btn", "call_btn")) {
-    $slotRect = Convert-ToRectangleSafe -Value $cardRegions[$slot]
-    if (-not (Test-RegionSelected -Rect $slotRect)) {
-      [void]$missingActions.Add([string]$slot)
-    }
+  $checkRect = Convert-ToRectangleSafe -Value $cardRegions["check_btn"]
+  $callRect = Convert-ToRectangleSafe -Value $cardRegions["call_btn"]
+  if ((-not (Test-RegionSelected -Rect $checkRect)) -and (-not (Test-RegionSelected -Rect $callRect))) {
+    [void]$missingActions.Add("check_call_btn")
+  }
+  $foldRect = Convert-ToRectangleSafe -Value $cardRegions["fold_btn"]
+  if (-not (Test-RegionSelected -Rect $foldRect)) {
+    [void]$missingActions.Add("fold_btn")
   }
   $betRect = Convert-ToRectangleSafe -Value $cardRegions["bet_btn"]
   $raiseRect = Convert-ToRectangleSafe -Value $cardRegions["raise_btn"]
-  if ((-not (Test-RegionSelected -Rect $betRect)) -and (-not (Test-RegionSelected -Rect $raiseRect))) {
-    [void]$missingActions.Add("raise_btn")
+  $allinRect = Convert-ToRectangleSafe -Value $cardRegions["allin_btn"]
+  if ((-not (Test-RegionSelected -Rect $betRect)) -and (-not (Test-RegionSelected -Rect $raiseRect)) -and (-not (Test-RegionSelected -Rect $allinRect))) {
+    [void]$missingActions.Add("raise_allin_btn")
   }
 
   $boardStatus = if ($missingBoard.Count -eq 0) { "board ready" } else { ("board missing: {0}" -f ($missingBoard -join ", ")) }
@@ -3074,9 +3079,10 @@ $btnRaise.Location = New-Object System.Drawing.Point(1020, 18)
 $btnRaise.Size = New-Object System.Drawing.Size(84, 28)
 $btnRaise.FlatStyle = "Flat"
 $btnRaise.ForeColor = [System.Drawing.Color]::White
-$btnRaise.BackColor = [System.Drawing.Color]::FromArgb(152, 48, 48)
-$btnRaise.Add_Click({ Invoke-ManualActionSelection -ActionToken "RAISE" })
+$btnRaise.BackColor = [System.Drawing.Color]::FromArgb(184, 112, 42)
+$btnRaise.Add_Click({ Invoke-ManualActionSelection -ActionToken ([string]$script:raiseAllInButtonToken) })
 $form.Controls.Add($btnRaise)
+$script:btnRaise = $btnRaise
 
 $btnAllIn = New-Object System.Windows.Forms.Button
 $btnAllIn.Text = "All In"
@@ -3086,6 +3092,7 @@ $btnAllIn.FlatStyle = "Flat"
 $btnAllIn.ForeColor = [System.Drawing.Color]::White
 $btnAllIn.BackColor = [System.Drawing.Color]::FromArgb(120, 34, 34)
 $btnAllIn.Add_Click({ Invoke-ManualActionSelection -ActionToken "ALL IN" })
+$btnAllIn.Visible = $false
 $form.Controls.Add($btnAllIn)
 
 $hint = New-Object System.Windows.Forms.Label
@@ -3137,11 +3144,9 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("hero")
 [void]$cmbTarget.Items.Add("pot")
 [void]$cmbTarget.Items.Add("villain")
-[void]$cmbTarget.Items.Add("check")
+[void]$cmbTarget.Items.Add("CHECK / CALL")
 [void]$cmbTarget.Items.Add("fold")
-[void]$cmbTarget.Items.Add("call")
-[void]$cmbTarget.Items.Add("raise")
-[void]$cmbTarget.Items.Add("all_in")
+[void]$cmbTarget.Items.Add("RAISE / ALL IN")
 $cmbTarget.SelectedIndex = 0
 $cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
@@ -3551,16 +3556,17 @@ function Update-MainLayout {
   $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
   $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
   $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
-  $manualActionButtons = @($btnCheck, $btnFold, $btnRaise, $btnAllIn)
+  $manualActionButtons = @($btnCheck, $btnFold)
   $manualActionButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
   foreach ($btn in $manualActionButtons) {
     $btn.Size = New-Object System.Drawing.Size($manualActionButtonWidth, 28)
   }
   $btnCheck.Location = New-Object System.Drawing.Point(18, 176)
   $btnFold.Location = New-Object System.Drawing.Point(($btnCheck.Right + $gap), 176)
+  $btnRaise.Size = New-Object System.Drawing.Size($innerWidth, 28)
   $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
-  $btnAllIn.Location = New-Object System.Drawing.Point(($btnRaise.Right + $gap), 214)
   $btnCall.Visible = $false
+  $btnAllIn.Visible = $false
 
   $stakesTopY = 258
   $stakesTitle.Location = New-Object System.Drawing.Point(18, $stakesTopY)
@@ -3769,9 +3775,44 @@ function Set-CheckCallButtonMode {
   }
 }
 
+function Get-RecommendedRaiseBaseAmount {
+  $stakes = Get-StakeSettings
+  if ($script:lastRecommendedRaiseAmount -gt 0) {
+    return [int]$script:lastRecommendedRaiseAmount
+  }
+  if ([int]$script:currentFacingBetAmount -gt 0) {
+    return [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
+  }
+  return [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
+}
+
+function Set-RaiseAllInButtonMode {
+  param([Parameter(Mandatory = $true)][string]$ActionToken)
+
+  $normalized = ([string]$ActionToken).Trim().ToUpperInvariant()
+  if ($normalized -ne "ALL IN") {
+    $normalized = "RAISE"
+  }
+  $script:raiseAllInButtonToken = $normalized
+  if ($null -ne $script:btnRaise) {
+    $script:btnRaise.Text = $(if ($normalized -eq "ALL IN") { "All In" } else { "Raise" })
+    $script:btnRaise.BackColor = $(if ($normalized -eq "ALL IN") {
+      [System.Drawing.Color]::FromArgb(180, 42, 42)
+    } else {
+      [System.Drawing.Color]::FromArgb(184, 112, 42)
+    })
+    $script:btnRaise.Enabled = ([int]$script:currentHeroChips -gt 0)
+  }
+}
+
 function Update-CheckCallButtonModeFromState {
   $mode = if ([int]$script:currentFacingBetAmount -gt 0) { "CALL" } else { "CHECK" }
   Set-CheckCallButtonMode -ActionToken $mode
+  $requiredRaiseAmount = [int](Get-RecommendedRaiseBaseAmount)
+  $villainAllIn = (([int]$script:currentVillainChips -le 0) -and ([int]$script:currentFacingBetAmount -gt 0))
+  $allInOnly = $villainAllIn -or ($requiredRaiseAmount -ge [int]$script:currentHeroChips)
+  $raiseMode = if ($allInOnly) { "ALL IN" } else { "RAISE" }
+  Set-RaiseAllInButtonMode -ActionToken $raiseMode
 }
 
 function Get-CheckCallButtonModeFromWeightedRows {
@@ -3822,12 +3863,12 @@ function Get-ActionTokenForSlot {
     [Parameter(Mandatory = $true)][string]$Slot
   )
   switch (([string]$Slot).ToLowerInvariant()) {
-    "check_btn" { return "CHECK" }
+    "check_btn" { return [string]$script:checkCallButtonToken }
     "fold_btn" { return "FOLD" }
-    "call_btn" { return "CALL" }
-    "bet_btn" { return "RAISE" }
-    "raise_btn" { return "RAISE" }
-    "allin_btn" { return "ALL IN" }
+    "call_btn" { return [string]$script:checkCallButtonToken }
+    "bet_btn" { return [string]$script:raiseAllInButtonToken }
+    "raise_btn" { return [string]$script:raiseAllInButtonToken }
+    "allin_btn" { return [string]$script:raiseAllInButtonToken }
     default { return "" }
   }
 }
@@ -4372,7 +4413,6 @@ function Set-AdviceFromEngineResult {
   }
 
   $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
-  Update-CheckCallButtonModeFromState
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
@@ -4386,6 +4426,7 @@ function Set-AdviceFromEngineResult {
       $script:lastRecommendedRaiseAmount = [int]$amount
     }
   }
+  Update-CheckCallButtonModeFromState
   $primaryToken = [string]$sortedRows[0].token
   $mixParts = New-Object System.Collections.Generic.List[string]
   foreach ($row in ($sortedRows | Select-Object -First 2)) {
@@ -7114,6 +7155,8 @@ $btnPick.Add_Click({
     switch ($target) {
       "pot" { $target = "pot_txt" }
       "villain" { $target = "villain_txt" }
+      "CHECK / CALL" { $target = "check_btn" }
+      "RAISE / ALL IN" { $target = "raise_btn" }
       "check" { $target = "check_btn" }
       "fold" { $target = "fold_btn" }
       "call" { $target = "call_btn" }
