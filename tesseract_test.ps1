@@ -2605,7 +2605,15 @@ function Build-EngineSpotPayload {
     $effectiveStack = [int]$defaults.hero_chips
   }
   $effectivePot = if ([int]$script:currentPotAmount -gt 0) { [int]$script:currentPotAmount } else { [int]$defaults.starting_pot }
-  $useActiveNode = ($BoardCards.Count -ge 3) -and ([int]$state.facing_bet -gt 0) -and (-not [bool]$state.hero_folded) -and (-not [bool]$state.villain_folded)
+  $streetPostflop = ($BoardCards.Count -ge 3)
+  $heroFacingBetNode = $streetPostflop -and ([int]$state.facing_bet -gt 0) -and (-not [bool]$state.hero_folded) -and (-not [bool]$state.villain_folded)
+  $heroIpCheckedToNode = $streetPostflop -and `
+    ([int]$state.facing_bet -le 0) -and `
+    (Test-IsHeroTurn) -and `
+    [bool]$script:heroIsSmallBlind -and `
+    (-not [bool]$state.hero_folded) -and `
+    (-not [bool]$state.villain_folded)
+  $useActiveNode = $heroFacingBetNode -or $heroIpCheckedToNode
   if ($useActiveNode) {
     $effectivePot = [int]([Math]::Max(1, ([int]$effectivePot - [int]$state.facing_bet)))
   }
@@ -2653,11 +2661,18 @@ function Build-EngineSpotPayload {
     if (-not ($spot.PSObject.Properties.Name -contains "active_node_path")) {
       $spot | Add-Member -NotePropertyName active_node_path -NotePropertyValue "" -Force
     }
+    $targetNodePath = ""
+    if ($heroFacingBetNode) {
+      $targetNodePath = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+    }
+    elseif ($heroIpCheckedToNode) {
+      $targetNodePath = "root/p1:check"
+    }
     if ($spot -is [System.Collections.IDictionary]) {
-      $spot["active_node_path"] = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+      $spot["active_node_path"] = $targetNodePath
     }
     else {
-      $spot.active_node_path = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+      $spot.active_node_path = $targetNodePath
     }
     $spot.remove_donk_bets = $false
     $streetKey = switch ($BoardCards.Count) {
