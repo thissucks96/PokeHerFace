@@ -2689,7 +2689,6 @@ $adviceGuide.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawi
 $adviceGuide.Location = New-Object System.Drawing.Point(18, 424)
 $adviceGuide.Size = New-Object System.Drawing.Size(210, 120)
 $advicePanel.Controls.Add($adviceGuide)
-Set-AdviceState -Primary $advicePrimary -Secondary $adviceSecondary
 
 $latestLabel = New-Object System.Windows.Forms.Label
 $latestLabel.Text = "Latest OCR Text"
@@ -2973,6 +2972,8 @@ function Set-AdviceFromEngineResult {
   $script:adviceHasAction = $true
   Set-AdviceState -Primary $script:adviceActionPrimary -Secondary $script:adviceActionSecondary
 }
+
+Set-AdviceState -Primary $advicePrimary -Secondary $adviceSecondary
 
 function New-AdviceOverlayForm {
   $overlay = New-Object System.Windows.Forms.Form
