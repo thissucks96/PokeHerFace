@@ -1919,7 +1919,9 @@ function Update-TableStateDisplay {
     }
     catch {}
   }
-  Update-VillainActionControlState
+  if (Get-Command Update-VillainActionControlState -ErrorAction SilentlyContinue) {
+    Update-VillainActionControlState
+  }
 }
 
 function Reset-TableStateToCurrentStakes {
