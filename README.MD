@@ -289,14 +289,14 @@ Bridge runtime profile budgets (`POST /solve`):
     - `FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC` (default `2`)
     - `FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC` (default `1`)
   - compact live mini-solve spot profile:
-    - `FAST_LIVE_SPOT_MAX_ITERATIONS` (default `2`)
-    - `FAST_LIVE_SPOT_MAX_THREADS` (default `4`)
-    - `FAST_LIVE_SPOT_MAX_RAISE_CAP` (default `2`)
+    - `FAST_LIVE_SPOT_MAX_ITERATIONS` (default `1`)
+    - `FAST_LIVE_SPOT_MAX_THREADS` (default `2`)
+    - `FAST_LIVE_SPOT_MAX_RAISE_CAP` (default `1`)
     - `FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD` (default `0.80`)
     - `FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY` (default `1`)
     - `FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS` (default `1`)
-    - `FAST_LIVE_SPOT_BET_SIZES` csv (default `0.33,0.75`)
-    - `FAST_LIVE_SPOT_RAISE_SIZES` csv (default `1.0`)
+    - `FAST_LIVE_SPOT_BET_SIZES` csv (default `0.25`)
+    - `FAST_LIVE_SPOT_RAISE_SIZES` csv (default `0.75`)
   - live runtime policy router:
     - `FAST_LIVE_FORCE_ROOT_ONLY` (default `1`) forces root-only, solver-first live behavior.
     - `FAST_LIVE_SKIP_LLM_STAGE` (default `1`) skips LLM/node-lock generation by default for the capped live path.
