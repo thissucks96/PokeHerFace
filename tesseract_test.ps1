@@ -319,6 +319,10 @@ $lastRecommendedRaiseAmount = 0
 $numSmallBlind = $null
 $numBigBlind = $null
 $numBuyIn = $null
+$numRaiseAmount = $null
+$trkRaiseAmount = $null
+$lblRaiseAmountTitle = $null
+$lblRaiseAmountValue = $null
 $btnToggleVillainCards = $null
 $cmbVillainMode = $null
 $cmbVillainStyle = $null
@@ -338,6 +342,9 @@ $stateOverlayVillainLabel = $null
 $btnVillainActionMenu = $null
 $btnHeroWinsPot = $null
 $btnVillainWinsPot = $null
+$btnRaise25 = $null
+$btnRaise50 = $null
+$btnRaise100 = $null
 $villainActionMenu = $null
 $currentPotAmount = 0
 $currentHeroChips = 0
@@ -380,6 +387,7 @@ $adviceHasAction = $false
 $lastAdviceWeightedRows = @()
 $suppressHeroAutoSend = $false
 $stateRefreshBusy = $false
+$raiseAmountSyncBusy = $false
 $heroCards = @{
   hero1 = "??"
   hero2 = "??"
@@ -4371,15 +4379,121 @@ $btnCall.Visible = $false
 $form.Controls.Add($btnCall)
 
 $btnRaise = New-Object System.Windows.Forms.Button
-$btnRaise.Text = "Raise"
+$btnRaise.Text = "Default Raise"
 $btnRaise.Location = New-Object System.Drawing.Point(1020, 18)
 $btnRaise.Size = New-Object System.Drawing.Size(84, 28)
 $btnRaise.FlatStyle = "Flat"
 $btnRaise.ForeColor = [System.Drawing.Color]::White
 $btnRaise.BackColor = [System.Drawing.Color]::FromArgb(184, 112, 42)
-$btnRaise.Add_Click({ Invoke-ManualActionSelection -ActionToken ([string]$script:raiseAllInButtonToken) })
+$btnRaise.Add_Click({ Invoke-ManualRaisePreset -Preset "default" })
 $form.Controls.Add($btnRaise)
 $script:btnRaise = $btnRaise
+
+$btnRaise25 = New-Object System.Windows.Forms.Button
+$btnRaise25.Text = "25% Pot"
+$btnRaise25.Tag = "25% Pot"
+$btnRaise25.Location = New-Object System.Drawing.Point(1020, 48)
+$btnRaise25.Size = New-Object System.Drawing.Size(84, 28)
+$btnRaise25.FlatStyle = "Flat"
+$btnRaise25.ForeColor = [System.Drawing.Color]::White
+$btnRaise25.BackColor = [System.Drawing.Color]::FromArgb(184, 112, 42)
+$btnRaise25.Add_Click({ Invoke-ManualRaisePreset -Preset "pot25" })
+$form.Controls.Add($btnRaise25)
+$script:btnRaise25 = $btnRaise25
+
+$btnRaise50 = New-Object System.Windows.Forms.Button
+$btnRaise50.Text = "50% Pot"
+$btnRaise50.Tag = "50% Pot"
+$btnRaise50.Location = New-Object System.Drawing.Point(1110, 48)
+$btnRaise50.Size = New-Object System.Drawing.Size(84, 28)
+$btnRaise50.FlatStyle = "Flat"
+$btnRaise50.ForeColor = [System.Drawing.Color]::White
+$btnRaise50.BackColor = [System.Drawing.Color]::FromArgb(184, 112, 42)
+$btnRaise50.Add_Click({ Invoke-ManualRaisePreset -Preset "pot50" })
+$form.Controls.Add($btnRaise50)
+$script:btnRaise50 = $btnRaise50
+
+$btnRaise100 = New-Object System.Windows.Forms.Button
+$btnRaise100.Text = "100% Pot"
+$btnRaise100.Tag = "100% Pot"
+$btnRaise100.Location = New-Object System.Drawing.Point(1200, 48)
+$btnRaise100.Size = New-Object System.Drawing.Size(84, 28)
+$btnRaise100.FlatStyle = "Flat"
+$btnRaise100.ForeColor = [System.Drawing.Color]::White
+$btnRaise100.BackColor = [System.Drawing.Color]::FromArgb(184, 112, 42)
+$btnRaise100.Add_Click({ Invoke-ManualRaisePreset -Preset "pot100" })
+$form.Controls.Add($btnRaise100)
+$script:btnRaise100 = $btnRaise100
+
+$lblRaiseAmountTitle = New-Object System.Windows.Forms.Label
+$lblRaiseAmountTitle.Text = "Custom Raise"
+$lblRaiseAmountTitle.ForeColor = [System.Drawing.Color]::FromArgb(220, 225, 235)
+$lblRaiseAmountTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblRaiseAmountTitle.Location = New-Object System.Drawing.Point(1020, 78)
+$lblRaiseAmountTitle.AutoSize = $true
+$form.Controls.Add($lblRaiseAmountTitle)
+$script:lblRaiseAmountTitle = $lblRaiseAmountTitle
+
+$trkRaiseAmount = New-Object System.Windows.Forms.TrackBar
+$trkRaiseAmount.Location = New-Object System.Drawing.Point(1020, 98)
+$trkRaiseAmount.Size = New-Object System.Drawing.Size(130, 30)
+$trkRaiseAmount.Minimum = 0
+$trkRaiseAmount.Maximum = 100
+$trkRaiseAmount.TickStyle = [System.Windows.Forms.TickStyle]::None
+$trkRaiseAmount.SmallChange = 1
+$trkRaiseAmount.LargeChange = 5
+$form.Controls.Add($trkRaiseAmount)
+$script:trkRaiseAmount = $trkRaiseAmount
+
+$numRaiseAmount = New-Object System.Windows.Forms.NumericUpDown
+$numRaiseAmount.Location = New-Object System.Drawing.Point(1156, 98)
+$numRaiseAmount.Size = New-Object System.Drawing.Size(72, 24)
+$numRaiseAmount.Minimum = 0
+$numRaiseAmount.Maximum = 100000
+$numRaiseAmount.Value = 0
+$numRaiseAmount.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$form.Controls.Add($numRaiseAmount)
+$script:numRaiseAmount = $numRaiseAmount
+
+$lblRaiseAmountValue = New-Object System.Windows.Forms.Label
+$lblRaiseAmountValue.Text = "Raise Chips: 0"
+$lblRaiseAmountValue.ForeColor = [System.Drawing.Color]::FromArgb(210, 220, 235)
+$lblRaiseAmountValue.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$lblRaiseAmountValue.Location = New-Object System.Drawing.Point(1020, 124)
+$lblRaiseAmountValue.Size = New-Object System.Drawing.Size(208, 20)
+$form.Controls.Add($lblRaiseAmountValue)
+$script:lblRaiseAmountValue = $lblRaiseAmountValue
+
+$trkRaiseAmount.Add_Scroll({
+  if ($script:raiseAmountSyncBusy) { return }
+  $script:raiseAmountSyncBusy = $true
+  try {
+    if ($null -ne $script:numRaiseAmount -and -not $script:numRaiseAmount.IsDisposed) {
+      $script:numRaiseAmount.Value = [decimal][int]$script:trkRaiseAmount.Value
+    }
+    Update-HeroRaiseAmountDisplay
+  }
+  finally {
+    $script:raiseAmountSyncBusy = $false
+  }
+}.GetNewClosure())
+
+$numRaiseAmount.Add_ValueChanged({
+  if ($script:raiseAmountSyncBusy) { return }
+  $script:raiseAmountSyncBusy = $true
+  try {
+    if ($null -ne $script:trkRaiseAmount -and -not $script:trkRaiseAmount.IsDisposed) {
+      $trackValue = [int][decimal]$script:numRaiseAmount.Value
+      if ($trackValue -lt $script:trkRaiseAmount.Minimum) { $trackValue = $script:trkRaiseAmount.Minimum }
+      if ($trackValue -gt $script:trkRaiseAmount.Maximum) { $trackValue = $script:trkRaiseAmount.Maximum }
+      $script:trkRaiseAmount.Value = $trackValue
+    }
+    Update-HeroRaiseAmountDisplay
+  }
+  finally {
+    $script:raiseAmountSyncBusy = $false
+  }
+}.GetNewClosure())
 
 $btnAllIn = New-Object System.Windows.Forms.Button
 $btnAllIn.Text = "All In"
@@ -4783,8 +4897,11 @@ $txtAdviceDetail.ForeColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
 $txtAdviceDetail.Text = $adviceSecondary
 $advicePanel.Controls.Add($txtAdviceDetail)
 
-foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)) {
+foreach ($manualActionButton in @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnRaise25, $btnRaise50, $btnRaise100, $btnAllIn)) {
   $advicePanel.Controls.Add($manualActionButton)
+}
+foreach ($raiseControl in @($lblRaiseAmountTitle, $trkRaiseAmount, $numRaiseAmount, $lblRaiseAmountValue)) {
+  $advicePanel.Controls.Add($raiseControl)
 }
 
 Set-VillainCardsVisibility -Visible:$false
@@ -4933,12 +5050,28 @@ function Update-MainLayout {
   }
   $btnCheck.Location = New-Object System.Drawing.Point(18, 176)
   $btnFold.Location = New-Object System.Drawing.Point(($btnCheck.Right + $gap), 176)
-  $btnRaise.Size = New-Object System.Drawing.Size($innerWidth, 28)
+  $raiseButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
+  foreach ($raiseBtn in @($btnRaise, $btnRaise25, $btnRaise50, $btnRaise100)) {
+    if ($null -eq $raiseBtn -or $raiseBtn.IsDisposed) { continue }
+    $raiseBtn.Size = New-Object System.Drawing.Size($raiseButtonWidth, 28)
+  }
   $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
+  $btnRaise25.Location = New-Object System.Drawing.Point(($btnRaise.Right + $gap), 214)
+  $btnRaise50.Location = New-Object System.Drawing.Point(18, 246)
+  $btnRaise100.Location = New-Object System.Drawing.Point(($btnRaise50.Right + $gap), 246)
+  $lblRaiseAmountTitle.Location = New-Object System.Drawing.Point(18, 278)
+  $numRaiseWidth = [Math]::Max(72, [int]($innerWidth * 0.30))
+  $numRaiseAmount.Location = New-Object System.Drawing.Point(([int](18 + $innerWidth - $numRaiseWidth)), 296)
+  $numRaiseAmount.Size = New-Object System.Drawing.Size($numRaiseWidth, 24)
+  $trackWidth = [Math]::Max(96, [int]($numRaiseAmount.Left - 18 - 6))
+  $trkRaiseAmount.Location = New-Object System.Drawing.Point(18, 296)
+  $trkRaiseAmount.Size = New-Object System.Drawing.Size($trackWidth, 30)
+  $lblRaiseAmountValue.Location = New-Object System.Drawing.Point(18, 324)
+  $lblRaiseAmountValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
   $btnCall.Visible = $false
   $btnAllIn.Visible = $false
 
-  $stakesTopY = 258
+  $stakesTopY = [int]($lblRaiseAmountValue.Bottom + 14)
   $stakesTitle.Location = New-Object System.Drawing.Point(18, $stakesTopY)
   $lblSmallBlind.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 28))
   $numSmallBlind.Location = New-Object System.Drawing.Point(44, ($stakesTopY + 24))
@@ -4999,7 +5132,7 @@ function Apply-UiPolish {
   $buttonList = @(
     $btnPick, $btnOnce, $btnRandomCard, $btnAutoStart, $btnAutoStop, $btnRunEngine, $btnNewHand, $btnRestart,
     $btnTargets, $btnResetRois, $btnSetHeroes, $btnQuickToggle, $btnRunFlop1, $btnRunFlop2, $btnRunFlop3,
-    $btnRunTurn, $btnRunRiver, $btnRunFlopSet, $btnRunHero, $btnCheck, $btnFold, $btnRaise, $btnCall, $btnAllIn,
+    $btnRunTurn, $btnRunRiver, $btnRunFlopSet, $btnRunHero, $btnCheck, $btnFold, $btnRaise, $btnRaise25, $btnRaise50, $btnRaise100, $btnCall, $btnAllIn,
     $btnToggleVillainCards, $btnVillainActionMenu
   )
   foreach ($btn in @($buttonList)) {
@@ -5013,10 +5146,14 @@ function Apply-UiPolish {
     $btn.Cursor = [System.Windows.Forms.Cursors]::Hand
   }
 
-  foreach ($input in @($cmbTarget, $cmbCaptureMode, $cmbEngineProfile, $cmbVillainMode, $cmbVillainStyle, $numSmallBlind, $numBigBlind, $numBuyIn, $numInterval)) {
+  foreach ($input in @($cmbTarget, $cmbCaptureMode, $cmbEngineProfile, $cmbVillainMode, $cmbVillainStyle, $numSmallBlind, $numBigBlind, $numBuyIn, $numInterval, $numRaiseAmount)) {
     if ($null -eq $input -or $input.IsDisposed) { continue }
     $input.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
     $input.BackColor = [System.Drawing.Color]::FromArgb(235, 239, 246)
+  }
+  if ($null -ne $trkRaiseAmount -and -not $trkRaiseAmount.IsDisposed) {
+    $trkRaiseAmount.BackColor = [System.Drawing.Color]::FromArgb(24, 31, 41)
+    $trkRaiseAmount.TickStyle = [System.Windows.Forms.TickStyle]::None
   }
 }
 
@@ -5287,6 +5424,80 @@ function Get-RecommendedRaiseBaseAmount {
   return [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
 }
 
+function Update-HeroRaiseAmountDisplay {
+  if ($null -eq $script:lblRaiseAmountValue -or $script:lblRaiseAmountValue.IsDisposed) {
+    return
+  }
+  $value = 0
+  if ($null -ne $script:numRaiseAmount -and -not $script:numRaiseAmount.IsDisposed) {
+    try { $value = [int][decimal]$script:numRaiseAmount.Value } catch { $value = 0 }
+  }
+  $script:lblRaiseAmountValue.Text = ("Raise Chips: {0}" -f [int]([Math]::Max(0, $value)))
+}
+
+function Sync-HeroRaiseAmountControls {
+  if (($null -eq $script:numRaiseAmount) -or $script:numRaiseAmount.IsDisposed -or ($null -eq $script:trkRaiseAmount) -or $script:trkRaiseAmount.IsDisposed) {
+    return
+  }
+  if ($script:raiseAmountSyncBusy) {
+    return
+  }
+  $script:raiseAmountSyncBusy = $true
+  try {
+    $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
+    $recommended = [int]([Math]::Max(0, (Get-RecommendedRaiseBaseAmount)))
+    if ($recommended -gt $maxAmount) { $recommended = $maxAmount }
+
+    if ($maxAmount -lt 1) {
+      $script:numRaiseAmount.Minimum = 0
+      $script:numRaiseAmount.Maximum = 0
+      $script:numRaiseAmount.Value = 0
+      $script:trkRaiseAmount.Minimum = 0
+      $script:trkRaiseAmount.Maximum = 0
+      $script:trkRaiseAmount.Value = 0
+      Update-HeroRaiseAmountDisplay
+      return
+    }
+
+    $script:numRaiseAmount.Minimum = 0
+    $script:numRaiseAmount.Maximum = [decimal]$maxAmount
+    $script:trkRaiseAmount.Minimum = 0
+    $script:trkRaiseAmount.Maximum = $maxAmount
+
+    $currentValue = 0
+    try { $currentValue = [int][decimal]$script:numRaiseAmount.Value } catch { $currentValue = 0 }
+    if ($currentValue -le 0) {
+      $currentValue = $recommended
+    }
+    if ($currentValue -gt $maxAmount) { $currentValue = $maxAmount }
+    if ($currentValue -lt 0) { $currentValue = 0 }
+
+    $script:numRaiseAmount.Value = [decimal]$currentValue
+    $script:trkRaiseAmount.Value = [int]$currentValue
+    Update-HeroRaiseAmountDisplay
+  }
+  finally {
+    $script:raiseAmountSyncBusy = $false
+  }
+}
+
+function Get-HeroRaiseAmountFromControls {
+  $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
+  if ($maxAmount -le 0) {
+    return 0
+  }
+  $value = 0
+  if ($null -ne $script:numRaiseAmount -and -not $script:numRaiseAmount.IsDisposed) {
+    try { $value = [int][decimal]$script:numRaiseAmount.Value } catch { $value = 0 }
+  }
+  if ($value -le 0) {
+    $value = [int]([Math]::Max(1, (Get-RecommendedRaiseBaseAmount)))
+  }
+  if ($value -gt $maxAmount) { $value = $maxAmount }
+  if ($value -lt 0) { $value = 0 }
+  return [int]$value
+}
+
 function Set-RaiseAllInButtonMode {
   param([Parameter(Mandatory = $true)][string]$ActionToken)
 
@@ -5295,14 +5506,23 @@ function Set-RaiseAllInButtonMode {
     $normalized = "RAISE"
   }
   $script:raiseAllInButtonToken = $normalized
+  $isAllInOnly = ($normalized -eq "ALL IN")
+  $raiseButtonBackColor = $(if ($isAllInOnly) {
+    [System.Drawing.Color]::FromArgb(180, 42, 42)
+  } else {
+    [System.Drawing.Color]::FromArgb(184, 112, 42)
+  })
+
   if ($null -ne $script:btnRaise) {
-    $script:btnRaise.Text = $(if ($normalized -eq "ALL IN") { "All In" } else { "Raise" })
-    $script:btnRaise.BackColor = $(if ($normalized -eq "ALL IN") {
-      [System.Drawing.Color]::FromArgb(180, 42, 42)
-    } else {
-      [System.Drawing.Color]::FromArgb(184, 112, 42)
-    })
+    $script:btnRaise.Text = $(if ($isAllInOnly) { "All In" } else { "Default Raise" })
+    $script:btnRaise.BackColor = $raiseButtonBackColor
     $script:btnRaise.Enabled = ([int]$script:currentHeroChips -gt 0)
+  }
+  foreach ($presetBtn in @($script:btnRaise25, $script:btnRaise50, $script:btnRaise100)) {
+    if ($null -eq $presetBtn -or $presetBtn.IsDisposed) { continue }
+    $presetBtn.Text = $(if ($isAllInOnly) { "All In" } else { [string]$presetBtn.Tag })
+    $presetBtn.BackColor = $raiseButtonBackColor
+    $presetBtn.Enabled = ([int]$script:currentHeroChips -gt 0)
   }
 }
 
@@ -5333,8 +5553,20 @@ function Update-CheckCallButtonModeFromState {
   if ($null -ne $script:btnCheck) { $script:btnCheck.Enabled = [bool]$canCheckCall }
   if ($null -ne $script:btnCall) { $script:btnCall.Enabled = [bool]$canCheckCall }
   if ($null -ne $script:btnFold) { $script:btnFold.Enabled = [bool]($heroTurn -and ("FOLD" -in $legalTokens)) }
-  if ($null -ne $script:btnRaise) { $script:btnRaise.Enabled = [bool]($heroTurn -and (("RAISE" -in $legalTokens) -or ("ALL IN" -in $legalTokens))) }
+  $canRaiseAny = [bool]($heroTurn -and (("RAISE" -in $legalTokens) -or ("ALL IN" -in $legalTokens)))
+  if ($null -ne $script:btnRaise) { $script:btnRaise.Enabled = $canRaiseAny }
+  foreach ($presetBtn in @($script:btnRaise25, $script:btnRaise50, $script:btnRaise100)) {
+    if ($null -eq $presetBtn -or $presetBtn.IsDisposed) { continue }
+    $presetBtn.Enabled = $canRaiseAny
+  }
   if ($null -ne $script:btnAllIn) { $script:btnAllIn.Enabled = [bool]($heroTurn -and ("ALL IN" -in $legalTokens)) }
+  if ($null -ne $script:numRaiseAmount -and -not $script:numRaiseAmount.IsDisposed) {
+    $script:numRaiseAmount.Enabled = $canRaiseAny
+  }
+  if ($null -ne $script:trkRaiseAmount -and -not $script:trkRaiseAmount.IsDisposed) {
+    $script:trkRaiseAmount.Enabled = $canRaiseAny
+  }
+  Sync-HeroRaiseAmountControls
   Update-VillainActionControlState
 }
 
@@ -5922,9 +6154,58 @@ function Invoke-VillainActionSelection {
   Maybe-RefreshAdviceAfterActionStateChange -StageLabel "villain_action"
 }
 
+function Invoke-ManualRaisePreset {
+  param(
+    [ValidateSet("default", "pot25", "pot50", "pot100")]
+    [string]$Preset = "default"
+  )
+
+  $targetAggro = ([string]$script:raiseAllInButtonToken).Trim().ToUpperInvariant()
+  if ($targetAggro -eq "ALL IN") {
+    Invoke-ManualActionSelection -ActionToken "ALL IN"
+    return
+  }
+
+  $maxAmount = [int]([Math]::Max(0, $script:currentHeroChips))
+  if ($maxAmount -le 0) {
+    Write-Log "Manual raise ignored: hero has no chips."
+    return
+  }
+
+  $raiseAmount = 0
+  switch ($Preset) {
+    "pot25" {
+      $raiseAmount = [int][Math]::Round(([double]$script:currentPotAmount * 0.25), 0, [System.MidpointRounding]::AwayFromZero)
+    }
+    "pot50" {
+      $raiseAmount = [int][Math]::Round(([double]$script:currentPotAmount * 0.50), 0, [System.MidpointRounding]::AwayFromZero)
+    }
+    "pot100" {
+      $raiseAmount = [int][Math]::Round(([double]$script:currentPotAmount * 1.00), 0, [System.MidpointRounding]::AwayFromZero)
+    }
+    default {
+      $raiseAmount = [int](Get-HeroRaiseAmountFromControls)
+    }
+  }
+
+  if ($raiseAmount -lt 1) {
+    $raiseAmount = [int]([Math]::Max(1, (Get-RecommendedRaiseBaseAmount)))
+  }
+  if ($raiseAmount -gt $maxAmount) {
+    $raiseAmount = $maxAmount
+  }
+
+  if ($null -ne $script:numRaiseAmount -and -not $script:numRaiseAmount.IsDisposed) {
+    try { $script:numRaiseAmount.Value = [decimal]$raiseAmount } catch {}
+  }
+  Sync-HeroRaiseAmountControls
+  Invoke-ManualActionSelection -ActionToken "RAISE" -AmountOverride $raiseAmount
+}
+
 function Invoke-ManualActionSelection {
   param(
-    [Parameter(Mandatory = $true)][string]$ActionToken
+    [Parameter(Mandatory = $true)][string]$ActionToken,
+    [int]$AmountOverride = -1
   )
   $normalizedAction = ([string]$ActionToken).Trim().ToUpperInvariant()
   if (-not $normalizedAction) {
@@ -5987,10 +6268,15 @@ function Invoke-ManualActionSelection {
       else {
         [int]([Math]::Max(($stakes.big_blind * 3), $stakes.big_blind))
       }
-      $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount -BasePotAmount ([int]$script:currentPotAmount)
-      if ($null -eq $enteredAmount) {
-        Write-Log ("Manual action canceled: {0}" -f $normalizedAction)
-        return
+      if ($AmountOverride -ge 0) {
+        $enteredAmount = [int]([Math]::Min($maxAmount, [Math]::Max(0, $AmountOverride)))
+      }
+      else {
+        $enteredAmount = Prompt-ForChipAmount -Title ("Use {0}" -f $normalizedAction) -Prompt ("Enter {0} amount (chips)." -f $normalizedAction.ToLowerInvariant()) -DefaultValue $defaultAmount -MaxValue $maxAmount -BasePotAmount ([int]$script:currentPotAmount)
+        if ($null -eq $enteredAmount) {
+          Write-Log ("Manual action canceled: {0}" -f $normalizedAction)
+          return
+        }
       }
       $committedAmount = [int]$enteredAmount
     }
