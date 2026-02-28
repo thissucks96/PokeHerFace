@@ -218,8 +218,8 @@ $txtAdviceDetail = $null
 $cardSlotOrder = @("flop1", "flop2", "flop3", "turn", "river")
 $playerSlotOrder = @("hero1", "hero2")
 $infoSlotOrder = @("pot_txt")
-$actionSlotOrder = @("check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn")
-$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "pot_txt", "check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn")
+$actionSlotOrder = @("check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn", "allin_btn")
+$allSlotOrder = @("flop1", "flop2", "flop3", "turn", "river", "hero1", "hero2", "pot_txt", "check_btn", "fold_btn", "call_btn", "bet_btn", "raise_btn", "allin_btn")
 $cardRegions = @{}
 $overlayForms = @{}
 $overlayColors = @{
@@ -237,6 +237,7 @@ $overlayColors = @{
   call_btn = [System.Drawing.Color]::FromArgb(70, 180, 255)
   bet_btn = [System.Drawing.Color]::FromArgb(110, 220, 130)
   raise_btn = [System.Drawing.Color]::FromArgb(255, 180, 70)
+  allin_btn = [System.Drawing.Color]::FromArgb(180, 58, 58)
 }
 foreach ($slot in $allSlotOrder) {
   $cardRegions[$slot] = [System.Drawing.Rectangle]::Empty
@@ -2763,6 +2764,16 @@ $btnRaise.BackColor = [System.Drawing.Color]::FromArgb(152, 48, 48)
 $btnRaise.Add_Click({ Invoke-ManualActionSelection -ActionToken "RAISE" })
 $form.Controls.Add($btnRaise)
 
+$btnAllIn = New-Object System.Windows.Forms.Button
+$btnAllIn.Text = "All In"
+$btnAllIn.Location = New-Object System.Drawing.Point(1110, 18)
+$btnAllIn.Size = New-Object System.Drawing.Size(84, 28)
+$btnAllIn.FlatStyle = "Flat"
+$btnAllIn.ForeColor = [System.Drawing.Color]::White
+$btnAllIn.BackColor = [System.Drawing.Color]::FromArgb(120, 34, 34)
+$btnAllIn.Add_Click({ Invoke-ManualActionSelection -ActionToken "ALL IN" })
+$form.Controls.Add($btnAllIn)
+
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = "Flow: select target -> pick ROI -> run OCR (flop/turn/river/hero)."
 $hint.ForeColor = [System.Drawing.Color]::FromArgb(175, 185, 200)
@@ -2815,6 +2826,7 @@ $cmbTarget.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbTarget.Items.Add("fold")
 [void]$cmbTarget.Items.Add("call")
 [void]$cmbTarget.Items.Add("raise")
+[void]$cmbTarget.Items.Add("all_in")
 $cmbTarget.SelectedIndex = 0
 $cmbTarget.Enabled = $true
 $form.Controls.Add($cmbTarget)
@@ -3051,7 +3063,7 @@ function Update-MainLayout {
   $regionLabel.Size = New-Object System.Drawing.Size($leftWidth, 20)
   $cardStatusLabel.Size = New-Object System.Drawing.Size($leftWidth, 18)
 
-  $actionButtons = @($btnCheck, $btnFold, $btnCall, $btnRaise)
+  $actionButtons = @($btnCheck, $btnFold, $btnCall, $btnRaise, $btnAllIn)
   $visibleActionButtons = @($actionButtons | Where-Object { $_.Visible })
   $actionRowWidth = 0
   if ($visibleActionButtons.Count -gt 0) {
@@ -3345,6 +3357,7 @@ function Get-ActionTokenForSlot {
     "call_btn" { return "CALL" }
     "bet_btn" { return "RAISE" }
     "raise_btn" { return "RAISE" }
+    "allin_btn" { return "ALL IN" }
     default { return "" }
   }
 }
@@ -3446,7 +3459,15 @@ function Invoke-ManualActionSelection {
   }
 
   $committedAmount = 0
-  if ($normalizedAction -in @("CALL", "RAISE")) {
+  if ($normalizedAction -eq "ALL IN") {
+    $committedAmount = [int]([Math]::Max(0, $script:currentHeroChips))
+    if ($committedAmount -gt 0) {
+      $script:currentHeroChips = [Math]::Max(0, ([int]$script:currentHeroChips - $committedAmount))
+      $script:currentPotAmount = [Math]::Max(0, ([int]$script:currentPotAmount + $committedAmount))
+      Update-TableStateDisplay
+    }
+  }
+  elseif ($normalizedAction -in @("CALL", "RAISE")) {
     $stakes = Get-StakeSettings
     $defaultAmount = if ($normalizedAction -eq "RAISE") {
       if ($script:lastRecommendedRaiseAmount -gt 0) {
@@ -6427,6 +6448,7 @@ $btnPick.Add_Click({
       "fold" { $target = "fold_btn" }
       "call" { $target = "call_btn" }
       "raise" { $target = "raise_btn" }
+      "all_in" { $target = "allin_btn" }
     }
     if ($target -eq "hero") {
       Set-RoiRectByKey -Key "hero1" -Rect $rect
