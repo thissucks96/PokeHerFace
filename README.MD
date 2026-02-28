@@ -74,6 +74,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - engine advice ingestion is now deterministic (manual token-weight aggregation + manual ranking) to avoid PowerShell dynamic binder crashes on flop fallback payloads (`Argument types do not match`).
   - advice ranking no longer enumerates generic lists through `@(...)` conversion; index-based ranking is used to avoid the remaining binder mismatch seen in manual-mode flop transitions.
   - final advice handoff now materializes weighted rows via `ArrayList.ToArray()` (no generic-list splat conversion), removing the remaining preflop/flop binder fault when caching `lastAdviceWeightedRows`.
+  - all-in deadlock protection is now active: when stacks are exhausted and no legal actions remain, the tester auto-runs out remaining streets and resolves showdown instead of stalling on `CHECK/WAIT`; re-raises into an already all-in opponent are now blocked.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,
