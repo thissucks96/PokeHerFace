@@ -61,7 +61,12 @@ $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd_HHmmss")
 $outputFile = Join-Path $OutputDir "stateful_sim_report.${RuntimeProfile}_${Hands}hands.${timestamp}.json"
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " Passive-Villain Stateful Simulator       " -ForegroundColor Cyan
+if ($Aggressive) {
+    Write-Host " Aggressive-Villain Stateful Simulator    " -ForegroundColor Cyan
+}
+else {
+    Write-Host " Passive-Villain Stateful Simulator       " -ForegroundColor Cyan
+}
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Target Profile : $RuntimeProfile"

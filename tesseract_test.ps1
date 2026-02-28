@@ -4005,6 +4005,7 @@ function Invoke-VillainActionSelection {
     }
     { $_ -in @("BET", "RAISE") } {
       $script:villainFolded = $false
+      $script:lastVillainAction = "RAISE"
       $defaultAmount = if ($normalizedAction -eq "RAISE" -and [int]$script:currentFacingBetAmount -gt 0) {
         [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
       }
@@ -4017,7 +4018,6 @@ function Invoke-VillainActionSelection {
         Write-Log ("Villain action canceled: {0}" -f $normalizedAction)
         return
       }
-      $script:lastVillainAction = $normalizedAction
       $committedAmount = [int]$enteredAmount
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet

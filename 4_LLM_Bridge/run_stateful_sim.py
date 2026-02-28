@@ -262,7 +262,8 @@ def main() -> int:
 
     results = []
     
-    print(f"Starting passive-villain state harness (Hands: {args.hands})")
+    mode_label = "aggressive-villain" if args.aggressive else "passive-villain"
+    print(f"Starting {mode_label} state harness (Hands: {args.hands})")
     
     total_latency_by_street = {"flop": [], "turn": [], "river": []}
     action_counts_by_street = {"flop": {}, "turn": {}, "river": {}}
