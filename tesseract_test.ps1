@@ -4,6 +4,53 @@ param()
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$script:startupCrashLogDir = Join-Path $PSScriptRoot "5_Vision_Extraction\out\ui_session_logs"
+try {
+  if (-not (Test-Path $script:startupCrashLogDir)) {
+    $null = New-Item -ItemType Directory -Force -Path $script:startupCrashLogDir
+  }
+}
+catch {}
+
+function Write-StartupCrashLog {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$ErrorRecord
+  )
+
+  try {
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+    $crashPath = Join-Path $script:startupCrashLogDir ("startup_error_{0}.json" -f $timestamp)
+    $payload = [ordered]@{
+      timestamp = (Get-Date).ToString("o")
+      script = $PSCommandPath
+      message = $ErrorRecord.Exception.Message
+      type = $ErrorRecord.Exception.GetType().FullName
+      category = [string]$ErrorRecord.CategoryInfo
+      line = $ErrorRecord.InvocationInfo.ScriptLineNumber
+      offset = $ErrorRecord.InvocationInfo.OffsetInLine
+      extent = [string]$ErrorRecord.InvocationInfo.Line
+      position = [string]$ErrorRecord.InvocationInfo.PositionMessage
+      stack = [string]$ErrorRecord.ScriptStackTrace
+    }
+    $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $crashPath -Encoding UTF8
+    Write-Host ("Startup/runtime error logged to: {0}" -f $crashPath) -ForegroundColor Red
+  }
+  catch {
+    Write-Host ("Failed to write startup crash log: {0}" -f $_.Exception.Message) -ForegroundColor Red
+  }
+}
+
+trap {
+  Write-StartupCrashLog -ErrorRecord $_
+  Write-Host $_ -ForegroundColor Red
+  try {
+    Read-Host "Press Enter to exit" | Out-Null
+  }
+  catch {}
+  break
+}
+
 function Ensure-StaSession {
   if ([Threading.Thread]::CurrentThread.ApartmentState -eq [Threading.ApartmentState]::STA) {
     return $true

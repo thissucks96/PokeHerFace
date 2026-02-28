@@ -457,6 +457,7 @@ No-engine startup variant:
 - Session logs from tester:
   - text log: `5_Vision_Extraction/out/ui_session_logs/session_*.log`
   - structured log: `5_Vision_Extraction/out/ui_session_logs/session_*.jsonl`
+- Uncaught tester startup/runtime failures are also written to `5_Vision_Extraction/out/ui_session_logs/startup_error_*.json`, and the console now pauses for acknowledgement before exit.
 - Optional env overrides for tester handoff:
   - `BRIDGE_SOLVE_ENDPOINT` (default `http://127.0.0.1:8000/solve`)
   - `ENGINE_SPOT_TEMPLATE_PATH` (default `4_LLM_Bridge/examples/spot.sample.json`)
