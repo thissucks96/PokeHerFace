@@ -59,6 +59,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - showdown advice now includes a readable hand-strength reason (for example `Two Pair ... with kicker`, `Full House ...`, `Royal Flush`) instead of only `HERO/VILLAIN WINS`.
   - action-state refresh now runs as a guarded stabilization loop after each move, so auto-villain response + street progression resolves in one pass without requiring extra check/call clicks.
   - the in-app log panel now uses action-aware coloring (`CHECK/CALL` green, `RAISE/ALL IN` red, `FOLD` gray, error paths red/orange) to make live state transitions easier to scan during playtesting.
+  - normal UI exit/restart no longer forces a `Press Enter to exit` terminal pause (set `UI_PAUSE_ON_EXIT=1` if you explicitly want the old pause behavior); crash paths still pause for debug capture.
 - Current blockers:
   - OCR speed is still slower than target for live pacing,
   - OCR misses/retries still create latency spikes,

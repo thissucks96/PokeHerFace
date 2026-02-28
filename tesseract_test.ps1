@@ -262,6 +262,10 @@ $uiLogRoot = Join-Path $PSScriptRoot "5_Vision_Extraction\out\ui_session_logs"
 $uiLogTextPath = Join-Path $uiLogRoot ("session_{0}.log" -f $uiSessionId)
 $uiLogJsonlPath = Join-Path $uiLogRoot ("session_{0}.jsonl" -f $uiSessionId)
 $uiLogLatestPath = Join-Path $uiLogRoot "latest_session.json"
+$pauseOnNormalExit = $false
+if ($env:UI_PAUSE_ON_EXIT -and ([string]$env:UI_PAUSE_ON_EXIT).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $pauseOnNormalExit = $true
+}
 $roiStatePath = Join-Path (Join-Path $env:APPDATA "PokeHerFace") "vision_tester_rois.json"
 $roiAutoScale = $false
 if ($env:POKE_ROI_AUTOSCALE -and ([string]$env:POKE_ROI_AUTOSCALE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
@@ -9504,7 +9508,9 @@ $form.Add_FormClosing({
 })
 
 [void]$form.ShowDialog()
-Read-Host "Press Enter to exit"
+if ($pauseOnNormalExit) {
+  Read-Host "Press Enter to exit"
+}
 
 
 
