@@ -163,6 +163,42 @@ def _build_engine_spot(
     }
 
 
+def _map_solver_action_to_harness_action(
+    action_base: str,
+    amount: Optional[Any],
+    *,
+    aggressive: bool,
+    reference_pot: int,
+) -> str:
+    base = str(action_base or "check").strip().lower()
+    if aggressive:
+        if base == "fold":
+            return "fold"
+        if base == "all_in":
+            return "all_in"
+        if base in {"check", "call"}:
+            return "call"
+        if base in {"bet", "raise"}:
+            return "raise_75"
+        return "call"
+
+    if base == "all_in":
+        return "all_in"
+    if base == "raise":
+        return "bet_75"
+    if base == "bet":
+        f_amount = 0.0
+        try:
+            if amount is not None:
+                f_amount = float(amount)
+        except (TypeError, ValueError):
+            f_amount = 0.0
+        if reference_pot > 0 and f_amount > (0.6 * float(reference_pot)):
+            return "bet_75"
+        return "bet_33"
+    return base
+
+
 def _scenario_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[float]]]:
     profile = str(runtime_profile or "").strip().lower()
     if profile == "fast":
@@ -330,6 +366,8 @@ def main() -> int:
             strat_source = str(resp_json.get("selected_strategy") or result_block.get("selected_strategy") or "unknown")
             strategy_source_counts[strat_source] = strategy_source_counts.get(strat_source, 0) + 1
             total_latency_by_street[street_name].append(t_elapsed)
+            action_map_log: List[Dict[str, Any]] = []
+            selection_mode = "fallback_decision"
             
             # Map choice to exact sizes
             chosen_action = "call" if args.aggressive else "check"
@@ -348,29 +386,40 @@ def main() -> int:
                       chosen_action = "bet_33" # Fallback heuristic assumption
             else:
                  best_freq = -1.0
+                 weighted_candidates: Dict[str, float] = {}
                  for a in action_map:
                      freq = float(a.get("avg_frequency", a.get("frequency", 0)))
+                     action_base = a.get("action", "check")
+                     amount = a.get("amount")
+                     mapped_action = _map_solver_action_to_harness_action(
+                         str(action_base),
+                         amount,
+                         aggressive=args.aggressive,
+                         reference_pot=base_pot,
+                     )
+                     action_map_log.append(
+                         {
+                             "solver_action": str(action_base),
+                             "amount": amount,
+                             "avg_frequency": freq,
+                             "mapped_action": mapped_action,
+                         }
+                     )
+                     if args.aggressive and freq > 0.0:
+                         weighted_candidates[mapped_action] = weighted_candidates.get(mapped_action, 0.0) + freq
                      if freq > best_freq:
                          best_freq = freq
-                         action_base = a.get("action", "check")
-                         amount = a.get("amount")
-                         if action_base == "bet" and amount:
-                             if args.aggressive:
-                                 chosen_action = "raise_75"
-                             else:
-                                 pct = amount / float(pot)
-                                 if pct > 0.6: chosen_action = "bet_75"
-                                 else: chosen_action = "bet_33"
-                         elif action_base == "raise":
-                             chosen_action = "raise_75" if args.aggressive else "bet_75"
-                         elif action_base == "all_in":
-                             chosen_action = "all_in"
-                         elif args.aggressive and action_base == "fold":
-                             chosen_action = "fold"
-                         elif args.aggressive and action_base in {"check", "call"}:
-                             chosen_action = "call"
-                         else:
-                             chosen_action = action_base
+                         chosen_action = mapped_action
+                 if args.aggressive and weighted_candidates:
+                     population = list(weighted_candidates.keys())
+                     weights = [max(0.0, float(weighted_candidates[key])) for key in population]
+                     if sum(weights) > 0.0:
+                         chosen_action = random.choices(population, weights=weights, k=1)[0]
+                         selection_mode = "weighted_sample"
+                     else:
+                         selection_mode = "argmax"
+                 else:
+                     selection_mode = "argmax"
 
             action_counts_by_street[street_name][chosen_action] = action_counts_by_street[street_name].get(chosen_action, 0) + 1
 
@@ -441,6 +490,8 @@ def main() -> int:
                 "pot": pot,
                 "stack": hero_stack,
                 "action": chosen_action,
+                "action_selection_mode": selection_mode,
+                "action_map": action_map_log,
                 "latency_sec": t_elapsed,
                 "strategy_source": strat_source
             })

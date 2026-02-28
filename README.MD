@@ -461,6 +461,7 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
   - aggressive mode (`-Aggressive`): hero is forced OOP for that test path, then villain bets with the first configured bet size for the active runtime profile after hero checks, and still auto-calls any raise,
   - hero gets one decision on flop / turn / river,
   - showdown winner and net bb are recorded.
+- In `-Aggressive` mode, each street record now preserves the full solver node mix in `hands[].streets[].action_map`, and the simulated hero action is chosen by weighted sampling from the returned node frequencies instead of always taking the single highest-frequency branch.
 - It now makes the full simplified `shark_cli` spot contract explicit for every decision:
   - structural dealt `hero_range` hand class (`44`, `AKs`, `AKo`) for solver compatibility,
   - fixed `villain_range`,
