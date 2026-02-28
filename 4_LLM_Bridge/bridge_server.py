@@ -157,6 +157,10 @@ try:
 except ValueError:
     FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC = 4
 try:
+    FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC", "6"))
+except ValueError:
+    FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = 6
+try:
     FAST_LIVE_LLM_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_LLM_TIMEOUT_SEC", "1"))
 except ValueError:
     FAST_LIVE_LLM_TIMEOUT_SEC = 1
@@ -869,9 +873,12 @@ def _resolve_stage_budgets(runtime_profile: str, request_timeout: int, spot: Opt
     if runtime_profile == "fast_live" and isinstance(spot, dict):
         active_node_path = str(spot.get("active_node_path", "")).strip()
         if active_node_path:
+            active_node_cap = FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC
+            if _detect_spot_street(spot) == "flop":
+                active_node_cap = max(int(active_node_cap), int(FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC))
             active_node_timeout = _stage_budget_value(
                 request_timeout,
-                FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC,
+                active_node_cap,
                 min_floor=min_floor,
             )
             baseline_timeout = max(baseline_timeout, active_node_timeout)
@@ -1415,6 +1422,7 @@ def health() -> Dict[str, Any]:
         "fast_live_baseline_timeout_turn_sec": FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC,
         "fast_live_baseline_timeout_river_sec": FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC,
         "fast_live_active_node_timeout_sec": FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC,
+        "fast_live_active_node_timeout_flop_sec": FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC,
         "fast_live_llm_timeout_sec": FAST_LIVE_LLM_TIMEOUT_SEC,
         "fast_live_locked_timeout_sec": FAST_LIVE_LOCKED_TIMEOUT_SEC,
         "fast_live_locked_stage_total_sec": FAST_LIVE_LOCKED_STAGE_TOTAL_SEC,
