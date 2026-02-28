@@ -40,6 +40,31 @@ function Write-StartupCrashLog {
     Write-Host ("Failed to write startup crash log: {0}" -f $_.Exception.Message) -ForegroundColor Red
   }
 }
+function Write-UiThreadExceptionLog {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Exception]$Exception
+  )
+
+  try {
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+    $crashPath = Join-Path $script:startupCrashLogDir ("thread_exception_{0}.json" -f $timestamp)
+    $payload = [ordered]@{
+      timestamp = (Get-Date).ToString("o")
+      script = $PSCommandPath
+      message = $Exception.Message
+      type = $Exception.GetType().FullName
+      source = [string]$Exception.Source
+      stack = [string]$Exception.StackTrace
+      exception_text = [string]$Exception
+    }
+    $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $crashPath -Encoding UTF8
+    Write-Host ("WinForms thread exception logged to: {0}" -f $crashPath) -ForegroundColor Red
+  }
+  catch {
+    Write-Host ("Failed to write UI thread exception log: {0}" -f $_.Exception.Message) -ForegroundColor Red
+  }
+}
 
 trap {
   Write-StartupCrashLog -ErrorRecord $_
@@ -106,6 +131,13 @@ function Resolve-TesseractExecutable {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+[System.Windows.Forms.Application]::add_ThreadException({
+  param($sender, $e)
+  if ($null -ne $e -and $null -ne $e.Exception) {
+    Write-UiThreadExceptionLog -Exception $e.Exception
+  }
+})
 try {
   Add-Type -TypeDefinition @"
 using System.Runtime.InteropServices;
@@ -5308,8 +5340,11 @@ function Get-AdviceDecisionPrimary {
   if ($foldWeight -ge $callWeight -and $foldWeight -ge $raiseWeight -and $foldWeight -gt 0.0) {
     return "FOLD"
   }
-  if ($callWeight -gt 0.0 -or $checkWeight -gt 0.0) {
+  if ($callWeight -gt 0.0) {
     return "CALL"
+  }
+  if ($checkWeight -gt 0.0) {
+    return "CHECK"
   }
   return (Convert-AdviceActionTokenToLabel -Token $topToken)
 }
@@ -8617,3 +8652,7 @@ $form.Add_FormClosing({
 
 [void]$form.ShowDialog()
 Read-Host "Press Enter to exit"
+
+
+
+

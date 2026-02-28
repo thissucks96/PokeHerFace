@@ -469,7 +469,7 @@ No-engine startup variant:
 - Session logs from tester:
   - text log: `5_Vision_Extraction/out/ui_session_logs/session_*.log`
   - structured log: `5_Vision_Extraction/out/ui_session_logs/session_*.jsonl`
-- Uncaught tester startup/runtime failures are also written to `5_Vision_Extraction/out/ui_session_logs/startup_error_*.json`, and the console now pauses for acknowledgement before exit.
+- Uncaught tester startup/runtime failures are written to `5_Vision_Extraction/out/ui_session_logs/startup_error_*.json`, and WinForms UI-thread exceptions are written to `5_Vision_Extraction/out/ui_session_logs/thread_exception_*.json`; the console now pauses for acknowledgement before exit.
 - Optional env overrides for tester handoff:
   - `BRIDGE_SOLVE_ENDPOINT` (default `http://127.0.0.1:8000/solve`)
   - `ENGINE_SPOT_TEMPLATE_PATH` (default `4_LLM_Bridge/examples/spot.sample.json`)
@@ -624,3 +624,4 @@ This project combines:
 2. `mini4h` canary: `.\scripts\run_canary.ps1 -Profile mini4h -Preset local_qwen3_coder_30b`
 3. `full48h` canary: `.\scripts\run_canary.ps1 -Profile full48h -Preset local_qwen3_coder_30b`
 4. Post-canary 5-seed reconfirmation: run `test_backtest_abc.ps1` with seeds `1001, 2026, 4090, 7777, 9999`.
+
