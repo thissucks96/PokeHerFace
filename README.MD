@@ -332,7 +332,7 @@ No-engine startup variant:
 
 - Click `Pick ROI` and drag-select ROIs for board cards (`flop1`, `flop2`, `flop3`, `turn`, `river`), `hero` (auto-clones to `hero2`), and placeholders (`fold_btn`, `call_btn`, `bet_btn`, `raise_btn`).
 - Right-click any board-card or hero-card overlay to open a quick context menu:
-  - `Set Card` -> rank (`A`..`2`) -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) for manual card entry
+  - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
   - `Run OCR`
   - `Repick ROI`
   - `Clear ROI`

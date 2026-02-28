@@ -3023,42 +3023,49 @@ function Repick-RoiForSlot {
   }
 }
 
-function New-ManualCardSuitMenuItem {
+function Get-ManualSuitDisplay {
+  param(
+    [Parameter(Mandatory = $true)][string]$SuitToken
+  )
+  switch (([string]$SuitToken).ToUpperInvariant()) {
+    "S" { return ("Spade " + [string][char]0x2660) }
+    "H" { return ("Heart " + [string][char]0x2665) }
+    "D" { return ("Diamond " + [string][char]0x2666) }
+    "C" { return ("Club " + [string][char]0x2663) }
+    default { return ([string]$SuitToken).ToUpperInvariant() }
+  }
+}
+
+function New-ManualCardRankMenuItem {
   param(
     [Parameter(Mandatory = $true)][string]$SlotKey,
-    [Parameter(Mandatory = $true)][string]$RankToken,
-    [Parameter(Mandatory = $true)][string]$SuitToken
+    [Parameter(Mandatory = $true)][string]$SuitToken,
+    [Parameter(Mandatory = $true)][string]$RankToken
   )
   $capturedSlot = [string]$SlotKey
   $capturedSuit = ([string]$SuitToken).ToUpperInvariant()
-  $capturedToken = ("{0}{1}" -f [string]$RankToken, $capturedSuit).ToUpperInvariant()
-  $displaySuit = switch ($capturedSuit) {
-    "S" { "Spade " + [string][char]0x2660 }
-    "H" { "Heart " + [string][char]0x2665 }
-    "D" { "Diamond " + [string][char]0x2666 }
-    "C" { "Club " + [string][char]0x2663 }
-    default { $capturedSuit }
-  }
+  $capturedRank = [string]$RankToken
+  $capturedToken = ("{0}{1}" -f $capturedRank, $capturedSuit).ToUpperInvariant()
   $item = New-Object System.Windows.Forms.ToolStripMenuItem
-  $item.Text = $displaySuit
-  $item.Font = New-Object System.Drawing.Font("Segoe UI Symbol", 9)
+  $item.Text = $capturedRank
   $item.Add_Click({
     Apply-ManualCardTokenToSlot -Slot $capturedSlot -Token $capturedToken
   })
   return $item
 }
 
-function New-ManualCardRankMenuItem {
+function New-ManualCardSuitMenuItem {
   param(
     [Parameter(Mandatory = $true)][string]$SlotKey,
-    [Parameter(Mandatory = $true)][string]$RankToken
+    [Parameter(Mandatory = $true)][string]$SuitToken
   )
   $capturedSlot = [string]$SlotKey
-  $capturedRank = [string]$RankToken
+  $capturedSuit = ([string]$SuitToken).ToUpperInvariant()
   $item = New-Object System.Windows.Forms.ToolStripMenuItem
-  $item.Text = $capturedRank
-  foreach ($suitToken in @("S", "H", "D", "C")) {
-    [void]$item.DropDownItems.Add((New-ManualCardSuitMenuItem -SlotKey $capturedSlot -RankToken $capturedRank -SuitToken $suitToken))
+  $item.Text = Get-ManualSuitDisplay -SuitToken $capturedSuit
+  $item.Font = New-Object System.Drawing.Font("Segoe UI Symbol", 9)
+  foreach ($rankToken in @("A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2")) {
+    [void]$item.DropDownItems.Add((New-ManualCardRankMenuItem -SlotKey $capturedSlot -SuitToken $capturedSuit -RankToken $rankToken))
   }
   return $item
 }
@@ -3070,8 +3077,8 @@ function New-ManualCardMenu {
   $capturedSlot = [string]$SlotKey
   $menu = New-Object System.Windows.Forms.ToolStripMenuItem
   $menu.Text = "Set Card"
-  foreach ($rankToken in @("A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2")) {
-    [void]$menu.DropDownItems.Add((New-ManualCardRankMenuItem -SlotKey $capturedSlot -RankToken $rankToken))
+  foreach ($suitToken in @("S", "H", "D", "C")) {
+    [void]$menu.DropDownItems.Add((New-ManualCardSuitMenuItem -SlotKey $capturedSlot -SuitToken $suitToken))
   }
   return $menu
 }
