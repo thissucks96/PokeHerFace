@@ -206,11 +206,21 @@ $lastVillainAction = "WAIT"
 $currentFacingBetAmount = 0
 $currentHeroStreetCommit = 0
 $currentVillainStreetCommit = 0
+$heroActedThisRound = $false
+$villainActedThisRound = $false
 $configuredVillainCount = 0
 $activeVillainCount = 0
 $heroFolded = $false
 $villainFolded = $false
 $currentDeckShoe = @()
+$preparedNextDeckShoe = @()
+$currentBurnPile = @()
+$preparedNextBurnPile = @()
+$handResolved = $false
+$completedHandPrepared = $false
+$handCounter = 0
+$heroIsSmallBlind = $true
+$lastHandSummaryText = ""
 $showVillainCards = $false
 $adviceActionPrimary = ""
 $adviceActionSecondary = ""
@@ -785,6 +795,74 @@ function Get-AllDeckCardTokens {
   return @($cards)
 }
 
+function Get-BurnPileText {
+  if (-not ($script:currentBurnPile -is [System.Array]) -or $script:currentBurnPile.Count -eq 0) {
+    return "(none)"
+  }
+  return (@($script:currentBurnPile) -join " ")
+}
+
+function Get-ShuffledDeckTokens {
+  $pool = New-Object System.Collections.Generic.List[string]
+  foreach ($token in @(Get-AllDeckCardTokens)) {
+    [void]$pool.Add([string]$token)
+  }
+  $shuffled = New-Object System.Collections.Generic.List[string]
+  while ($pool.Count -gt 0) {
+    $idx = Get-Random -Minimum 0 -Maximum $pool.Count
+    [void]$shuffled.Add([string]$pool[$idx])
+    $pool.RemoveAt($idx)
+  }
+  return @($shuffled)
+}
+
+function Prepare-NextHandBackendState {
+  $script:preparedNextDeckShoe = @(Get-ShuffledDeckTokens)
+  $script:preparedNextBurnPile = @()
+  $script:completedHandPrepared = $true
+}
+
+function Start-ActiveDeckFromPreparedOrFresh {
+  if (($script:preparedNextDeckShoe -is [System.Array]) -and $script:preparedNextDeckShoe.Count -gt 0) {
+    $script:currentDeckShoe = @($script:preparedNextDeckShoe)
+  }
+  else {
+    $script:currentDeckShoe = @(Get-ShuffledDeckTokens)
+  }
+  if (($script:preparedNextBurnPile -is [System.Array]) -and $script:preparedNextBurnPile.Count -gt 0) {
+    $script:currentBurnPile = @($script:preparedNextBurnPile)
+  }
+  else {
+    $script:currentBurnPile = @()
+  }
+  $script:preparedNextDeckShoe = @()
+  $script:preparedNextBurnPile = @()
+  $script:completedHandPrepared = $false
+}
+
+function Draw-NextDeckCard {
+  if (-not ($script:currentDeckShoe -is [System.Array]) -or $script:currentDeckShoe.Count -le 0) {
+    return ""
+  }
+  $card = [string]$script:currentDeckShoe[0]
+  if ($script:currentDeckShoe.Count -gt 1) {
+    $script:currentDeckShoe = @($script:currentDeckShoe[1..($script:currentDeckShoe.Count - 1)])
+  }
+  else {
+    $script:currentDeckShoe = @()
+  }
+  return $card
+}
+
+function Burn-NextDeckCard {
+  $burned = Draw-NextDeckCard
+  if (Test-CardTokenStrict -Token $burned) {
+    $script:currentBurnPile = @(@($script:currentBurnPile) + @($burned))
+    return $burned
+  }
+  return ""
+}
+
 function Get-VisibleAssignedCardTokens {
   $tokens = New-Object System.Collections.Generic.List[string]
   foreach ($slot in @($playerSlotOrder + $cardSlotOrder)) {
@@ -799,11 +877,16 @@ function Get-VisibleAssignedCardTokens {
       [void]$tokens.Add(([string]$token).Trim().ToUpperInvariant())
     }
   }
+  foreach ($token in @($script:currentBurnPile)) {
+    $normalized = Normalize-CardToken -Text ([string]$token)
+    if (Test-CardTokenStrict -Token $normalized) {
+      [void]$tokens.Add(([string]$normalized).Trim().ToUpperInvariant())
+    }
+  }
   return @($tokens)
 }
 
 function Rebuild-DeckShoeState {
-  $available = New-Object System.Collections.Generic.List[string]
   $blocked = @{}
   foreach ($token in @(Get-VisibleAssignedCardTokens)) {
     $key = ([string]$token).Trim().ToUpperInvariant()
@@ -811,10 +894,17 @@ function Rebuild-DeckShoeState {
       $blocked[$key] = $true
     }
   }
-  foreach ($token in @(Get-AllDeckCardTokens)) {
+  $orderedPool = New-Object System.Collections.Generic.List[string]
+  foreach ($token in @($script:currentDeckShoe + $script:preparedNextDeckShoe + (Get-AllDeckCardTokens))) {
     $key = ([string]$token).Trim().ToUpperInvariant()
+    if ($key -and (-not $orderedPool.Contains($key))) {
+      [void]$orderedPool.Add($key)
+    }
+  }
+  $available = New-Object System.Collections.Generic.List[string]
+  foreach ($key in @($orderedPool)) {
     if (-not $blocked.ContainsKey($key)) {
-      [void]$available.Add($key)
+      [void]$available.Add([string]$key)
     }
   }
   $script:currentDeckShoe = @($available)
@@ -1323,37 +1413,9 @@ function Get-StakeSettings {
 }
 
 function Get-DefaultTableStateFromStakes {
-  $templatePath = Resolve-EngineTemplatePath
   $stakes = Get-StakeSettings
   $defaultPot = [int]($stakes.small_blind + $stakes.big_blind)
   $buyIn = [int]$stakes.buy_in
-
-  if (Test-Path $templatePath) {
-    try {
-      $templateRaw = Get-Content -Path $templatePath -Raw -Encoding UTF8
-      $spot = $templateRaw | ConvertFrom-Json -ErrorAction Stop
-      $templateMinBet = 2
-      if ($spot.PSObject.Properties.Name -contains "minimum_bet" -and $null -ne $spot.minimum_bet) {
-        $templateMinBet = [int]$spot.minimum_bet
-      }
-      if ($templateMinBet -lt 1) {
-        $templateMinBet = 2
-      }
-      $templatePot = 10
-      if ($spot.PSObject.Properties.Name -contains "starting_pot" -and $null -ne $spot.starting_pot) {
-        $templatePot = [int]$spot.starting_pot
-      }
-      $templatePotBb = 5.0
-      if ($templateMinBet -gt 0) {
-        $templatePotBb = [double]$templatePot / [double]$templateMinBet
-      }
-      $scaledStartingPot = [int][Math]::Round(($templatePotBb * $stakes.big_blind), [System.MidpointRounding]::AwayFromZero)
-      if ($scaledStartingPot -gt $defaultPot) {
-        $defaultPot = $scaledStartingPot
-      }
-    }
-    catch {}
-  }
 
   return [pscustomobject]@{
     starting_pot = [int]$defaultPot
@@ -1418,6 +1480,8 @@ function Reset-StreetActionState {
   $script:currentFacingBetAmount = 0
   $script:currentHeroStreetCommit = 0
   $script:currentVillainStreetCommit = 0
+  $script:heroActedThisRound = $false
+  $script:villainActedThisRound = $false
   Update-CheckCallButtonModeFromState
   Update-TableStateDisplay
 }
@@ -1542,6 +1606,386 @@ function Reset-TableStateToCurrentStakes {
   Update-TableStateDisplay
 }
 
+function Set-HeroCardSlotValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$Token,
+    [string]$Source = "auto"
+  )
+  if (-not ($Slot -in $playerSlotOrder)) {
+    return
+  }
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    return
+  }
+  $heroCards[$Slot] = $normalized
+  Set-SlotValueSource -Slot $Slot -Source $Source
+}
+
+function Set-VillainCardSlotValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$Token
+  )
+  if (-not ($Slot -in @("villain1", "villain2"))) {
+    return
+  }
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    return
+  }
+  $script:villainCards[$Slot] = $normalized
+}
+
+function Set-BoardCardSlotValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Slot,
+    [Parameter(Mandatory = $true)][string]$Token,
+    [string]$Source = "auto"
+  )
+  if (-not ($Slot -in $cardSlotOrder)) {
+    return
+  }
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    return
+  }
+  Update-LastBoardTokenFromSlot -Slot $Slot -Token $normalized
+  Set-SlotValueSource -Slot $Slot -Source $Source
+}
+
+function Start-PostBlindRoundState {
+  $stakes = Get-StakeSettings
+  Reset-StreetActionState
+  $script:currentPotAmount = 0
+  $script:heroFolded = $false
+  $script:villainFolded = $false
+  if ($script:heroIsSmallBlind) {
+    [void](Apply-HeroCommitmentToPot -Amount ([int]$stakes.small_blind))
+    [void](Apply-VillainCommitmentToPot -Amount ([int]$stakes.big_blind))
+    Set-FacingBetAmount -Amount ([int]([Math]::Max(0, $script:currentVillainStreetCommit - $script:currentHeroStreetCommit)))
+  }
+  else {
+    [void](Apply-VillainCommitmentToPot -Amount ([int]$stakes.small_blind))
+    [void](Apply-HeroCommitmentToPot -Amount ([int]$stakes.big_blind))
+    Clear-FacingBetAmount
+  }
+  $script:heroActedThisRound = $false
+  $script:villainActedThisRound = $false
+  Update-CheckCallButtonModeFromState
+}
+
+function Deal-InitialHoleCardsForCurrentHand {
+  $dealOrder = if ($script:heroIsSmallBlind) {
+    @("hero1", "villain1", "hero2", "villain2")
+  }
+  else {
+    @("villain1", "hero1", "villain2", "hero2")
+  }
+  foreach ($slot in @($dealOrder)) {
+    $card = Draw-NextDeckCard
+    if (-not (Test-CardTokenStrict -Token $card)) {
+      throw "Deck exhausted while dealing hole cards."
+    }
+    if ($slot -in $playerSlotOrder) {
+      Set-HeroCardSlotValue -Slot $slot -Token $card -Source "auto"
+    }
+    else {
+      Set-VillainCardSlotValue -Slot $slot -Token $card
+    }
+    Write-Log ("Dealt {0} to {1}." -f $card, $slot) -Type "deal_card" -Data @{
+      slot = $slot
+      card = $card
+    }
+  }
+  Rebuild-DeckShoeState
+}
+
+function Deal-NextStreetCards {
+  param(
+    [Parameter(Mandatory = $true)][ValidateSet("flop", "turn", "river")][string]$Street
+  )
+  $burned = Burn-NextDeckCard
+  if ($burned) {
+    Write-Log ("Burned {0} before {1}." -f $burned, $Street) -Type "burn_card" -Data @{
+      card = $burned
+      street = $Street
+    }
+  }
+  switch ($Street) {
+    "flop" {
+      foreach ($slot in @("flop1", "flop2", "flop3")) {
+        $card = Draw-NextDeckCard
+        if (-not (Test-CardTokenStrict -Token $card)) {
+          throw "Deck exhausted while dealing flop."
+        }
+        Set-BoardCardSlotValue -Slot $slot -Token $card -Source "auto"
+        Write-Log ("Dealt {0} to {1}." -f $card, $slot) -Type "deal_board" -Data @{
+          slot = $slot
+          card = $card
+          street = "flop"
+        }
+      }
+    }
+    "turn" {
+      $card = Draw-NextDeckCard
+      if (-not (Test-CardTokenStrict -Token $card)) {
+        throw "Deck exhausted while dealing turn."
+      }
+      Set-BoardCardSlotValue -Slot "turn" -Token $card -Source "auto"
+      Write-Log ("Dealt {0} to turn." -f $card) -Type "deal_board" -Data @{
+        slot = "turn"
+        card = $card
+        street = "turn"
+      }
+    }
+    "river" {
+      $card = Draw-NextDeckCard
+      if (-not (Test-CardTokenStrict -Token $card)) {
+        throw "Deck exhausted while dealing river."
+      }
+      Set-BoardCardSlotValue -Slot "river" -Token $card -Source "auto"
+      Write-Log ("Dealt {0} to river." -f $card) -Type "deal_board" -Data @{
+        slot = "river"
+        card = $card
+        street = "river"
+      }
+    }
+  }
+  Rebuild-DeckShoeState
+  Refresh-RoiOverlays
+}
+
+function Get-CardRankInt {
+  param([Parameter(Mandatory = $true)][string]$Token)
+  $normalized = Normalize-CardToken -Text $Token
+  if (-not (Test-CardTokenStrict -Token $normalized)) {
+    return -1
+  }
+  switch ($normalized.Substring(0,1)) {
+    "2" { return 2 }
+    "3" { return 3 }
+    "4" { return 4 }
+    "5" { return 5 }
+    "6" { return 6 }
+    "7" { return 7 }
+    "8" { return 8 }
+    "9" { return 9 }
+    "T" { return 10 }
+    "J" { return 11 }
+    "Q" { return 12 }
+    "K" { return 13 }
+    "A" { return 14 }
+    default { return -1 }
+  }
+}
+
+function Compare-HandScore {
+  param($Left, $Right)
+  if ($null -eq $Left -and $null -eq $Right) { return 0 }
+  if ($null -eq $Left) { return -1 }
+  if ($null -eq $Right) { return 1 }
+  $leftCategory = [int]$Left.category
+  $rightCategory = [int]$Right.category
+  if ($leftCategory -gt $rightCategory) { return 1 }
+  if ($leftCategory -lt $rightCategory) { return -1 }
+  $leftValues = @($Left.values)
+  $rightValues = @($Right.values)
+  $maxCount = [Math]::Max($leftValues.Count, $rightValues.Count)
+  for ($i = 0; $i -lt $maxCount; $i++) {
+    $lv = if ($i -lt $leftValues.Count) { [int]$leftValues[$i] } else { -1 }
+    $rv = if ($i -lt $rightValues.Count) { [int]$rightValues[$i] } else { -1 }
+    if ($lv -gt $rv) { return 1 }
+    if ($lv -lt $rv) { return -1 }
+  }
+  return 0
+}
+
+function Get-5CardHandScore {
+  param([Parameter(Mandatory = $true)][string[]]$Cards)
+  $parsed = foreach ($card in @($Cards)) {
+    [pscustomobject]@{
+      rank = [int](Get-CardRankInt -Token $card)
+      suit = [string](Normalize-CardToken -Text $card).Substring(1,1).ToLowerInvariant()
+    }
+  }
+  $parsed = @($parsed | Sort-Object -Property rank -Descending)
+  $ranks = @($parsed | ForEach-Object { [int]$_.rank })
+  $suits = @($parsed | ForEach-Object { [string]$_.suit })
+  $isFlush = (($suits | Select-Object -Unique).Count -eq 1)
+  $uniqueRanks = @($ranks | Select-Object -Unique)
+  $straightHigh = 0
+  $isStraight = $false
+  if ($uniqueRanks.Count -eq 5) {
+    $sortedUnique = @($uniqueRanks | Sort-Object -Descending)
+    if (($sortedUnique[0] - $sortedUnique[4]) -eq 4) {
+      $isStraight = $true
+      $straightHigh = [int]$sortedUnique[0]
+    }
+    elseif (@($sortedUnique) -join "," -eq "14,5,4,3,2") {
+      $isStraight = $true
+      $straightHigh = 5
+    }
+  }
+  $rankCounts = @{}
+  foreach ($rank in @($ranks)) {
+    if (-not $rankCounts.ContainsKey($rank)) {
+      $rankCounts[$rank] = 0
+    }
+    $rankCounts[$rank] = [int]$rankCounts[$rank] + 1
+  }
+  $countRows = foreach ($key in @($rankCounts.Keys)) {
+    [pscustomobject]@{
+      count = [int]$rankCounts[$key]
+      rank = [int]$key
+    }
+  }
+  $countRows = @($countRows | Sort-Object -Property @{Expression="count";Descending=$true}, @{Expression="rank";Descending=$true})
+  if ($isStraight -and $isFlush) {
+    return [pscustomobject]@{ category = 8; values = @([int]$straightHigh) }
+  }
+  if ($countRows[0].count -eq 4) {
+    return [pscustomobject]@{ category = 7; values = @([int]$countRows[0].rank, [int]$countRows[1].rank) }
+  }
+  if ($countRows[0].count -eq 3 -and $countRows[1].count -eq 2) {
+    return [pscustomobject]@{ category = 6; values = @([int]$countRows[0].rank, [int]$countRows[1].rank) }
+  }
+  if ($isFlush) {
+    return [pscustomobject]@{ category = 5; values = @($ranks) }
+  }
+  if ($isStraight) {
+    return [pscustomobject]@{ category = 4; values = @([int]$straightHigh) }
+  }
+  if ($countRows[0].count -eq 3) {
+    $kickers = @($ranks | Where-Object { $_ -ne [int]$countRows[0].rank } | Sort-Object -Descending)
+    return [pscustomobject]@{ category = 3; values = @([int]$countRows[0].rank) + @($kickers) }
+  }
+  if ($countRows[0].count -eq 2 -and $countRows[1].count -eq 2) {
+    $pairRanks = @([int]$countRows[0].rank, [int]$countRows[1].rank) | Sort-Object -Descending
+    $kicker = @($ranks | Where-Object { ($_ -ne [int]$pairRanks[0]) -and ($_ -ne [int]$pairRanks[1]) })[0]
+    return [pscustomobject]@{ category = 2; values = @([int]$pairRanks[0], [int]$pairRanks[1], [int]$kicker) }
+  }
+  if ($countRows[0].count -eq 2) {
+    $kickers = @($ranks | Where-Object { $_ -ne [int]$countRows[0].rank } | Sort-Object -Descending)
+    return [pscustomobject]@{ category = 1; values = @([int]$countRows[0].rank) + @($kickers) }
+  }
+  return [pscustomobject]@{ category = 0; values = @($ranks) }
+}
+
+function Get-BestSevenCardHandScore {
+  param([Parameter(Mandatory = $true)][string[]]$Cards)
+  if ($Cards.Count -ne 7) {
+    throw "Get-BestSevenCardHandScore requires exactly 7 cards."
+  }
+  $best = $null
+  for ($a = 0; $a -lt 3; $a++) {
+    for ($b = $a + 1; $b -lt 4; $b++) {
+      for ($c = $b + 1; $c -lt 5; $c++) {
+        for ($d = $c + 1; $d -lt 6; $d++) {
+          for ($e = $d + 1; $e -lt 7; $e++) {
+            $score = Get-5CardHandScore -Cards @($Cards[$a], $Cards[$b], $Cards[$c], $Cards[$d], $Cards[$e])
+            if ((Compare-HandScore -Left $score -Right $best) -gt 0) {
+              $best = $score
+            }
+          }
+        }
+      }
+    }
+  }
+  return $best
+}
+
+function Resolve-ShowdownAndAwardPot {
+  $boardCards = @($lastBoardTokens | Where-Object { Test-CardTokenStrict -Token $_ })
+  $heroCardsNow = @()
+  foreach ($slot in @($playerSlotOrder)) {
+    $token = Get-AssignedCardTokenForSlot -Slot $slot
+    if (Test-CardTokenStrict -Token $token) {
+      $heroCardsNow += $token
+    }
+  }
+  $villainCardsNow = @()
+  foreach ($slot in @("villain1", "villain2")) {
+    $token = Normalize-CardToken -Text ([string]$script:villainCards[$slot])
+    if (Test-CardTokenStrict -Token $token) {
+      $villainCardsNow += $token
+    }
+  }
+  if ($boardCards.Count -ne 5 -or $heroCardsNow.Count -ne 2 -or $villainCardsNow.Count -ne 2) {
+    return $false
+  }
+  $heroScore = Get-BestSevenCardHandScore -Cards (@($heroCardsNow) + @($boardCards))
+  $villainScore = Get-BestSevenCardHandScore -Cards (@($villainCardsNow) + @($boardCards))
+  $cmp = Compare-HandScore -Left $heroScore -Right $villainScore
+  if ($cmp -gt 0) {
+    Set-AdviceState -Primary "HERO WINS" -Secondary ("Showdown. Pot {0} awarded." -f [int]$script:currentPotAmount)
+    Award-PotToWinner -Winner "hero" -Reason "showdown"
+  }
+  elseif ($cmp -lt 0) {
+    Set-AdviceState -Primary "VILLAIN WINS" -Secondary ("Showdown. Pot {0} awarded." -f [int]$script:currentPotAmount)
+    Award-PotToWinner -Winner "villain" -Reason "showdown"
+  }
+  else {
+    $award = [int]([Math]::Floor(([int]$script:currentPotAmount) / 2))
+    $remainder = [int]([Math]::Max(0, ([int]$script:currentPotAmount - ($award * 2))))
+    $script:currentHeroChips = [int]$script:currentHeroChips + $award + $remainder
+    $script:currentVillainChips = [int]$script:currentVillainChips + $award
+    $script:currentPotAmount = 0
+    $script:handResolved = $true
+    Reset-StreetActionState
+    Update-TableStateDisplay
+    Prepare-NextHandBackendState
+    Set-AdviceState -Primary "CHOP" -Secondary "Showdown split pot."
+    Write-Log "Showdown split pot." -Type "hand_settled" -Data @{
+      winner = "split"
+      current_hero_chips = [int]$script:currentHeroChips
+      current_villain_chips = [int]$script:currentVillainChips
+    }
+  }
+  return $true
+}
+
+function Test-BettingRoundResolved {
+  if ($script:handResolved -or $script:heroFolded -or $script:villainFolded) {
+    return $false
+  }
+  if ([int]$script:currentFacingBetAmount -gt 0) {
+    return $false
+  }
+  if ([int]$script:currentHeroStreetCommit -ne [int]$script:currentVillainStreetCommit) {
+    return $false
+  }
+  if ((-not $script:heroActedThisRound) -or (-not $script:villainActedThisRound)) {
+    return $false
+  }
+  return $true
+}
+
+function Try-AdvanceStreetIfRoundResolved {
+  if (-not (Test-BettingRoundResolved)) {
+    return $false
+  }
+  $boardCount = Get-ValidBoardCardCount -Tokens @($lastBoardTokens)
+  if ($boardCount -eq 0) {
+    Deal-NextStreetCards -Street "flop"
+    return $true
+  }
+  if ($boardCount -eq 3) {
+    Deal-NextStreetCards -Street "turn"
+    return $true
+  }
+  if ($boardCount -eq 4) {
+    Deal-NextStreetCards -Street "river"
+    return $true
+  }
+  if ($boardCount -eq 5) {
+    [void](Resolve-ShowdownAndAwardPot)
+    return $true
+  }
+  return $false
+}
+
 function Build-EngineSpotPayload {
   param(
     [Parameter(Mandatory = $true)][string[]]$BoardCards,
@@ -1620,6 +2064,8 @@ function Build-EngineSpotPayload {
   $spot.meta.configured_villains = [int]$state.configured_villains
   $spot.meta.hero_folded = [bool]$state.hero_folded
   $spot.meta.villain_folded = [bool]$state.villain_folded
+  $spot.meta.hero_is_small_blind = [bool]$script:heroIsSmallBlind
+  $spot.meta.hero_is_big_blind = (-not [bool]$script:heroIsSmallBlind)
   if ($HeroCards.Count -eq 2) {
     $spot.meta.hero_cards = @(
       ([string]$HeroCards[0]).Trim()
@@ -3340,6 +3786,7 @@ $script:btnVillainActionMenu = $btnVillainActionMenu
 $villainActionMenu = New-Object System.Windows.Forms.ContextMenuStrip
 foreach ($villainActionSpec in @(
   @{ text = "Check"; token = "CHECK" }
+  @{ text = "Call"; token = "CALL" }
   @{ text = "Bet"; token = "BET" }
   @{ text = "Raise"; token = "RAISE" }
   @{ text = "Fold"; token = "FOLD" }
@@ -3364,6 +3811,7 @@ $btnHeroWinsPot.FlatStyle = "Flat"
 $btnHeroWinsPot.ForeColor = [System.Drawing.Color]::White
 $btnHeroWinsPot.BackColor = [System.Drawing.Color]::FromArgb(46, 104, 72)
 $btnHeroWinsPot.Add_Click({ Award-PotToWinner -Winner "hero" -Reason "manual_settle_button" }.GetNewClosure())
+$btnHeroWinsPot.Visible = $false
 $advicePanel.Controls.Add($btnHeroWinsPot)
 $script:btnHeroWinsPot = $btnHeroWinsPot
 
@@ -3375,6 +3823,7 @@ $btnVillainWinsPot.FlatStyle = "Flat"
 $btnVillainWinsPot.ForeColor = [System.Drawing.Color]::White
 $btnVillainWinsPot.BackColor = [System.Drawing.Color]::FromArgb(112, 118, 126)
 $btnVillainWinsPot.Add_Click({ Award-PotToWinner -Winner "villain" -Reason "manual_settle_button" }.GetNewClosure())
+$btnVillainWinsPot.Visible = $false
 $advicePanel.Controls.Add($btnVillainWinsPot)
 $script:btnVillainWinsPot = $btnVillainWinsPot
 
@@ -3970,8 +4419,16 @@ function Maybe-RefreshAdviceAfterActionStateChange {
   if ($script:heroFolded -or $script:villainFolded) {
     return
   }
+  if ($script:handResolved) {
+    return
+  }
   if (-not (Get-HeroCardsReady)) {
     return
+  }
+  if (Try-AdvanceStreetIfRoundResolved) {
+    if ($script:handResolved) {
+      return
+    }
   }
   if (Get-BoardReadyFromTokens -Tokens @($lastBoardTokens)) {
     [void](Queue-EngineSolveForBoard -BoardTokens @($lastBoardTokens) -StageLabel $StageLabel)
@@ -3993,10 +4450,13 @@ function Award-PotToWinner {
     $script:currentVillainChips = [int]$script:currentVillainChips + $award
   }
   $script:currentPotAmount = 0
+  $script:handResolved = $true
+  $script:activeVillainCount = 0
   Reset-StreetActionState
   $script:heroFolded = $false
   $script:villainFolded = $false
   Update-TableStateDisplay
+  Prepare-NextHandBackendState
   Write-Log ("Pot awarded to {0}: {1} chips." -f $Winner, [int]$award) -Type "hand_settled" -Data @{
     winner = $Winner
     amount = [int]$award
@@ -4015,6 +4475,10 @@ function Invoke-VillainActionSelection {
   if (-not $normalizedAction) {
     return
   }
+  if ($script:handResolved) {
+    Write-Log "Villain action ignored: hand already resolved."
+    return
+  }
 
   $committedAmount = 0
   $stakes = Get-StakeSettings
@@ -4022,12 +4486,14 @@ function Invoke-VillainActionSelection {
     "CHECK" {
       $script:lastVillainAction = "CHECK"
       $script:villainFolded = $false
+      $script:villainActedThisRound = $true
       Clear-FacingBetAmount
       Update-TableStateDisplay
     }
     "FOLD" {
       $script:lastVillainAction = "FOLD"
       $script:villainFolded = $true
+      $script:villainActedThisRound = $true
       Clear-FacingBetAmount
       Set-AdviceState -Primary "VILLAIN FOLDS" -Secondary "Pot awarded to hero."
       Award-PotToWinner -Winner "hero" -Reason "villain_fold"
@@ -4036,6 +4502,7 @@ function Invoke-VillainActionSelection {
     "ALL IN" {
       $script:lastVillainAction = "ALL IN"
       $script:villainFolded = $false
+      $script:villainActedThisRound = $true
       $committedAmount = [int]([Math]::Max(0, $script:currentVillainChips))
       if ($committedAmount -gt 0) {
         $committedAmount = Apply-VillainCommitmentToPot -Amount $committedAmount -SetAsFacingBet
@@ -4044,8 +4511,20 @@ function Invoke-VillainActionSelection {
         Update-TableStateDisplay
       }
     }
+    "CALL" {
+      $script:lastVillainAction = "CALL"
+      $script:villainFolded = $false
+      $script:villainActedThisRound = $true
+      $callGap = [int]([Math]::Max(0, ([int]$script:currentHeroStreetCommit - [int]$script:currentVillainStreetCommit)))
+      if ($callGap -gt 0) {
+        $committedAmount = Apply-VillainCommitmentToPot -Amount $callGap
+      }
+      Clear-FacingBetAmount
+      Update-TableStateDisplay
+    }
     { $_ -in @("BET", "RAISE") } {
       $script:villainFolded = $false
+      $script:villainActedThisRound = $true
       $script:lastVillainAction = "RAISE"
       $defaultAmount = if ($normalizedAction -eq "RAISE" -and [int]$script:currentFacingBetAmount -gt 0) {
         [int]([Math]::Max(([int]$script:currentFacingBetAmount + $stakes.big_blind), $stakes.big_blind))
@@ -4088,10 +4567,15 @@ function Invoke-ManualActionSelection {
   if (-not $normalizedAction) {
     return
   }
+  if ($script:handResolved) {
+    Write-Log "Manual action ignored: hand already resolved."
+    return
+  }
 
   $committedAmount = 0
   if ($normalizedAction -eq "ALL IN") {
     $script:heroFolded = $false
+    $script:heroActedThisRound = $true
     $committedAmount = [int]([Math]::Max(0, $script:currentHeroChips))
     if ($committedAmount -gt 0) {
       $committedAmount = Apply-HeroCommitmentToPot -Amount $committedAmount -ClearFacingBet
@@ -4099,6 +4583,7 @@ function Invoke-ManualActionSelection {
   }
   elseif ($normalizedAction -in @("CALL", "RAISE")) {
     $script:heroFolded = $false
+    $script:heroActedThisRound = $true
     $stakes = Get-StakeSettings
     $defaultAmount = if ($normalizedAction -eq "RAISE") {
       if ($script:lastRecommendedRaiseAmount -gt 0) {
@@ -4135,6 +4620,7 @@ function Invoke-ManualActionSelection {
   }
   elseif ($normalizedAction -eq "FOLD") {
     $script:heroFolded = $true
+    $script:heroActedThisRound = $true
     Clear-FacingBetAmount
     Set-AdviceState -Primary "FOLD" -Secondary "Pot awarded to villain."
     Award-PotToWinner -Winner "villain" -Reason "hero_fold"
@@ -4142,6 +4628,7 @@ function Invoke-ManualActionSelection {
   }
   else {
     $script:heroFolded = $false
+    $script:heroActedThisRound = $true
   }
   $script:adviceActionPrimary = $normalizedAction
   if ($committedAmount -gt 0) {
@@ -4543,18 +5030,6 @@ function New-TableStateOverlayContextMenu {
     Start-NewHandPreserveChips
   }.GetNewClosure())
   [void]$menu.Items.Add($itemNewHand)
-  $itemHeroWins = New-Object System.Windows.Forms.ToolStripMenuItem
-  $itemHeroWins.Text = "Hero Wins Pot"
-  $itemHeroWins.Add_Click({
-    Award-PotToWinner -Winner "hero" -Reason "overlay_settle"
-  }.GetNewClosure())
-  [void]$menu.Items.Add($itemHeroWins)
-  $itemVillainWins = New-Object System.Windows.Forms.ToolStripMenuItem
-  $itemVillainWins.Text = "Villain Wins Pot"
-  $itemVillainWins.Add_Click({
-    Award-PotToWinner -Winner "villain" -Reason "overlay_settle"
-  }.GetNewClosure())
-  [void]$menu.Items.Add($itemVillainWins)
   return $menu
 }
 
@@ -6607,32 +7082,51 @@ function Reset-NewHandState {
   }
   Reset-TableStateToCurrentStakes
   Update-CheckCallButtonModeFromState
-  Write-Log "New hand reset: cleared solver state; waiting for fresh hero cards."
+  Write-Log "Hand state reset: cleared solver state and visible cards."
 }
 
 function Start-NewHandPreserveChips {
   $preservedChips = [int]$script:currentHeroChips
   $preservedVillainChips = [int]$script:currentVillainChips
-  $defaultState = Get-DefaultTableStateFromStakes
   Reset-NewHandState
   $script:currentHeroChips = [int]$preservedChips
-  $script:currentPotAmount = [int]$defaultState.starting_pot
   Reset-HiddenVillainState -StartingChips ([int]$preservedVillainChips)
-  Rebuild-DeckShoeState
+  $script:handCounter = [int]$script:handCounter + 1
+  $script:heroIsSmallBlind = (([int]$script:handCounter % 2) -eq 1)
+  $script:configuredVillainCount = 1
+  $script:activeVillainCount = 1
+  $script:handResolved = $false
+  $script:lastHandSummaryText = ""
+  Start-ActiveDeckFromPreparedOrFresh
+  Start-PostBlindRoundState
+  $script:suppressHeroAutoSend = $true
+  try {
+    Deal-InitialHoleCardsForCurrentHand
+  }
+  finally {
+    $script:suppressHeroAutoSend = $false
+  }
   $txtLatest.Text = @(
     "run:   new_hand"
+    ("hero_role: {0}" -f $(if ($script:heroIsSmallBlind) { "SB / BTN" } else { "BB" }))
+    ("villain_role: {0}" -f $(if ($script:heroIsSmallBlind) { "BB" } else { "SB / BTN" }))
     ("hero_cards: {0}" -f (Get-HeroCardsText))
+    ("villain_cards: {0}" -f (Get-VillainCardsText))
     ("board: {0}" -f (Get-BoardTokensText))
     ("pot:   {0}" -f [int]$script:currentPotAmount)
-    ("chips: {0}" -f [int]$script:currentHeroChips)
+    ("hero_chips: {0}" -f [int]$script:currentHeroChips)
+    ("villain_chips: {0}" -f [int]$script:currentVillainChips)
+    ("burns: {0}" -f (Get-BurnPileText))
   ) -join "`r`n"
   Update-TableStateDisplay
   Refresh-RoiOverlays
-  Write-Log ("New hand started: cards cleared, stacks preserved (hero={0}, villain={1}), pot reset to {2}." -f [int]$script:currentHeroChips, [int]$script:currentVillainChips, [int]$script:currentPotAmount) -Type "new_hand" -Data @{
+  Write-Log ("New hand started: hero={0}, villain={1}, pot={2}, hero_role={3}." -f [int]$script:currentHeroChips, [int]$script:currentVillainChips, [int]$script:currentPotAmount, $(if ($script:heroIsSmallBlind) { "SB / BTN" } else { "BB" })) -Type "new_hand" -Data @{
     current_pot = [int]$script:currentPotAmount
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
+    hero_is_small_blind = [bool]$script:heroIsSmallBlind
   }
+  Try-AutoSendHeroCardsToEngine
 }
 
 function Run-OcrHeroSet {

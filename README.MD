@@ -385,8 +385,7 @@ No-engine startup variant:
 - The right-side advice panel and floating `Table State` overlay now include a `Show/Hide Villain Cards` toggle for the hidden villain shell, so you can expose or hide the current hidden villain-card placeholders for debugging without adding full villain controls yet.
 - The tester now exposes the first visible one-villain controls:
   - live `Villain Stack` in the right panel and floating `Table State` overlay,
-  - a `Villain Action` menu (`Check`, `Bet`, `Raise`, `Fold`, `All In`) that updates pot, villain chips, and hero-facing bet state,
-  - `Hero Wins` / `Villain Wins` settlement buttons that award the full pot to the selected winner without resetting bankrolls.
+  - a `Villain Action` menu (`Check`, `Bet`, `Raise`, `Fold`, `All In`) that updates pot, villain chips, and hero-facing bet state.
 - The tester also supports an optional `villain` ROI rectangle:
   - it shows villain chips remaining,
   - villain chips invested on the current street only,
@@ -396,7 +395,17 @@ No-engine startup variant:
 - The action UI now exposes only the two combined action buckets:
   - `CHECK / CALL` dynamically becomes `Call` whenever a bet is being faced,
   - `RAISE / ALL IN` dynamically becomes `All In` when a normal raise is no longer legal (for example when the required raise reaches or exceeds the remaining stack).
-- `New Hand` now starts a new cycle by clearing cards/advice while preserving both hero and villain chip stacks, then resetting the pot back to the configured blinds.
+- `New Hand` now starts a real heads-up hand cycle while preserving both bankrolls:
+  - it alternates who is `SB / BTN` and `BB`,
+  - posts blinds automatically,
+  - shuffles a fresh single-deck shoe,
+  - deals hero/villain hole cards one at a time in live-deal order,
+  - tracks a hidden burn pile,
+  - and then auto-advances streets (`Burn + Flop`, `Burn + Turn`, `Burn + River`) whenever a betting round resolves.
+- Pot settlement is now automatic:
+  - folding awards the pot immediately,
+  - completed river rounds run an automatic showdown and award the pot to the correct player,
+  - the final visible hand stays frozen on screen until you click `New Hand`, while the backend prepares a fresh shuffled deck for the next cycle.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - top-level `Random Card` for a legal non-duplicate assignment
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
@@ -413,7 +422,7 @@ No-engine startup variant:
 - The single-slot quick-test strip can now be hidden/shown with `Hide Quick Tests` / `Show Quick Tests` so the main staged controls have more space when you do not need per-slot debug runs.
 - The hidden/shown quick-test state is persisted across restarts, and the floating `Advice` / `Table State` overlay windows now remember their last screen positions.
 - A top-level `Random Card` button is also available in the main control strip; it assigns a legal non-duplicate card to the currently selected card target (or the next unresolved hero slot when `hero` is selected).
-- A `New Hand` button clears the staged hero/board cards and solver hand state while preserving the current hero chip count; it resets the pot to the configured blinds for the next hand.
+- A `New Hand` button starts the next auto-dealt hand cycle while preserving both hero and villain chip counts.
 - Right-clicking the floating `Table State` overlay now exposes a `New Hand` shortcut as well, so the state reset is available without returning to the main form.
 - `Set Heroes ROI` button is a one-click shortcut that picks `hero1` ROI and auto-clones to `hero2`.
 - `Run Engine` starts Ollama + bridge on demand (same action on both tester variants).
