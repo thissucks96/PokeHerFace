@@ -6895,7 +6895,12 @@ function Refresh-RoiOverlays {
     $overlay = $overlayForms[$key]
     $overlay.Bounds = $rect
     if (-not $overlay.Visible) {
-      $overlay.Show()
+      if ($null -ne $form -and -not $form.IsDisposed) {
+        $overlay.Show($form)
+      }
+      else {
+        $overlay.Show()
+      }
     }
     if ($overlay.Width -ne $rect.Width -or $overlay.Height -ne $rect.Height) {
       $overlay.Bounds = $rect
@@ -8892,13 +8897,23 @@ $form.Add_Shown({
     $script:adviceOverlay = New-AdviceOverlayForm
   }
   if ($null -ne $adviceOverlay -and -not $adviceOverlay.Visible) {
-    $adviceOverlay.Show()
+    if ($null -ne $form -and -not $form.IsDisposed) {
+      $adviceOverlay.Show($form)
+    }
+    else {
+      $adviceOverlay.Show()
+    }
   }
   if ($null -eq $stateOverlay -or $stateOverlay.IsDisposed) {
     $script:stateOverlay = New-TableStateOverlayForm
   }
   if ($null -ne $stateOverlay -and -not $stateOverlay.Visible) {
-    $stateOverlay.Show()
+    if ($null -ne $form -and -not $form.IsDisposed) {
+      $stateOverlay.Show($form)
+    }
+    else {
+      $stateOverlay.Show()
+    }
   }
   Ensure-BackendsRunning
   Write-Log "Ready. Select target, pick each ROI, then run OCR."
