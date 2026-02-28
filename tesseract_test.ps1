@@ -5081,6 +5081,87 @@ function Get-HeroLegalActionTokens {
   return @($tokens | Select-Object -Unique)
 }
 
+function Normalize-AdviceWeightedRowsToHeroLegal {
+  param([Parameter(Mandatory = $true)]$WeightedRows)
+
+  $legalTokens = @(Get-HeroLegalActionTokens)
+  if ($legalTokens.Count -le 0) {
+    return @($WeightedRows)
+  }
+
+  $normalizedRows = New-Object System.Collections.Generic.List[object]
+  foreach ($row in @($WeightedRows)) {
+    if ($null -eq $row) { continue }
+    $tokenRaw = ([string]$row.token).Trim().ToLowerInvariant()
+    if (-not $tokenRaw) { continue }
+    $weight = 0.0
+    try { $weight = [double]$row.weight } catch { $weight = 0.0 }
+    if ($weight -le 0.0) { continue }
+
+    $mapped = ""
+    if ($tokenRaw -eq "fold") {
+      if ($legalTokens -contains "FOLD") { $mapped = "fold" }
+    }
+    elseif ($tokenRaw -eq "check") {
+      if ($legalTokens -contains "CHECK") { $mapped = "check" }
+      elseif ($legalTokens -contains "CALL") { $mapped = "call" }
+    }
+    elseif ($tokenRaw -eq "call" -or $tokenRaw -like "call:*") {
+      if ($legalTokens -contains "CALL") {
+        $mapped = $tokenRaw
+      }
+      elseif ($legalTokens -contains "CHECK") {
+        $mapped = "check"
+      }
+    }
+    elseif ($tokenRaw -eq "all in" -or $tokenRaw -eq "allin") {
+      if ($legalTokens -contains "ALL IN") { $mapped = "all in" }
+      elseif ($legalTokens -contains "RAISE") { $mapped = "raise" }
+    }
+    elseif ($tokenRaw -eq "bet" -or $tokenRaw -eq "raise" -or $tokenRaw -like "bet:*" -or $tokenRaw -like "raise:*") {
+      if ($legalTokens -contains "RAISE") {
+        if ($tokenRaw -like "bet:*" -or $tokenRaw -like "raise:*") {
+          $amount = [int](Get-AmountFromActionToken -Token $tokenRaw)
+          if ($amount -gt 0) {
+            $mapped = ("raise:{0}" -f [int]$amount)
+          }
+          else {
+            $mapped = "raise"
+          }
+        }
+        else {
+          $mapped = "raise"
+        }
+      }
+      elseif ($legalTokens -contains "ALL IN") {
+        $mapped = "all in"
+      }
+    }
+
+    if (-not $mapped) { continue }
+    [void]$normalizedRows.Add([pscustomobject]@{
+      token = [string]$mapped
+      weight = [double]$weight
+    })
+  }
+
+  if ($normalizedRows.Count -le 0) {
+    return @($WeightedRows)
+  }
+
+  return @(
+    $normalizedRows |
+      Group-Object -Property token |
+      ForEach-Object {
+        [pscustomobject]@{
+          token = [string]$_.Name
+          weight = [double](($_.Group | Measure-Object -Property weight -Sum).Sum)
+        }
+      } |
+      Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false }
+  )
+}
+
 function Convert-TextToChipAmount {
   param([string]$Text)
   $value = ([string]$Text).Trim()
@@ -5667,7 +5748,12 @@ function Set-AdviceFromEngineResult {
     return
   }
 
-  $sortedRows = @($weightedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
+  $normalizedRows = @(Normalize-AdviceWeightedRowsToHeroLegal -WeightedRows @($weightedRows))
+  if ($normalizedRows.Count -le 0) {
+    return
+  }
+
+  $sortedRows = @($normalizedRows | Sort-Object -Property @{ Expression = "weight"; Descending = $true }, @{ Expression = "token"; Descending = $false })
   foreach ($row in $sortedRows) {
     $amount = Get-AmountFromActionToken -Token ([string]$row.token)
     if ($amount -le 0) {
