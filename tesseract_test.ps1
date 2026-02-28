@@ -1648,6 +1648,9 @@ function Test-IsVillainTurn {
   if ($script:handResolved -or $script:heroFolded -or $script:villainFolded) {
     return $false
   }
+  if ([int]$script:currentVillainChips -le 0) {
+    return $false
+  }
   if ([int]$script:activeVillainCount -le 0) {
     return $false
   }
@@ -1758,12 +1761,14 @@ function Get-VillainStyleWeightMultiplier {
 function Get-VillainLegalActionTokens {
   $tokens = New-Object System.Collections.Generic.List[string]
   $villainChips = [int]([Math]::Max(0, $script:currentVillainChips))
+  $heroChips = [int]([Math]::Max(0, $script:currentHeroChips))
   $raiseCapReached = Get-IsStreetRaiseCapReached
   if ($script:handResolved -or $script:heroFolded -or $script:villainFolded -or $villainChips -le 0) {
     return @()
   }
 
   $facingGap = Get-VillainFacingBetAmount
+  $heroAllIn = ($heroChips -le 0)
   if ($facingGap -gt 0) {
     [void]$tokens.Add("FOLD")
     if ($facingGap -ge $villainChips) {
@@ -1771,7 +1776,7 @@ function Get-VillainLegalActionTokens {
     }
     else {
       [void]$tokens.Add("CALL")
-      if (-not $raiseCapReached) {
+      if ((-not $heroAllIn) -and (-not $raiseCapReached)) {
         $raiseBase = [int](Get-RecommendedVillainRaiseAmount)
         if ($raiseBase -ge $villainChips) {
           [void]$tokens.Add("ALL IN")
@@ -1782,6 +1787,10 @@ function Get-VillainLegalActionTokens {
       }
     }
     return @($tokens | Select-Object -Unique)
+  }
+
+  if ($heroAllIn) {
+    return @()
   }
 
   [void]$tokens.Add("CHECK")
@@ -2765,6 +2774,44 @@ function Test-BettingRoundResolved {
   if ((-not $script:heroActedThisRound) -or (-not $script:villainActedThisRound)) {
     return $false
   }
+  return $true
+}
+
+function Try-ResolveAllInRunoutIfNoActions {
+  if ($script:handResolved -or $script:heroFolded -or $script:villainFolded) {
+    return $false
+  }
+
+  $heroAllIn = ([int]$script:currentHeroChips -le 0)
+  $villainAllIn = ([int]$script:currentVillainChips -le 0)
+  if (-not ($heroAllIn -or $villainAllIn)) {
+    return $false
+  }
+
+  $heroLegal = @(Get-HeroLegalActionTokens)
+  $villainLegal = @(Get-VillainLegalActionTokens)
+  if ($heroLegal.Count -gt 0 -or $villainLegal.Count -gt 0) {
+    return $false
+  }
+
+  $boardCount = Get-ValidBoardCardCount -Tokens @($lastBoardTokens)
+  if ($boardCount -lt 3) {
+    Deal-NextStreetCards -Street "flop"
+    Reset-StreetActionState
+    $boardCount = 3
+  }
+  if ($boardCount -lt 4) {
+    Deal-NextStreetCards -Street "turn"
+    Reset-StreetActionState
+    $boardCount = 4
+  }
+  if ($boardCount -lt 5) {
+    Deal-NextStreetCards -Street "river"
+    Reset-StreetActionState
+  }
+
+  [void](Resolve-ShowdownAndAwardPot)
+  Write-Log "Forced all-in runout resolved to showdown." -Type "allin_runout"
   return $true
 }
 
@@ -5797,13 +5844,14 @@ function Get-HeroLegalActionTokens {
     return @()
   }
   $tokens = New-Object System.Collections.Generic.List[string]
+  $villainAllIn = ([int]$script:currentVillainChips -le 0)
   $checkCall = ([string]$script:checkCallButtonToken).Trim().ToUpperInvariant()
   if ($checkCall -notin @("CHECK", "CALL")) {
     $checkCall = "CHECK"
   }
   [void]$tokens.Add($checkCall)
   [void]$tokens.Add("FOLD")
-  if ([int]$script:currentHeroChips -gt 0) {
+  if (([int]$script:currentHeroChips -gt 0) -and (-not $villainAllIn)) {
     $raiseToken = ([string]$script:raiseAllInButtonToken).Trim().ToUpperInvariant()
     if ($raiseToken -eq "ALL IN") {
       [void]$tokens.Add("ALL IN")
@@ -5929,6 +5977,12 @@ function Maybe-RefreshAdviceAfterActionStateChange {
     return
   }
   for ($pass = 0; $pass -lt 8; $pass++) {
+    if (Try-ResolveAllInRunoutIfNoActions) {
+      if ($script:handResolved) {
+        return
+      }
+      continue
+    }
     if (Try-AdvanceStreetIfRoundResolved) {
       if ($script:handResolved) {
         return
