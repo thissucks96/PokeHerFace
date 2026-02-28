@@ -2557,20 +2557,9 @@ $btnCall.BackColor = [System.Drawing.Color]::FromArgb(38, 120, 68)
 $btnCall.Add_Click({ Write-Log "Placeholder action clicked: CALL (no-op)." })
 $form.Controls.Add($btnCall)
 
-$btnBet = New-Object System.Windows.Forms.Button
-$btnBet.Text = "Raise"
-$btnBet.Location = New-Object System.Drawing.Point(1020, 18)
-$btnBet.Size = New-Object System.Drawing.Size(84, 28)
-$btnBet.FlatStyle = "Flat"
-$btnBet.ForeColor = [System.Drawing.Color]::White
-$btnBet.BackColor = [System.Drawing.Color]::FromArgb(152, 48, 48)
-$btnBet.Visible = $false
-$btnBet.Add_Click({ Write-Log "Placeholder action clicked: RAISE (no-op)." })
-$form.Controls.Add($btnBet)
-
 $btnRaise = New-Object System.Windows.Forms.Button
 $btnRaise.Text = "Raise"
-$btnRaise.Location = New-Object System.Drawing.Point(1110, 18)
+$btnRaise.Location = New-Object System.Drawing.Point(1020, 18)
 $btnRaise.Size = New-Object System.Drawing.Size(84, 28)
 $btnRaise.FlatStyle = "Flat"
 $btnRaise.ForeColor = [System.Drawing.Color]::White
@@ -2702,7 +2691,7 @@ $adviceGuideTitle.AutoSize = $true
 $advicePanel.Controls.Add($adviceGuideTitle)
 
 $adviceGuide = New-Object System.Windows.Forms.Label
-$adviceGuide.Text = "FOLD`r`nCALL`r`nBET / RAISE`r`nALL IN"
+$adviceGuide.Text = "FOLD`r`nCALL`r`nRAISE`r`nALL IN"
 $adviceGuide.ForeColor = [System.Drawing.Color]::FromArgb(195, 205, 220)
 $adviceGuide.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
 $adviceGuide.Location = New-Object System.Drawing.Point(18, 424)

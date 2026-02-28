@@ -369,6 +369,7 @@ No-engine startup variant:
 - Board and hero overlays now render the assigned card token in the center of the box (for example `A♠`) while keeping the slot label in the corner.
 - The tester UI includes a dedicated `ADVICE` panel plus a draggable floating advice overlay that auto-opens on startup. While the engine is busy it shows `THINKING`; after a completed solve it now renders the bridge recommendation plus the top two weighted actions from `result.root_actions`, with strategy/time metadata on a second line for readability.
 - The advice primary label now buckets engine output into clearer user actions (`CHECK`, `CALL`, `CALL ANY`, `FOLD`, `RAISE`) instead of only echoing the top raw token.
+- The header action controls now use `Fold`, `Call`, and `Raise` only; `Raise` is the single aggressive button and covers both bet/raise semantics in the UI.
 - The main tester window now reflows on resize: the left workspace expands/contracts, the advice panel stays pinned to the right, and the log/output panes scale with the window instead of colliding.
 - Right-click any board-card or hero-card overlay to open a quick context menu:
   - `Set Card` -> suit (`Spade ♠`, `Heart ♥`, `Diamond ♦`, `Club ♣`) -> rank (`A`..`2`) for manual card entry
