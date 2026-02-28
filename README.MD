@@ -374,6 +374,7 @@ No-engine startup variant:
 - The ROI action menus now follow the same legality rules as the main buttons: `CHECK` disappears whenever a call is required, the aggressive ROI control exposes `RAISE` plus `ALL IN` when both are legal (or only `ALL IN` when a normal raise is no longer legal), and the menu is rebuilt on open so those labels stay in sync with the live hand state.
 - Raise amount prompts now include quick sizing buttons for `25% Pot`, `50% Pot`, and `100% Pot`, which populate the amount field from the current pot size before you confirm.
 - `CALL` now auto-commits the current required call amount immediately; only `RAISE` prompts for an amount.
+- When villain mode is not `Manual`, a hero action now immediately hands control to the villain policy before the next advice refresh, so scripted/engine-random villain turns can advance the hand without another manual step.
 - The main tester window now reflows on resize: the left workspace expands/contracts, the advice panel stays pinned to the right, and the log/output panes scale with the window instead of colliding.
 - The manual action buttons were moved into the right-side advice panel so the header rows stay focused on capture/run controls instead of stacking every control in one strip.
 - The target picker now exposes the simplified live labels (`hero`, `pot`, `check`, `fold`, `call`, `raise`, `all_in`) while still mapping those controls back to the underlying ROI keys internally. Legacy `bet_btn` remains supported as a compatibility alias for older saved ROIs.

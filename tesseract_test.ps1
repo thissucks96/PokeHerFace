@@ -5089,6 +5089,9 @@ function Invoke-ManualActionSelection {
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
   }
+  if (Try-RunAutomaticVillainTurn) {
+    return
+  }
   Maybe-RefreshAdviceAfterActionStateChange -StageLabel "manual_action"
 }
 
@@ -5477,6 +5480,7 @@ function New-TableStateOverlayContextMenu {
   $itemNewHand = New-Object System.Windows.Forms.ToolStripMenuItem
   $itemNewHand.Text = "New Hand"
   $itemNewHand.Add_Click({
+    param($sender, $e)
     Start-NewHandPreserveChips
   }.GetNewClosure())
   [void]$menu.Items.Add($itemNewHand)
@@ -8309,6 +8313,7 @@ $btnRestart.Add_Click({
 })
 
 $btnNewHand.Add_Click({
+  param($sender, $e)
   Start-NewHandPreserveChips
 })
 
