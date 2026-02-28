@@ -19,6 +19,9 @@ Directory to write the output JSON report. Defaults to `4_LLM_Bridge\examples\sy
 
 .PARAMETER TimeoutSec
 Maximum seconds to wait for a single bridge /solve request (default 60).
+
+.PARAMETER Aggressive
+Use the aggressive villain harness variant where villain leads 75% pot into hero each street.
 #>
 [CmdletBinding()]
 param (
@@ -27,7 +30,8 @@ param (
     [string]$RuntimeProfile = "fast",
     [int]$Hands = 20,
     [string]$OutputDir = "",
-    [int]$TimeoutSec = 60
+    [int]$TimeoutSec = 60,
+    [switch]$Aggressive
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,6 +80,10 @@ $pythonArgs = @(
     "--timeout", $TimeoutSec,
     "--output", $outputFile
 )
+
+if ($Aggressive) {
+    $pythonArgs += "--aggressive"
+}
 
 Write-Host "Executing python harness..." -ForegroundColor DarkGray
 try {

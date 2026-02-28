@@ -35,6 +35,14 @@ PASSIVE_VILLAIN_POLICY = {
     "raises": "disabled",
     "folds": "disabled",
 }
+AGGRESSIVE_VILLAIN_POLICY = {
+    "checked_to": "bet_75",
+    "facing_hero_bet": "auto_call",
+    "facing_hero_all_in": "auto_call",
+    "raises": "disabled",
+    "folds": "disabled",
+}
+AGGRESSIVE_LEGAL_ACTIONS = ["fold", "call", "raise_75", "all_in"]
 
 def _get_card_val(card_str: str) -> tuple[int, str]:
     if len(card_str) == 3 and card_str.startswith("10"):
@@ -157,17 +165,23 @@ def main() -> int:
     parser.add_argument("--thread-count", type=int, default=14, help="Thread count for each solve")
     parser.add_argument("--raise-cap", type=int, default=2, help="Raise cap for the simulated solve tree")
     parser.add_argument("--oop", action="store_true", help="Run the hero out of position instead of in position")
+    parser.add_argument("--aggressive", action="store_true", help="Use an aggressive betting villain instead of a passive one")
     parser.add_argument("--allow-donk-bets", action="store_true", help="Disable the default remove_donk_bets simplification")
     parser.add_argument("--disable-compress-strategy", action="store_true", help="Disable compress_strategy in spot payloads")
     parser.add_argument("--output", required=True, help="Output JSON map")
     args = parser.parse_args()
 
+    active_policy = AGGRESSIVE_VILLAIN_POLICY if args.aggressive else PASSIVE_VILLAIN_POLICY
+    active_mode = "stateful_aggressive_villain_heads_up" if args.aggressive else "stateful_passive_villain_heads_up"
+    active_legal_actions = AGGRESSIVE_LEGAL_ACTIONS if args.aggressive else DEFAULT_LEGAL_ACTIONS
+    facing_action_value = "facing_bet_75" if args.aggressive else "checked_to_hero"
+
     scenario: Dict[str, Any] = {
-        "mode": "stateful_passive_villain_heads_up",
+        "mode": active_mode,
         "hero_seat": "btn",
         "villain_seat": "bb",
-        "villain_policy": PASSIVE_VILLAIN_POLICY,
-        "legal_actions": DEFAULT_LEGAL_ACTIONS,
+        "villain_policy": active_policy,
+        "legal_actions": active_legal_actions,
         "villain_range": DEFAULT_VILLAIN_RANGE,
         "in_position_player": 2 if args.oop else 1,
         "starting_stack_bb": args.starting_stack_bb,
@@ -211,7 +225,7 @@ def main() -> int:
             "full_board": full_board,
             "scenario": {
                 "street_order": ["flop", "turn", "river"],
-                "facing_action": "checked_to_hero",
+                "facing_action": facing_action_value,
                 "legal_actions": scenario["legal_actions"],
                 "hero_in_position": scenario["in_position_player"] == 1,
                 "starting_stack_bb": scenario["starting_stack_bb"],
@@ -220,7 +234,9 @@ def main() -> int:
             "streets": [],
             "showdown": {},
             "all_in": False,
-            "all_in_street": None
+            "all_in_street": None,
+            "folded": False,
+            "fold_street": None,
         }
         
         active = True
@@ -230,7 +246,12 @@ def main() -> int:
                 break
                 
             current_board = full_board[:board_count]
-            decision_pot = pot
+            base_pot = pot
+            villain_bet = 0
+            if args.aggressive:
+                villain_bet = max(int(scenario["minimum_bet"]), int(round(base_pot * 0.75)))
+                villain_bet = min(hero_stack, villain_bet)
+            decision_pot = pot + villain_bet
             decision_stack = hero_stack
             spot = _build_engine_spot(hero_hole, current_board, decision_pot, decision_stack, scenario)
             
@@ -268,10 +289,19 @@ def main() -> int:
             total_latency_by_street[street_name].append(t_elapsed)
             
             # Map choice to exact sizes
-            chosen_action = "check"
+            chosen_action = "call" if args.aggressive else "check"
             if not action_map and result_block.get("decision"):
-                 raw_action = result_block["decision"].get("action", "check")
-                 if "bet" in raw_action:
+                 raw_action = str(result_block["decision"].get("action", "check")).strip().lower()
+                 if args.aggressive:
+                     if raw_action == "fold":
+                         chosen_action = "fold"
+                     elif raw_action == "all_in":
+                         chosen_action = "all_in"
+                     elif "bet" in raw_action or "raise" in raw_action:
+                         chosen_action = "raise_75"
+                     else:
+                         chosen_action = "call"
+                 elif "bet" in raw_action:
                       chosen_action = "bet_33" # Fallback heuristic assumption
             else:
                  best_freq = -1.0
@@ -282,11 +312,20 @@ def main() -> int:
                          action_base = a.get("action", "check")
                          amount = a.get("amount")
                          if action_base == "bet" and amount:
-                             pct = amount / float(pot)
-                             if pct > 0.6: chosen_action = "bet_75"
-                             else: chosen_action = "bet_33"
+                             if args.aggressive:
+                                 chosen_action = "raise_75"
+                             else:
+                                 pct = amount / float(pot)
+                                 if pct > 0.6: chosen_action = "bet_75"
+                                 else: chosen_action = "bet_33"
+                         elif action_base == "raise":
+                             chosen_action = "raise_75" if args.aggressive else "bet_75"
                          elif action_base == "all_in":
                              chosen_action = "all_in"
+                         elif args.aggressive and action_base == "fold":
+                             chosen_action = "fold"
+                         elif args.aggressive and action_base in {"check", "call"}:
+                             chosen_action = "call"
                          else:
                              chosen_action = action_base
 
@@ -295,18 +334,39 @@ def main() -> int:
             # Math application
             invested = 0
             min_bet = int(spot["minimum_bet"])
-            if chosen_action == "bet_33":
-                invested = max(min_bet, int(round(pot * 0.33)))
-            elif chosen_action == "bet_75":
-                invested = max(min_bet, int(round(pot * 0.75)))
-            elif chosen_action == "all_in":
-                invested = hero_stack
-                
-            invested = min(hero_stack, invested)
-            pot += (invested * 2) 
-            hero_stack -= invested
+            if args.aggressive:
+                raise_extra = max(min_bet, int(round(base_pot * 0.75)))
+                if chosen_action == "fold":
+                    pot = decision_pot
+                    active = False
+                    hand_record["folded"] = True
+                    hand_record["fold_street"] = street_name
+                elif chosen_action == "call":
+                    invested = min(hero_stack, villain_bet)
+                    pot = decision_pot + invested
+                    hero_stack -= invested
+                elif chosen_action == "raise_75":
+                    invested = min(hero_stack, villain_bet + raise_extra)
+                    villain_raise_call = max(0, invested - villain_bet)
+                    pot = decision_pot + invested + villain_raise_call
+                    hero_stack -= invested
+                elif chosen_action == "all_in":
+                    invested = hero_stack
+                    villain_match = max(0, invested - villain_bet)
+                    pot = decision_pot + invested + villain_match
+                    hero_stack = 0
+            else:
+                if chosen_action == "bet_33":
+                    invested = max(min_bet, int(round(pot * 0.33)))
+                elif chosen_action == "bet_75":
+                    invested = max(min_bet, int(round(pot * 0.75)))
+                elif chosen_action == "all_in":
+                    invested = hero_stack
+                invested = min(hero_stack, invested)
+                pot += (invested * 2)
+                hero_stack -= invested
             
-            if hero_stack <= 0:
+            if hero_stack <= 0 and chosen_action != "fold":
                 chosen_action = "all_in"
                 active = False
                 hand_record["all_in"] = True
@@ -316,7 +376,7 @@ def main() -> int:
             
             hand_record["streets"].append({ # type: ignore
                 "street": street_name,
-                "facing_action": "checked_to_hero",
+                "facing_action": facing_action_value,
                 "legal_actions": scenario["legal_actions"],
                 "solve_spot": {
                     "hero_range": spot["hero_range"],
@@ -333,6 +393,7 @@ def main() -> int:
                     "raise_cap": spot["raise_cap"],
                     "compress_strategy": spot["compress_strategy"],
                 },
+                "villain_bet": villain_bet,
                 "pot": pot,
                 "stack": hero_stack,
                 "action": chosen_action,
@@ -340,27 +401,28 @@ def main() -> int:
                 "strategy_source": strat_source
             })
 
-        # Eval
-        hero_score = _eval_7_cards(hero_hole + full_board)
-        villain_score = _eval_7_cards(villain_hole + full_board)
-        is_win = hero_score > villain_score
-        is_tie = hero_score == villain_score
-        is_loss = not (is_win or is_tie)
-        
-        res = "tie" if is_tie else ("win" if is_win else "loss")
-        win_loss[res] += 1
-        
         starting_stack_bb = float(args.starting_stack_bb)
-        if is_win:
-            final_hero_stack = float(hero_stack + pot)
-        elif is_tie:
-            final_hero_stack = float(hero_stack + (pot / 2.0))
-        else:
+        if bool(hand_record["folded"]):
+            res = "loss"
+            win_loss[res] += 1
             final_hero_stack = float(hero_stack)
+            hand_record["showdown"] = {"result": res, "final_pot": pot, "net_bb": final_hero_stack - starting_stack_bb}
+        else:
+            hero_score = _eval_7_cards(hero_hole + full_board)
+            villain_score = _eval_7_cards(villain_hole + full_board)
+            is_win = hero_score > villain_score
+            is_tie = hero_score == villain_score
+            res = "tie" if is_tie else ("win" if is_win else "loss")
+            win_loss[res] += 1
+            if is_win:
+                final_hero_stack = float(hero_stack + pot)
+            elif is_tie:
+                final_hero_stack = float(hero_stack + (pot / 2.0))
+            else:
+                final_hero_stack = float(hero_stack)
+            hand_record["showdown"] = {"result": res, "final_pot": pot, "net_bb": final_hero_stack - starting_stack_bb}
         net_bb = final_hero_stack - starting_stack_bb
         net_bb_won += net_bb
-        
-        hand_record["showdown"] = {"result": res, "final_pot": pot, "net_bb": net_bb}
         results.append(hand_record)
         print(f"Hand {h_idx+1}/{args.hands} | Pot: {pot} | Res: {res} | All-In: {hand_record['all_in']}")
 

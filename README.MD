@@ -445,13 +445,15 @@ Passive-villain stateful backend harness (no OCR / no UI, structured JSON street
 ```powershell
 .\scripts\test_stateful_sim.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile normal
 .\scripts\test_stateful_sim.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast_live
+.\scripts\test_stateful_sim.ps1 -Preset local_qwen3_coder_30b -RuntimeProfile fast_live -Aggressive
 ```
 
 - Default run is now `30` hands (not `100`) so the reference benchmark stays usable while `normal` is still expensive.
 - Default run is now `20` hands so the reference benchmark stays inside the current 10–25 hand target while `normal` remains expensive.
 - The harness acts as a simple heads-up referee:
   - hero and villain each get hole cards,
-  - villain checks when checked to and auto-calls any hero bet,
+  - passive mode: villain checks when checked to and auto-calls any hero bet,
+  - aggressive mode (`-Aggressive`): villain leads 75% pot into hero each street and still auto-calls any raise,
   - hero gets one decision on flop / turn / river,
   - showdown winner and net bb are recorded.
 - It now makes the full simplified `shark_cli` spot contract explicit for every decision:
