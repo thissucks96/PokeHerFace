@@ -183,6 +183,19 @@ if ($env:ENGINE_RUNTIME_PROFILE) {
     $engineRuntimeProfile = $parsedRuntimeProfile
   }
 }
+$engineFacingPostflopAutoOverrideEnabled = $true
+if ($env:ENGINE_FACING_POSTFLOP_AUTOCAP -and ([string]$env:ENGINE_FACING_POSTFLOP_AUTOCAP).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
+  $engineFacingPostflopAutoOverrideEnabled = $false
+}
+$engineFacingPostflopDeadlineSec = 13
+if ($env:ENGINE_FACING_POSTFLOP_DEADLINE_SEC) {
+  $parsedFacingDeadline = 0
+  if ([int]::TryParse([string]$env:ENGINE_FACING_POSTFLOP_DEADLINE_SEC, [ref]$parsedFacingDeadline)) {
+    if ($parsedFacingDeadline -ge 3 -and $parsedFacingDeadline -le 120) {
+      $engineFacingPostflopDeadlineSec = [int]$parsedFacingDeadline
+    }
+  }
+}
 $engineEnableMultiNode = $false
 if ($env:ENGINE_ENABLE_MULTI_NODE -and ([string]$env:ENGINE_ENABLE_MULTI_NODE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $engineEnableMultiNode = $true
@@ -8689,6 +8702,26 @@ function Queue-EngineSolveForBoard {
 
   $boardTokensInput = @($BoardTokens)
   $boardText = ($boardTokensInput -join " ")
+  $configuredRuntimeProfile = ([string]$engineRuntimeProfile).Trim().ToLowerInvariant()
+  if ($configuredRuntimeProfile -notin @("fast", "fast_live", "normal")) {
+    $configuredRuntimeProfile = "fast"
+  }
+  $effectiveRuntimeProfile = $configuredRuntimeProfile
+  $effectiveSolverTimeoutSec = [int]$engineSolverTimeoutSec
+  $boardCountForProfile = Get-ValidBoardCardCount -Tokens @($boardTokensInput)
+  $isPostflopFacingBet = ($boardCountForProfile -ge 3) -and ([int]$script:currentFacingBetAmount -gt 0)
+  if ($engineFacingPostflopAutoOverrideEnabled -and ($configuredRuntimeProfile -eq "normal") -and $isPostflopFacingBet) {
+    $effectiveRuntimeProfile = "fast_live"
+    $effectiveSolverTimeoutSec = [int]([Math]::Max(3, [Math]::Min([int]$effectiveSolverTimeoutSec, [int]$engineFacingPostflopDeadlineSec)))
+    Write-Log ("Engine runtime override: NORMAL -> FAST_LIVE (postflop facing_bet={0}, deadline={1}s)." -f [int]$script:currentFacingBetAmount, [int]$effectiveSolverTimeoutSec) -Type "engine_runtime_override" -Data @{
+      stage = $StageLabel
+      board = $boardTokensInput
+      configured_profile = $configuredRuntimeProfile
+      effective_profile = $effectiveRuntimeProfile
+      facing_bet = [int]$script:currentFacingBetAmount
+      deadline_sec = [int]$effectiveSolverTimeoutSec
+    }
+  }
   $stateSummary = if ($boardTokensInput.Count -gt 0) {
     "board $boardText"
   }
@@ -8703,21 +8736,22 @@ function Queue-EngineSolveForBoard {
     board = $boardTokensInput
     hero_cards = if ($heroReady) { $heroTokens } else { @() }
     endpoint = $bridgeSolveEndpoint
-    runtime_profile = $engineRuntimeProfile
+    runtime_profile = $configuredRuntimeProfile
+    effective_runtime_profile = $effectiveRuntimeProfile
     llm_preset = $engineLlmPreset
-    solver_timeout_sec = [int]$engineSolverTimeoutSec
+    solver_timeout_sec = [int]$effectiveSolverTimeoutSec
   }
 
   try {
     $spot = Build-EngineSpotPayload -BoardCards $boardTokensInput -Label $StageLabel -HeroCards $heroTokens
     $requestPayload = [ordered]@{
       spot = $spot
-      timeout_sec = [int]$engineSolverTimeoutSec
+      timeout_sec = [int]$effectiveSolverTimeoutSec
       quiet = $true
       llm = [ordered]@{
         preset = [string]$engineLlmPreset
       }
-      runtime_profile = [string]$engineRuntimeProfile
+      runtime_profile = [string]$effectiveRuntimeProfile
     }
     if ($engineEnableMultiNode) {
       $requestPayload.enable_multi_node_locks = $true
@@ -8778,7 +8812,7 @@ function Queue-EngineSolveForBoard {
       $bridgeSolveEndpoint,
       $requestJson,
       $responsePath,
-      [int]([Math]::Max(60, $engineSolverTimeoutSec + 30))
+      [int]([Math]::Max(60, $effectiveSolverTimeoutSec + 30))
     ) -ScriptBlock {
       param($endpoint, $requestJsonText, $responsePathValue, $timeoutSecValue)
       $started = Get-Date
@@ -8868,6 +8902,8 @@ function Queue-EngineSolveForBoard {
       response_path = $responsePath
       stage = $StageLabel
       board = $boardTokensInput
+      runtime_profile = [string]$configuredRuntimeProfile
+      effective_runtime_profile = [string]$effectiveRuntimeProfile
       state_hash = $stateHash
       logical_key = $logicalStateKey
       state_version = [int]$stateVersion
@@ -8888,6 +8924,8 @@ function Queue-EngineSolveForBoard {
       state_hash = $stateHash
       stage = $StageLabel
       board = $boardTokensInput
+      runtime_profile = [string]$configuredRuntimeProfile
+      effective_runtime_profile = [string]$effectiveRuntimeProfile
       max_age_sec = [int]$engineJobMaxAgeSec
       payload_path = $payloadPath
       response_path = $responsePath
@@ -9630,6 +9668,8 @@ function Poll-EngineJobs {
         state_version = if ($meta.ContainsKey("state_version")) { [int]$meta.state_version } else { 0 }
         state_hash = if ($meta.ContainsKey("state_hash")) { [string]$meta.state_hash } else { "" }
         strategy = [string]$result.selected_strategy
+        runtime_profile = if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }
+        effective_runtime_profile = if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }
         exploitability = $result.exploitability
         kept = $result.node_lock_kept
         elapsed_sec = [double]$result.elapsed_sec
