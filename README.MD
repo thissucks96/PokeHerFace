@@ -197,6 +197,25 @@ python .\4_LLM_Bridge\analyze_shadow_dumps.py `
   --output .\4_LLM_Bridge\examples\backtest.shadow_diagnostics.json
 ```
 
+Analyze slow UI/engine spots from session logs (Top 50 latency clusters):
+
+```powershell
+# Full dataset
+python .\scripts\analyze_slow_spots.py --top-n 50
+
+# Postflop-only hotspot map (recommended for live latency tuning)
+python .\scripts\analyze_slow_spots.py --top-n 50 --min-board-cards 3
+
+# Scope to specific runtime profiles
+python .\scripts\analyze_slow_spots.py --top-n 50 --min-board-cards 3 --runtime-profiles fast_live,normal
+```
+
+Outputs are written to:
+`5_Vision_Extraction/out/slow_spot_reports/`
+- `slow_spots_report_<timestamp>.json` (full machine-readable report),
+- `slow_spots_top_<N>_<timestamp>.csv` (flat Top-N rows),
+- `slow_spots_summary_<timestamp>.txt` (quick summary with top clusters).
+
 Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 
 ```powershell
