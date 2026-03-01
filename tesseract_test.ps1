@@ -4550,7 +4550,7 @@ $btnAllIn.FlatStyle = "Flat"
 $btnAllIn.ForeColor = [System.Drawing.Color]::White
 $btnAllIn.BackColor = [System.Drawing.Color]::FromArgb(120, 34, 34)
 $btnAllIn.Add_Click({ Invoke-ManualActionSelection -ActionToken "ALL IN" })
-$btnAllIn.Visible = $false
+$btnAllIn.Visible = $true
 $form.Controls.Add($btnAllIn)
 
 $hint = New-Object System.Windows.Forms.Label
@@ -4615,6 +4615,7 @@ $advicePanel.Location = New-Object System.Drawing.Point(960, 96)
 $advicePanel.Size = New-Object System.Drawing.Size(270, 598)
 $advicePanel.BackColor = [System.Drawing.Color]::FromArgb(26, 32, 40)
 $advicePanel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$advicePanel.AutoScroll = $true
 $form.Controls.Add($advicePanel)
 
 $adviceTitle = New-Object System.Windows.Forms.Label
@@ -5001,10 +5002,10 @@ function Update-MainLayout {
   $gap = 10
   $clientWidth = [Math]::Max([int]$form.ClientSize.Width, 1120)
   $clientHeight = [Math]::Max([int]$form.ClientSize.Height, 720)
-  $adviceWidth = 270
+  $adviceWidth = [Math]::Min(360, [Math]::Max(300, [int]([double]$clientWidth * 0.24)))
   $adviceLeft = [int]($clientWidth - $adviceWidth - $margin)
   $leftRight = [int]($adviceLeft - $gap)
-  $leftWidth = [Math]::Max(680, [int]($leftRight - $margin))
+  $leftWidth = [Math]::Max(620, [int]($leftRight - $margin))
 
   $status.Size = New-Object System.Drawing.Size($leftWidth, 18)
   $engineStatusLine.Size = New-Object System.Drawing.Size($leftWidth, 18)
@@ -5084,12 +5085,14 @@ function Update-MainLayout {
   $logBox.Location = New-Object System.Drawing.Point($margin, $logY)
   $logBox.Size = New-Object System.Drawing.Size($leftWidth, $logHeight)
 
-  $advicePanel.Location = New-Object System.Drawing.Point($adviceLeft, 96)
-  $advicePanel.Size = New-Object System.Drawing.Size($adviceWidth, [Math]::Max(520, [int]($clientHeight - 116)))
+  $adviceTop = 84
+  $advicePanel.Location = New-Object System.Drawing.Point($adviceLeft, $adviceTop)
+  $advicePanel.Size = New-Object System.Drawing.Size($adviceWidth, [Math]::Max(420, [int]($clientHeight - $adviceTop - 14)))
   $innerWidth = [Math]::Max(180, [int]($advicePanel.ClientSize.Width - 36))
   $adviceSub.Size = New-Object System.Drawing.Size($innerWidth, 34)
-  $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 60)
+  $lblAdviceValue.Size = New-Object System.Drawing.Size($innerWidth, 56)
   $adviceDivider.Size = New-Object System.Drawing.Size($innerWidth, 2)
+
   $manualActionButtons = @($btnCheck, $btnFold)
   $manualActionButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
   foreach ($btn in $manualActionButtons) {
@@ -5097,75 +5100,120 @@ function Update-MainLayout {
   }
   $btnCheck.Location = New-Object System.Drawing.Point(18, 176)
   $btnFold.Location = New-Object System.Drawing.Point(($btnCheck.Right + $gap), 176)
+  $btnCall.Visible = $false
+
+  $raiseAllInOnly = ([string]$script:raiseAllInButtonToken).Trim().ToUpperInvariant() -eq "ALL IN"
   $raiseButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
   foreach ($raiseBtn in @($btnRaise, $btnRaise25, $btnRaise50, $btnRaise100)) {
     if ($null -eq $raiseBtn -or $raiseBtn.IsDisposed) { continue }
     $raiseBtn.Size = New-Object System.Drawing.Size($raiseButtonWidth, 28)
   }
-  $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
-  $btnRaise25.Location = New-Object System.Drawing.Point(($btnRaise.Right + $gap), 214)
-  $btnRaise50.Location = New-Object System.Drawing.Point(18, 246)
-  $btnRaise100.Location = New-Object System.Drawing.Point(($btnRaise50.Right + $gap), 246)
-  $lblRaiseAmountTitle.Location = New-Object System.Drawing.Point(18, 278)
-  $numRaiseWidth = [Math]::Max(72, [int]($innerWidth * 0.30))
-  $numRaiseAmount.Location = New-Object System.Drawing.Point(([int](18 + $innerWidth - $numRaiseWidth)), 296)
-  $numRaiseAmount.Size = New-Object System.Drawing.Size($numRaiseWidth, 24)
-  $trackWidth = [Math]::Max(96, [int]($numRaiseAmount.Left - 18 - 6))
-  $trkRaiseAmount.Location = New-Object System.Drawing.Point(18, 296)
-  $trkRaiseAmount.Size = New-Object System.Drawing.Size($trackWidth, 30)
-  $lblRaiseAmountValue.Location = New-Object System.Drawing.Point(18, 324)
-  $lblRaiseAmountValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
-  $btnCall.Visible = $false
-  $btnAllIn.Visible = $false
 
-  $stakesTopY = [int]($lblRaiseAmountValue.Bottom + 14)
+  if ($raiseAllInOnly) {
+    $btnRaise.Visible = $true
+    $btnRaise.Size = New-Object System.Drawing.Size($innerWidth, 34)
+    $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
+    $btnRaise25.Visible = $false
+    $btnRaise50.Visible = $false
+    $btnRaise100.Visible = $false
+    $lblRaiseAmountTitle.Visible = $false
+    $trkRaiseAmount.Visible = $false
+    $numRaiseAmount.Visible = $false
+    $lblRaiseAmountValue.Visible = $false
+    $btnAllIn.Visible = $false
+    $stakesTopY = [int]($btnRaise.Bottom + 12)
+  }
+  else {
+    $btnRaise.Visible = $true
+    $btnRaise25.Visible = $true
+    $btnRaise50.Visible = $true
+    $btnRaise100.Visible = $true
+    $lblRaiseAmountTitle.Visible = $true
+    $trkRaiseAmount.Visible = $true
+    $numRaiseAmount.Visible = $true
+    $lblRaiseAmountValue.Visible = $true
+
+    $btnRaise.Location = New-Object System.Drawing.Point(18, 214)
+    $btnRaise25.Location = New-Object System.Drawing.Point(($btnRaise.Right + $gap), 214)
+    $btnRaise50.Location = New-Object System.Drawing.Point(18, 246)
+    $btnRaise100.Location = New-Object System.Drawing.Point(($btnRaise50.Right + $gap), 246)
+    $lblRaiseAmountTitle.Location = New-Object System.Drawing.Point(18, 276)
+    $numRaiseWidth = [Math]::Max(72, [int]($innerWidth * 0.30))
+    $numRaiseAmount.Location = New-Object System.Drawing.Point(([int](18 + $innerWidth - $numRaiseWidth)), 294)
+    $numRaiseAmount.Size = New-Object System.Drawing.Size($numRaiseWidth, 24)
+    $trackWidth = [Math]::Max(96, [int]($numRaiseAmount.Left - 18 - 6))
+    $trkRaiseAmount.Location = New-Object System.Drawing.Point(18, 294)
+    $trkRaiseAmount.Size = New-Object System.Drawing.Size($trackWidth, 30)
+    $lblRaiseAmountValue.Location = New-Object System.Drawing.Point(18, 322)
+    $lblRaiseAmountValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
+
+    $btnAllIn.Visible = $true
+    $btnAllIn.Text = "ALL IN"
+    $btnAllIn.BackColor = [System.Drawing.Color]::FromArgb(168, 38, 38)
+    $btnAllIn.Location = New-Object System.Drawing.Point(18, 346)
+    $btnAllIn.Size = New-Object System.Drawing.Size($innerWidth, 24)
+    $stakesTopY = [int]($btnAllIn.Bottom + 10)
+  }
+
   $stakesTitle.Location = New-Object System.Drawing.Point(18, $stakesTopY)
-  $lblSmallBlind.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 28))
-  $numSmallBlind.Location = New-Object System.Drawing.Point(44, ($stakesTopY + 24))
-  $stakesControlWidth = [Math]::Max(56, [int](($innerWidth - 72) / 2))
+  $lblSmallBlind.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 24))
+  $numSmallBlind.Location = New-Object System.Drawing.Point(42, ($stakesTopY + 20))
+  $stakesControlWidth = [Math]::Max(56, [int](($innerWidth - 70) / 2))
   $numSmallBlind.Size = New-Object System.Drawing.Size($stakesControlWidth, 24)
-  $lblBigBlind.Location = New-Object System.Drawing.Point(($numSmallBlind.Right + 16), ($stakesTopY + 28))
-  $numBigBlind.Location = New-Object System.Drawing.Point(($lblBigBlind.Right + 6), ($stakesTopY + 24))
+  $lblBigBlind.Location = New-Object System.Drawing.Point(($numSmallBlind.Right + 12), ($stakesTopY + 24))
+  $numBigBlind.Location = New-Object System.Drawing.Point(($lblBigBlind.Right + 6), ($stakesTopY + 20))
   $numBigBlind.Size = New-Object System.Drawing.Size([Math]::Max(56, [int]($innerWidth - ($numBigBlind.Left - 18))), 24)
-  $lblBuyIn.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 60))
-  $numBuyIn.Location = New-Object System.Drawing.Point(72, ($stakesTopY + 56))
-  $numBuyIn.Size = New-Object System.Drawing.Size([Math]::Max(96, [int]($innerWidth - 54)), 24)
-  $lblCurrentPotTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 96))
-  $lblCurrentPotValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 116))
-  $lblCurrentPotValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
-  $lblCurrentChipsTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 142))
-  $lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 162))
-  $lblCurrentChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
-  $lblCurrentVillainChipsTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 190))
-  $lblCurrentVillainChipsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 210))
-  $lblCurrentVillainChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 22)
-  $lblHeroPositionTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 238))
-  $lblHeroPositionValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 258))
-  $lblHeroPositionValue.Size = New-Object System.Drawing.Size($innerWidth, 34)
-  $lblTableStatusTitle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 294))
-  $lblTableStatusValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 314))
-  $lblTableStatusValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
-  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 350))
+  $lblBuyIn.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 52))
+  $numBuyIn.Location = New-Object System.Drawing.Point(68, ($stakesTopY + 48))
+  $numBuyIn.Size = New-Object System.Drawing.Size([Math]::Max(96, [int]($innerWidth - 50)), 24)
+
+  $stateTopY = $stakesTopY + 80
+  $lblCurrentPotTitle.Location = New-Object System.Drawing.Point(18, $stateTopY)
+  $lblCurrentPotValue.Location = New-Object System.Drawing.Point(18, ($stateTopY + 18))
+  $lblCurrentPotValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
+  $lblCurrentChipsTitle.Location = New-Object System.Drawing.Point(18, ($stateTopY + 40))
+  $lblCurrentChipsValue.Location = New-Object System.Drawing.Point(18, ($stateTopY + 58))
+  $lblCurrentChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
+  $lblCurrentVillainChipsTitle.Location = New-Object System.Drawing.Point(18, ($stateTopY + 80))
+  $lblCurrentVillainChipsValue.Location = New-Object System.Drawing.Point(18, ($stateTopY + 98))
+  $lblCurrentVillainChipsValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
+  $lblHeroPositionTitle.Location = New-Object System.Drawing.Point(18, ($stateTopY + 120))
+  $lblHeroPositionValue.Location = New-Object System.Drawing.Point(18, ($stateTopY + 138))
+  $lblHeroPositionValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
+  $lblTableStatusTitle.Location = New-Object System.Drawing.Point(18, ($stateTopY + 160))
+  $lblTableStatusValue.Location = New-Object System.Drawing.Point(18, ($stateTopY + 178))
+  $lblTableStatusValue.Size = New-Object System.Drawing.Size($innerWidth, 34)
+  $btnToggleVillainCards.Location = New-Object System.Drawing.Point(18, ($stateTopY + 216))
   $btnToggleVillainCards.Size = New-Object System.Drawing.Size($innerWidth, 28)
-  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 384))
-  $lblVillainCardsValue.Size = New-Object System.Drawing.Size($innerWidth, 32)
-  $lblVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 420))
-  $cmbVillainMode.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 440))
+  $lblVillainCardsValue.Location = New-Object System.Drawing.Point(18, ($stateTopY + 248))
+  $lblVillainCardsValue.Size = New-Object System.Drawing.Size($innerWidth, 20)
+  $lblVillainMode.Location = New-Object System.Drawing.Point(18, ($stateTopY + 274))
+  $cmbVillainMode.Location = New-Object System.Drawing.Point(18, ($stateTopY + 294))
   $cmbVillainMode.Size = New-Object System.Drawing.Size($innerWidth, 24)
-  $lblVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 470))
-  $cmbVillainStyle.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 490))
+  $lblVillainStyle.Location = New-Object System.Drawing.Point(18, ($stateTopY + 324))
+  $cmbVillainStyle.Location = New-Object System.Drawing.Point(18, ($stateTopY + 344))
   $cmbVillainStyle.Size = New-Object System.Drawing.Size($innerWidth, 24)
-  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 522))
+  $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stateTopY + 376))
   $btnVillainActionMenu.Size = New-Object System.Drawing.Size($innerWidth, 28)
+
   $settleButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
-  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stakesTopY + 506))
+  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stateTopY + 410))
   $btnHeroWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stakesTopY + 506))
+  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stateTopY + 410))
   $btnVillainWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $detailTopY = $stakesTopY + 544
-  $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
-  $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
-  $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(120, [int]($advicePanel.ClientSize.Height - ($detailTopY + 44))))
+
+  $detailTopY = [int]($btnVillainActionMenu.Bottom + 12)
+  $availableDetailHeight = [int]($advicePanel.ClientSize.Height - ($detailTopY + 10))
+  $canShowDetail = ($availableDetailHeight -ge 100)
+  $adviceMetaTitle.Visible = $canShowDetail
+  $txtAdviceDetail.Visible = $canShowDetail
+  if ($canShowDetail) {
+    $adviceMetaTitle.Location = New-Object System.Drawing.Point(18, $detailTopY)
+    $txtAdviceDetail.Location = New-Object System.Drawing.Point(18, ($detailTopY + 24))
+    $txtAdviceDetail.Size = New-Object System.Drawing.Size($innerWidth, [Math]::Max(80, [int]($availableDetailHeight - 28)))
+  }
+  $contentBottom = if ($canShowDetail) { [int]($txtAdviceDetail.Bottom + 12) } else { [int]($btnVillainActionMenu.Bottom + 14) }
+  $advicePanel.AutoScrollMinSize = New-Object System.Drawing.Size(0, $contentBottom)
 }
 
 function Apply-UiPolish {
