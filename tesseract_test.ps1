@@ -6430,8 +6430,11 @@ function Convert-AdviceActionTokenToLabel {
     return ""
   }
   if ($tokenValue -match "^(call|bet|raise):(-?\d+)$") {
-    return ("{0} {1}" -f $matches[1].ToUpperInvariant(), $matches[2])
+    $verb = [string]$matches[1]
+    if ($verb -eq "bet") { $verb = "raise" }
+    return ("{0} {1}" -f $verb.ToUpperInvariant(), $matches[2])
   }
+  if ($tokenValue -eq "bet") { return "RAISE" }
   return $tokenValue.ToUpperInvariant()
 }
 
@@ -6474,6 +6477,8 @@ function Get-AdviceDecisionPrimary {
   $callWeight = 0.0
   $checkWeight = 0.0
   $raiseWeight = 0.0
+  $bestRaiseToken = ""
+  $bestRaiseWeight = [double]::NegativeInfinity
 
   foreach ($row in @($WeightedRows)) {
     $token = ([string]$row.token).Trim().ToLowerInvariant()
@@ -6493,6 +6498,10 @@ function Get-AdviceDecisionPrimary {
     }
     if ($token -like "bet:*" -or $token -like "raise:*" -or $token -eq "bet" -or $token -eq "raise") {
       $raiseWeight += $weight
+      if (($bestRaiseToken -eq "") -or ($weight -gt $bestRaiseWeight)) {
+        $bestRaiseToken = $token
+        $bestRaiseWeight = $weight
+      }
     }
   }
 
@@ -6509,6 +6518,9 @@ function Get-AdviceDecisionPrimary {
     return "CALL ANY"
   }
   if ($raiseWeight -ge $callWeight -and $raiseWeight -ge $foldWeight -and $raiseWeight -gt 0.20) {
+    if ($bestRaiseToken) {
+      return (Convert-AdviceActionTokenToLabel -Token $bestRaiseToken)
+    }
     return "RAISE"
   }
   if ($foldWeight -ge $callWeight -and $foldWeight -ge $raiseWeight -and $foldWeight -gt 0.0) {
