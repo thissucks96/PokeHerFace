@@ -447,6 +447,20 @@ Bridge runtime profile budgets (`POST /solve`):
   - locked solve timeout cap: `NORMAL_LOCKED_TIMEOUT_SEC` (default `900`)
   - locked stage total budget: `NORMAL_LOCKED_STAGE_TOTAL_SEC` (default `900`)
 
+Facing-bet equity risk gate (bridge-level safety override):
+- purpose: prevent low-equity hero punts in high-pressure call/all-in spots by forcing `fold` when estimated equity is below pot-odds threshold + safety margin.
+- enabled in both normal and failover response paths.
+- env toggles:
+  - `RISK_GATE_ENABLED` (`0`/`1`, default `1`)
+  - `RISK_GATE_MONTE_CARLO_SAMPLES` (default `120`, min `16`)
+  - `RISK_GATE_MIN_FACING_RATIO` (default `0.55`)
+  - `RISK_GATE_MIN_EQUITY_MARGIN` (default `0.04`)
+  - `RISK_GATE_ALLIN_STACK_FRACTION` (default `0.80`)
+- telemetry:
+  - response top-level `risk_gate`,
+  - metrics `risk_gate`,
+  - `selection_reason` suffix `+risk_gate_forced_fold` when applied.
+
 Optional neural-brain stage (`2_Neural_Brain` DyypHoldem adapter):
 - disabled by default; bridge remains solver-first unless enabled.
 - env toggles:

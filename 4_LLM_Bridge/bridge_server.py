@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import json
 import math
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -227,6 +228,25 @@ try:
     SPOT_NORMAL_MIN_ALL_IN_THRESHOLD = float(os.environ.get("SPOT_NORMAL_MIN_ALL_IN_THRESHOLD", "0.58"))
 except ValueError:
     SPOT_NORMAL_MIN_ALL_IN_THRESHOLD = 0.58
+RISK_GATE_ENABLED = os.environ.get("RISK_GATE_ENABLED", "1").strip() not in {"0", "false", "False"}
+try:
+    RISK_GATE_MONTE_CARLO_SAMPLES = int(os.environ.get("RISK_GATE_MONTE_CARLO_SAMPLES", "120"))
+except ValueError:
+    RISK_GATE_MONTE_CARLO_SAMPLES = 120
+if RISK_GATE_MONTE_CARLO_SAMPLES < 16:
+    RISK_GATE_MONTE_CARLO_SAMPLES = 16
+try:
+    RISK_GATE_MIN_FACING_RATIO = float(os.environ.get("RISK_GATE_MIN_FACING_RATIO", "0.55"))
+except ValueError:
+    RISK_GATE_MIN_FACING_RATIO = 0.55
+try:
+    RISK_GATE_MIN_EQUITY_MARGIN = float(os.environ.get("RISK_GATE_MIN_EQUITY_MARGIN", "0.04"))
+except ValueError:
+    RISK_GATE_MIN_EQUITY_MARGIN = 0.04
+try:
+    RISK_GATE_ALLIN_STACK_FRACTION = float(os.environ.get("RISK_GATE_ALLIN_STACK_FRACTION", "0.80"))
+except ValueError:
+    RISK_GATE_ALLIN_STACK_FRACTION = 0.80
 FAST_LIVE_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_LIVE_FAILOVER_ON_BASELINE_ERROR", "1").strip() not in {
     "0",
     "false",
@@ -1817,6 +1837,284 @@ def _token_to_root_action(token: str, chosen: str) -> Dict[str, Any]:
     return item
 
 
+def _normalize_card_token(card: str) -> str:
+    token = str(card or "").strip()
+    if not token:
+        return ""
+    if token[:2] == "10" and len(token) >= 3:
+        rank = "T"
+        suit = token[2:3].lower()
+    else:
+        rank = token[:1].upper()
+        suit = token[-1:].lower()
+    if rank not in _RANK_VALUE_MAP or suit not in {"s", "h", "d", "c"}:
+        return ""
+    return f"{rank}{suit}"
+
+
+def _extract_exact_hero_cards(spot: Dict[str, Any]) -> list[str]:
+    meta = spot.get("meta")
+    if not isinstance(meta, dict):
+        return []
+    raw_cards = meta.get("hero_cards")
+    if not isinstance(raw_cards, list) or len(raw_cards) != 2:
+        return []
+    out: list[str] = []
+    for raw in raw_cards:
+        token = _normalize_card_token(str(raw))
+        if not token:
+            return []
+        out.append(token)
+    if out[0] == out[1]:
+        return []
+    return out
+
+
+def _extract_board_cards_normalized(spot: Dict[str, Any]) -> list[str]:
+    board = spot.get("board")
+    if not isinstance(board, list):
+        return []
+    out: list[str] = []
+    for raw in board[:5]:
+        token = _normalize_card_token(str(raw))
+        if token:
+            out.append(token)
+    return out
+
+
+def _evaluate_five_cards(cards: list[str]) -> tuple[int, list[int]]:
+    parsed = sorted(
+        [(_RANK_VALUE_MAP[c[0]], c[1]) for c in cards],
+        key=lambda row: row[0],
+        reverse=True,
+    )
+    ranks = [row[0] for row in parsed]
+    suits = [row[1] for row in parsed]
+    is_flush = len(set(suits)) == 1
+
+    unique_ranks = sorted(set(ranks), reverse=True)
+    is_straight = False
+    straight_high = 0
+    if len(unique_ranks) == 5:
+        if unique_ranks[0] - unique_ranks[4] == 4:
+            is_straight = True
+            straight_high = unique_ranks[0]
+        elif unique_ranks == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+
+    rank_counts: Dict[int, int] = {}
+    for rank in ranks:
+        rank_counts[rank] = rank_counts.get(rank, 0) + 1
+    groups = sorted([(count, rank) for rank, count in rank_counts.items()], reverse=True)
+
+    if is_straight and is_flush:
+        return (8, [straight_high])
+    if groups[0][0] == 4:
+        quad_rank = groups[0][1]
+        kicker = max(rank for rank in ranks if rank != quad_rank)
+        return (7, [quad_rank, kicker])
+    if groups[0][0] == 3 and groups[1][0] == 2:
+        return (6, [groups[0][1], groups[1][1]])
+    if is_flush:
+        return (5, sorted(ranks, reverse=True))
+    if is_straight:
+        return (4, [straight_high])
+    if groups[0][0] == 3:
+        trips = groups[0][1]
+        kickers = sorted([rank for rank in ranks if rank != trips], reverse=True)
+        return (3, [trips] + kickers)
+    if groups[0][0] == 2 and groups[1][0] == 2:
+        high_pair = max(groups[0][1], groups[1][1])
+        low_pair = min(groups[0][1], groups[1][1])
+        kicker = max(rank for rank in ranks if rank not in {high_pair, low_pair})
+        return (2, [high_pair, low_pair, kicker])
+    if groups[0][0] == 2:
+        pair_rank = groups[0][1]
+        kickers = sorted([rank for rank in ranks if rank != pair_rank], reverse=True)
+        return (1, [pair_rank] + kickers)
+    return (0, sorted(ranks, reverse=True))
+
+
+def _evaluate_seven_cards(cards: list[str]) -> tuple[int, list[int]]:
+    if len(cards) < 5:
+        return (0, [])
+    best: Optional[tuple[int, list[int]]] = None
+    total = len(cards)
+    for i in range(total - 4):
+        for j in range(i + 1, total - 3):
+            for k in range(j + 1, total - 2):
+                for m in range(k + 1, total - 1):
+                    for n in range(m + 1, total):
+                        score = _evaluate_five_cards([cards[i], cards[j], cards[k], cards[m], cards[n]])
+                        if best is None or score > best:
+                            best = score
+    return best if best is not None else (0, [])
+
+
+def _estimate_hero_equity_vs_random(
+    hero_cards: list[str],
+    board_cards: list[str],
+    *,
+    samples: int,
+) -> Optional[float]:
+    if len(hero_cards) != 2:
+        return None
+    if len(set(hero_cards + board_cards)) != (len(hero_cards) + len(board_cards)):
+        return None
+
+    ranks = "23456789TJQKA"
+    suits = "shdc"
+    full_deck = [f"{rank}{suit}" for rank in ranks for suit in suits]
+    known = set(hero_cards + board_cards)
+    deck = [card for card in full_deck if card not in known]
+    if len(deck) < 2:
+        return None
+
+    trials = max(16, int(samples))
+    wins = 0.0
+    for _ in range(trials):
+        working = list(deck)
+        villain = random.sample(working, 2)
+        for card in villain:
+            working.remove(card)
+        if len(board_cards) < 5:
+            runout = random.sample(working, 5 - len(board_cards))
+        else:
+            runout = []
+        board_final = list(board_cards) + list(runout)
+        hero_score = _evaluate_seven_cards(hero_cards + board_final)
+        villain_score = _evaluate_seven_cards(villain + board_final)
+        if hero_score > villain_score:
+            wins += 1.0
+        elif hero_score == villain_score:
+            wins += 0.5
+    return float(wins) / float(trials)
+
+
+def _force_fold_in_result_payload(result_payload: Dict[str, Any]) -> None:
+    def _force_summary(items: Any) -> list[Dict[str, Any]]:
+        entries = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+        found_fold = False
+        for item in entries:
+            action = _normalize_action_token(str(item.get("action", "")).strip().lower())
+            if action == "fold":
+                item["frequency"] = 1.0
+                if "avg_frequency" in item:
+                    item["avg_frequency"] = 1.0
+                found_fold = True
+            else:
+                item["frequency"] = 0.0
+                if "avg_frequency" in item:
+                    item["avg_frequency"] = 0.0
+        if not found_fold:
+            entries.append({"action": "fold", "frequency": 1.0})
+        return entries
+
+    result_payload["root_actions"] = _force_summary(result_payload.get("root_actions", []))
+    if bool(result_payload.get("active_node_found")):
+        result_payload["active_node_actions"] = _force_summary(result_payload.get("active_node_actions", []))
+    decision = result_payload.get("decision")
+    if not isinstance(decision, dict):
+        decision = {}
+    decision["action"] = "fold"
+    policy = str(decision.get("policy", "")).strip()
+    decision["policy"] = (f"{policy}+risk_gate" if policy else "risk_gate")
+    result_payload["decision"] = decision
+    warnings = result_payload.get("warnings")
+    warnings_list = list(warnings) if isinstance(warnings, list) else []
+    if "risk_gate_forced_fold" not in warnings_list:
+        warnings_list.append("risk_gate_forced_fold")
+    result_payload["warnings"] = warnings_list
+
+
+def _apply_equity_risk_gate(
+    *,
+    spot: Dict[str, Any],
+    result_payload: Dict[str, Any],
+    allowed_actions: list[str],
+) -> tuple[Dict[str, Any], list[str], Dict[str, Any]]:
+    info: Dict[str, Any] = {
+        "enabled": bool(RISK_GATE_ENABLED),
+        "applied": False,
+    }
+    if not RISK_GATE_ENABLED:
+        info["reason"] = "disabled"
+        return result_payload, allowed_actions, info
+
+    facing_bet = _extract_spot_facing_bet(spot)
+    if facing_bet <= 0.0:
+        info["reason"] = "not_facing_bet"
+        return result_payload, allowed_actions, info
+
+    normalized_allowed = [_normalize_action_token(action) for action in allowed_actions]
+    if "fold" not in normalized_allowed:
+        info["reason"] = "fold_not_allowed"
+        return result_payload, allowed_actions, info
+
+    hero_cards = _extract_exact_hero_cards(spot)
+    board_cards = _extract_board_cards_normalized(spot)
+    if len(hero_cards) != 2:
+        info["reason"] = "missing_hero_cards"
+        return result_payload, allowed_actions, info
+
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or 0.0)
+    minimum_bet = float(_to_float_or_none(spot.get("minimum_bet")) or 1.0)
+    call_amount = max(float(facing_bet), float(minimum_bet))
+    denominator = max(1.0, starting_pot + call_amount)
+    required_equity = call_amount / denominator
+    facing_ratio = call_amount / max(1.0, starting_pot)
+
+    hero_stack = float(_to_float_or_none(spot.get("starting_stack")) or 0.0)
+    meta = spot.get("meta")
+    if isinstance(meta, dict):
+        hero_stack = float(_to_float_or_none(meta.get("current_hero_chips")) or hero_stack)
+    is_all_in_pressure = hero_stack > 0.0 and call_amount >= (hero_stack * float(RISK_GATE_ALLIN_STACK_FRACTION))
+    pressure_spot = is_all_in_pressure or facing_ratio >= float(RISK_GATE_MIN_FACING_RATIO)
+    if not pressure_spot:
+        info["reason"] = "below_pressure_threshold"
+        info["facing_ratio"] = facing_ratio
+        return result_payload, allowed_actions, info
+
+    estimated_equity = _estimate_hero_equity_vs_random(
+        hero_cards,
+        board_cards,
+        samples=RISK_GATE_MONTE_CARLO_SAMPLES,
+    )
+    if estimated_equity is None:
+        info["reason"] = "equity_unavailable"
+        return result_payload, allowed_actions, info
+
+    margin = float(RISK_GATE_MIN_EQUITY_MARGIN)
+    if is_all_in_pressure:
+        margin += 0.02
+    elif facing_ratio >= 0.75:
+        margin += 0.015
+    threshold = min(0.98, required_equity + margin)
+    info.update(
+        {
+            "required_equity": required_equity,
+            "estimated_equity": estimated_equity,
+            "threshold_equity": threshold,
+            "facing_bet": call_amount,
+            "facing_ratio": facing_ratio,
+            "all_in_pressure": is_all_in_pressure,
+            "samples": int(RISK_GATE_MONTE_CARLO_SAMPLES),
+        }
+    )
+
+    if estimated_equity + 1e-9 >= threshold:
+        info["reason"] = "equity_sufficient"
+        return result_payload, allowed_actions, info
+
+    updated_result = dict(result_payload)
+    _force_fold_in_result_payload(updated_result)
+    updated_allowed = ["fold"] + [action for action in allowed_actions if _normalize_action_token(action) != "fold"]
+    info["applied"] = True
+    info["reason"] = "equity_below_threshold"
+    return updated_result, updated_allowed, info
+
+
 def _build_fast_failover_response(
     *,
     request: SolveRequest,
@@ -1895,6 +2193,13 @@ def _build_fast_failover_response(
         },
         "warnings": [f"fast_failover_applied:{baseline_error}"],
     }
+    result_payload, allowed_actions, risk_gate = _apply_equity_risk_gate(
+        spot=request.spot,
+        result_payload=result_payload,
+        allowed_actions=allowed_actions,
+    )
+    if bool(risk_gate.get("applied")):
+        effective_selection_reason = f"{effective_selection_reason}+risk_gate_forced_fold"
     selected_action = _primary_action_from_result_payload(result_payload)
     neural_shadow = _build_neural_shadow_summary(
         runtime_profile=runtime_profile,
@@ -1923,6 +2228,7 @@ def _build_fast_failover_response(
         },
         "result": result_payload,
         "neural_shadow": neural_shadow,
+        "risk_gate": risk_gate,
         "baseline_result": None,
         "locked_result": None,
         "metrics": {
@@ -1959,6 +2265,7 @@ def _build_fast_failover_response(
             "neural_mode": NEURAL_BRAIN_MODE,
             "neural_applied": neural_applied,
             "neural_shadow": neural_shadow,
+            "risk_gate": risk_gate,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
@@ -2049,6 +2356,11 @@ def health() -> Dict[str, Any]:
         "spot_dynamic_all_in_threshold_min": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN,
         "spot_dynamic_all_in_threshold_max": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX,
         "spot_normal_min_all_in_threshold": SPOT_NORMAL_MIN_ALL_IN_THRESHOLD,
+        "risk_gate_enabled": RISK_GATE_ENABLED,
+        "risk_gate_monte_carlo_samples": RISK_GATE_MONTE_CARLO_SAMPLES,
+        "risk_gate_min_facing_ratio": RISK_GATE_MIN_FACING_RATIO,
+        "risk_gate_min_equity_margin": RISK_GATE_MIN_EQUITY_MARGIN,
+        "risk_gate_allin_stack_fraction": RISK_GATE_ALLIN_STACK_FRACTION,
         "fast_live_failover_on_baseline_error": FAST_LIVE_FAILOVER_ON_BASELINE_ERROR,
         "fast_live_force_root_only": FAST_LIVE_FORCE_ROOT_ONLY,
         "fast_live_skip_llm_stage": FAST_LIVE_SKIP_LLM_STAGE,
@@ -2579,6 +2891,14 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     elif NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE == "prefer_on_fast_failover":
         neural_error = "skipped_non_failover_neural_stage"
 
+    result, allowed_root_actions, risk_gate = _apply_equity_risk_gate(
+        spot=request.spot,
+        result_payload=result,
+        allowed_actions=allowed_root_actions,
+    )
+    if bool(risk_gate.get("applied")):
+        selection_reason = f"{selection_reason}+risk_gate_forced_fold"
+
     selected_action = _primary_action_from_result_payload(result)
     neural_shadow = _build_neural_shadow_summary(
         runtime_profile=runtime_profile,
@@ -2622,6 +2942,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         },
         "result": result,
         "neural_shadow": neural_shadow,
+        "risk_gate": risk_gate,
         "baseline_result": baseline_result,
         "locked_result": locked_result,
         "metrics": {
@@ -2667,6 +2988,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "neural_applied": neural_applied,
             "neural_timeout_sec": neural_timeout_effective,
             "neural_shadow": neural_shadow,
+            "risk_gate": risk_gate,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
