@@ -54,10 +54,16 @@ libs/*.zip
 
 # Local train-your-own neural workspace artifacts
 2_Neural_Brain/local_pipeline/data/**
+!2_Neural_Brain/local_pipeline/data/
+!2_Neural_Brain/local_pipeline/data/raw_spots/
 !2_Neural_Brain/local_pipeline/data/raw_spots/.gitkeep
+!2_Neural_Brain/local_pipeline/data/processed/
 !2_Neural_Brain/local_pipeline/data/processed/.gitkeep
 2_Neural_Brain/local_pipeline/artifacts/**
+!2_Neural_Brain/local_pipeline/artifacts/
+!2_Neural_Brain/local_pipeline/artifacts/checkpoints/
 !2_Neural_Brain/local_pipeline/artifacts/checkpoints/.gitkeep
+!2_Neural_Brain/local_pipeline/artifacts/exports/
 !2_Neural_Brain/local_pipeline/artifacts/exports/.gitkeep
 2_Neural_Brain/local_pipeline/reports/**
 !2_Neural_Brain/local_pipeline/reports/.gitkeep
