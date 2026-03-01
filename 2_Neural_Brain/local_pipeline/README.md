@@ -28,8 +28,42 @@ Run:
 python .\scripts\setup_local_neural_workspace.py
 ```
 
-This creates the folder layout and writes a starter config under:
-`2_Neural_Brain/local_pipeline/configs/train_config.local.json` (if missing).
+This creates the folder layout and writes starter local configs (if missing):
+- `2_Neural_Brain/local_pipeline/configs/train_config.local.json`
+- `2_Neural_Brain/local_pipeline/configs/dataset_config.local.json`
+- `2_Neural_Brain/local_pipeline/configs/eval_gates.local.json`
+
+## Core Scripts
+
+1. Analyze/build dataset rows (analysis-only by default):
+
+```powershell
+python .\scripts\build_neural_dataset.py
+```
+
+Write JSONL rows only when explicitly requested:
+
+```powershell
+python .\scripts\build_neural_dataset.py --write
+```
+
+2. Validate training readiness (no training by default):
+
+```powershell
+python .\scripts\train_local_neural.py
+```
+
+Run training only when explicitly requested:
+
+```powershell
+python .\scripts\train_local_neural.py --train
+```
+
+3. Evaluate shadow report against promotion gates:
+
+```powershell
+python .\scripts\eval_local_neural_shadow.py
+```
 
 ## Phase Plan
 

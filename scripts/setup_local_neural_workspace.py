@@ -27,16 +27,23 @@ def main() -> int:
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
 
-    template = workspace / "configs" / "train_config.template.json"
-    local_cfg = workspace / "configs" / "train_config.local.json"
-    if template.exists() and not local_cfg.exists():
-        local_cfg.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    config_pairs = [
+        ("train_config.template.json", "train_config.local.json"),
+        ("dataset_config.template.json", "dataset_config.local.json"),
+        ("eval_gates.template.json", "eval_gates.local.json"),
+    ]
+    created_configs: list[str] = []
+    for template_name, local_name in config_pairs:
+        template = workspace / "configs" / template_name
+        local_cfg = workspace / "configs" / local_name
+        if template.exists() and not local_cfg.exists():
+            local_cfg.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            created_configs.append(str(local_cfg))
 
     summary = {
         "workspace": str(workspace),
         "created_dirs": [str(d) for d in dirs],
-        "local_config": str(local_cfg),
-        "local_config_created": local_cfg.exists(),
+        "created_local_configs": created_configs,
     }
     print(json.dumps(summary, indent=2))
     return 0

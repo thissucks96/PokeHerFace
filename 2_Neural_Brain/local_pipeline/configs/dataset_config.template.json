@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "description": "Build teacher rows from bridge artifacts without cloud/API calls.",
+  "input": {
+    "response_dir": "5_Vision_Extraction/out/flop_engine",
+    "max_files": 0,
+    "runtime_profiles": [],
+    "streets": []
+  },
+  "output": {
+    "rows_jsonl": "2_Neural_Brain/local_pipeline/data/raw_spots/solver_teacher_rows.jsonl",
+    "summary_json": "2_Neural_Brain/local_pipeline/reports/dataset_build_summary.json"
+  }
+}

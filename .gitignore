@@ -70,6 +70,8 @@ libs/*.zip
 2_Neural_Brain/local_pipeline/tensorboard/**
 !2_Neural_Brain/local_pipeline/tensorboard/.gitkeep
 2_Neural_Brain/local_pipeline/configs/train_config.local.json
+2_Neural_Brain/local_pipeline/configs/dataset_config.local.json
+2_Neural_Brain/local_pipeline/configs/eval_gates.local.json
 
 # LLM bridge local outputs / secrets
 4_LLM_Bridge/.env

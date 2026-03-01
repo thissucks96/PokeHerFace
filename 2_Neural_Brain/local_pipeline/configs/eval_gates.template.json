@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "Promotion gates for local neural shadow evaluation.",
+  "minimum_rows": 100,
+  "max_neural_elapsed_p95_sec": 2.0,
+  "min_agree_rate_overall": 0.7,
+  "min_agree_rate_by_street": {
+    "flop": 0.65,
+    "turn": 0.7,
+    "river": 0.72
+  },
+  "max_surrogate_rate": 0.5
+}
