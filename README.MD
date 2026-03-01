@@ -216,6 +216,17 @@ Outputs are written to:
 - `slow_spots_top_<N>_<timestamp>.csv` (flat Top-N rows),
 - `slow_spots_summary_<timestamp>.txt` (quick summary with top clusters).
 
+Analyze neural shadow behavior from saved bridge response artifacts:
+
+```powershell
+python .\scripts\analyze_neural_shadow.py --max-files 500
+```
+
+Outputs are written to:
+`5_Vision_Extraction/out/neural_shadow_reports/`
+- `neural_shadow_report_<timestamp>.json` (attempt/apply/agreement rates + latency stats),
+- `neural_shadow_disagreements_<timestamp>.csv` (action-level mismatches for review).
+
 Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 
 ```powershell
@@ -376,6 +387,13 @@ Optional neural-brain stage (`2_Neural_Brain` DyypHoldem adapter):
   - `shadow`: runs neural inference and reports metrics without overriding selected strategy.
   - `prefer`: overlays neural action mix onto the selected result when neural inference succeeds.
   - `prefer_on_fast_failover`: applies neural preference only on fast/failover paths.
+- telemetry:
+  - bridge responses now include a `neural_shadow` block with:
+    - attempt/apply status,
+    - neural chosen action vs selected action,
+    - agreement/disagreement flag,
+    - elapsed time and any neural error code.
+  - UI session logs now emit `neural_shadow_result` events for every completed engine job.
 - neural runtime now also supports these compatibility envs in `2_Neural_Brain`:
   - `DYYPHOLDEM_USE_GPU` (`auto`/`1`/`0`)
   - `DYYPHOLDEM_CFR_ITERS`
