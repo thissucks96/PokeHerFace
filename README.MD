@@ -71,6 +71,8 @@ This workspace is organized to keep the engine, neural models, hand history data
   - jam/fold tuning defaults are now less conservative in live collection/runtime paths: lower all-in thresholds (`~0.58`), wider fast/fast_live bet/raise sizing ladders, and higher fast_live raise-cap defaults to better expose all-in and mid-street fold branches.
   - solver spots now apply a dynamic all-in-threshold policy (street + SPR + facing-bet aware) for both `normal` and `fast_live` flows, so jam sensitivity adapts by spot complexity instead of staying static.
   - `fast_live` defaults are now tuned closer to normal-style strategy depth (higher per-street budgets, higher raise cap, richer bet/raise ladders, and active-node flop lookup enabled by default) while keeping bounded live-time safeguards.
+  - `fast_live` strength profile has been pushed further (deeper budgets + wider 125% pot/3x raise ladders + lower all-in threshold floor), explicitly prioritizing stronger postflop pressure generation over minimum latency.
+  - engine spot payload sizing now adapts to live stake settings (`SB/BB/buy-in`) and effective stack geometry: bet/raise ladders, raise-cap, and all-in threshold are automatically rescaled by stack-in-BB and SPR before each solve.
   - preflop hero advice now has a centralized fallback path (`Ensure-PreflopHeroAdvice`) so hero-facing preflop states never remain stuck on `WAIT` when legal actions exist.
   - street detection now reads live board tokens correctly (`preflop/flop/turn/river`), preventing postflop actions from incorrectly running preflop fallback advice paths.
   - engine poll now logs line-level diagnostics for advice-apply/auto-villain exceptions and continues queue processing instead of collapsing the active hand flow.

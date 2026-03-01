@@ -34,9 +34,9 @@ FAST_BET_SIZING = {
     "river": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0, 2.0]},
 }
 FAST_LIVE_BET_SIZING = {
-    "flop": {"bet_sizes": [0.33, 0.75, 1.0], "raise_sizes": [1.0, 2.0, 2.5]},
-    "turn": {"bet_sizes": [0.33, 0.75, 1.0], "raise_sizes": [1.0, 2.0, 2.5]},
-    "river": {"bet_sizes": [0.33, 0.75, 1.0], "raise_sizes": [1.0, 2.0, 2.5]},
+    "flop": {"bet_sizes": [0.33, 0.75, 1.0, 1.25], "raise_sizes": [1.0, 2.0, 2.5, 3.0]},
+    "turn": {"bet_sizes": [0.33, 0.75, 1.0, 1.25], "raise_sizes": [1.0, 2.0, 2.5, 3.0]},
+    "river": {"bet_sizes": [0.33, 0.75, 1.0, 1.25], "raise_sizes": [1.0, 2.0, 2.5, 3.0]},
 }
 DEFAULT_LEGAL_ACTIONS = ["check", "bet_33", "bet_75", "all_in"]
 PASSIVE_VILLAIN_POLICY = {
@@ -299,10 +299,10 @@ def main() -> int:
     parser.add_argument("--starting-stack-bb", type=int, default=100, help="Starting effective stack in big blinds")
     parser.add_argument("--starting-pot-bb", type=int, default=6, help="Starting pot size in big blinds at flop")
     parser.add_argument("--minimum-bet-bb", type=int, default=2, help="Minimum bet size in big blinds")
-    parser.add_argument("--all-in-threshold", type=float, default=0.58, help="All-in threshold ratio passed to shark")
+    parser.add_argument("--all-in-threshold", type=float, default=0.55, help="All-in threshold ratio passed to shark")
     parser.add_argument("--iterations", type=int, default=5, help="CFR iterations for each solve")
     parser.add_argument("--thread-count", type=int, default=14, help="Thread count for each solve")
-    parser.add_argument("--raise-cap", type=int, default=3, help="Raise cap for the simulated solve tree")
+    parser.add_argument("--raise-cap", type=int, default=4, help="Raise cap for the simulated solve tree")
     parser.add_argument("--oop", action="store_true", help="Run the hero out of position instead of in position")
     parser.add_argument("--aggressive", action="store_true", help="Legacy shortcut: same as --villain-mode scripted_aggressive")
     parser.add_argument(

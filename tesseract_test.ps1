@@ -1635,6 +1635,136 @@ function Get-CurrentGameStateSnapshot {
   }
 }
 
+function Convert-ToUniquePositiveDoubles {
+  param(
+    [object[]]$Values,
+    [double[]]$Fallback = @(0.5)
+  )
+  $out = New-Object System.Collections.Generic.List[double]
+  foreach ($value in @($Values)) {
+    $parsed = 0.0
+    if ([double]::TryParse([string]$value, [ref]$parsed) -and $parsed -gt 0.0) {
+      [void]$out.Add([Math]::Round([double]$parsed, 4))
+    }
+  }
+  if ($out.Count -le 0) {
+    foreach ($fallback in @($Fallback)) {
+      $fb = 0.0
+      if ([double]::TryParse([string]$fallback, [ref]$fb) -and $fb -gt 0.0) {
+        [void]$out.Add([Math]::Round([double]$fb, 4))
+      }
+    }
+  }
+  if ($out.Count -le 0) {
+    [void]$out.Add(0.5)
+  }
+  return @($out.ToArray() | Sort-Object -Unique)
+}
+
+function Get-AdaptiveEngineSizingProfile {
+  param(
+    [int]$EffectiveStack,
+    [int]$EffectivePot,
+    [int]$BigBlind,
+    [int]$FacingBet = 0,
+    [int]$BoardCount = 0,
+    [switch]$UseActiveNode
+  )
+
+  $bb = [Math]::Max(1, [int]$BigBlind)
+  $stackVal = [Math]::Max(1, [int]$EffectiveStack)
+  $potVal = [Math]::Max(1, [int]$EffectivePot)
+
+  $stackBb = [double]$stackVal / [double]$bb
+  $spr = [double]$stackVal / [double]$potVal
+
+  $baseBetSizes = @()
+  if ($stackBb -le 25.0) {
+    $baseBetSizes = @(0.5, 1.0)
+  }
+  elseif ($stackBb -le 60.0) {
+    $baseBetSizes = @(0.33, 0.75, 1.0)
+  }
+  else {
+    $baseBetSizes = @(0.33, 0.75, 1.0, 1.25)
+  }
+
+  if ($BoardCount -ge 4 -and $stackBb -ge 35.0) {
+    $baseBetSizes += @(1.5)
+  }
+
+  $baseRaiseSizes = @()
+  if ($spr -le 1.2) {
+    $baseRaiseSizes = @(1.0, 1.5)
+  }
+  elseif ($spr -le 2.5) {
+    $baseRaiseSizes = @(1.0, 2.0)
+  }
+  else {
+    $baseRaiseSizes = @(1.0, 2.0, 2.5, 3.0)
+  }
+
+  $facing = [Math]::Max(0, [int]$FacingBet)
+  if ($facing -gt 0) {
+    $ratio = [double]$facing / [double][Math]::Max(1, $potVal)
+    if ($ratio -ge 0.75) {
+      $baseRaiseSizes += @(2.5)
+    }
+    elseif ($ratio -ge 0.5) {
+      $baseRaiseSizes += @(2.0)
+    }
+    if ($UseActiveNode) {
+      $mapped = [Math]::Min(3.0, [Math]::Max(1.0, [Math]::Round(($ratio * 2.0), 2)))
+      $baseRaiseSizes += @($mapped)
+    }
+  }
+
+  $betSizes = Convert-ToUniquePositiveDoubles -Values $baseBetSizes -Fallback @(0.33, 0.75, 1.0)
+  $raiseSizes = Convert-ToUniquePositiveDoubles -Values $baseRaiseSizes -Fallback @(1.0, 2.0)
+
+  $raiseCap = 2
+  if ($stackBb -gt 35.0) { $raiseCap = 3 }
+  if ($stackBb -gt 80.0) { $raiseCap = 4 }
+
+  $allInThreshold = 0.58
+  if ($spr -le 1.5) {
+    $allInThreshold = 0.52
+  }
+  elseif ($spr -le 3.0) {
+    $allInThreshold = 0.55
+  }
+  elseif ($spr -ge 8.0) {
+    $allInThreshold = 0.62
+  }
+
+  $streetSizing = [pscustomobject]@{
+    bet_sizes = @($betSizes)
+    raise_sizes = @($raiseSizes)
+  }
+  $betSizing = [pscustomobject]@{
+    flop = [pscustomobject]@{
+      bet_sizes = @($streetSizing.bet_sizes)
+      raise_sizes = @($streetSizing.raise_sizes)
+    }
+    turn = [pscustomobject]@{
+      bet_sizes = @($streetSizing.bet_sizes)
+      raise_sizes = @($streetSizing.raise_sizes)
+    }
+    river = [pscustomobject]@{
+      bet_sizes = @($streetSizing.bet_sizes)
+      raise_sizes = @($streetSizing.raise_sizes)
+    }
+  }
+
+  return [pscustomobject]@{
+    bet_sizing = $betSizing
+    raise_cap = [int]$raiseCap
+    all_in_threshold = [double]$allInThreshold
+    stack_bb = [double]([Math]::Round($stackBb, 4))
+    spr = [double]([Math]::Round($spr, 4))
+  }
+}
+
 function Get-VillainCardsText {
   return ("{0} {1}" -f [string]$script:villainCards["villain1"], [string]$script:villainCards["villain2"])
 }
@@ -2940,12 +3070,16 @@ function Build-EngineSpotPayload {
   if ($useActiveNode) {
     $effectivePot = [int]([Math]::Max(1, ([int]$effectivePot - [int]$state.facing_bet)))
   }
+  $adaptiveSizing = Get-AdaptiveEngineSizingProfile -EffectiveStack ([int]$effectiveStack) -EffectivePot ([int]$effectivePot) -BigBlind ([int]$stakes.big_blind) -FacingBet ([int]$state.facing_bet) -BoardCount ([int]$BoardCards.Count) -UseActiveNode:$useActiveNode
 
   $spot.starting_stack = [int]$effectiveStack
   $spot.minimum_bet = [int]$stakes.big_blind
   $spot.starting_pot = [int]$effectivePot
-  $spot.all_in_threshold = [double]$engineAllInThreshold
-  $spot.raise_cap = [int]$engineRaiseCap
+  $spot.all_in_threshold = [double]([Math]::Min([double]$engineAllInThreshold, [double]$adaptiveSizing.all_in_threshold))
+  $spot.raise_cap = [int]([Math]::Max(1, [Math]::Min([int]$engineRaiseCap, [int]$adaptiveSizing.raise_cap)))
+  if ($null -ne $adaptiveSizing.bet_sizing) {
+    $spot.bet_sizing = $adaptiveSizing.bet_sizing
+  }
   $heroComboRange = Convert-HoleCardsToStructuralCombo -Cards @($HeroCards)
   if ($heroComboRange) {
     $spot.hero_range = [string]$heroComboRange
@@ -2973,6 +3107,12 @@ function Build-EngineSpotPayload {
   $spot.meta.villain_folded = [bool]$state.villain_folded
   $spot.meta.hero_is_small_blind = [bool]$script:heroIsSmallBlind
   $spot.meta.hero_is_big_blind = (-not [bool]$script:heroIsSmallBlind)
+  $spot.meta.stack_bb = [double]$adaptiveSizing.stack_bb
+  $spot.meta.spr = [double]$adaptiveSizing.spr
+  $spot.meta.adaptive_raise_cap = [int]$adaptiveSizing.raise_cap
+  $spot.meta.adaptive_all_in_threshold = [double]$adaptiveSizing.all_in_threshold
+  $spot.meta.adaptive_bet_sizes = @($adaptiveSizing.bet_sizing.flop.bet_sizes)
+  $spot.meta.adaptive_raise_sizes = @($adaptiveSizing.bet_sizing.flop.raise_sizes)
   if ($HeroCards.Count -eq 2) {
     $spot.meta.hero_cards = @(
       ([string]$HeroCards[0]).Trim()
@@ -7283,19 +7423,19 @@ function Ensure-BackendsRunning {
         Write-Log ("Starting bridge server at {0} using {1}..." -f $bridgeHealthEndpoint, $pyCmd.label)
         try {
           # Default fast_live quality tuning: allow a few more seconds for stronger decisions.
-          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_SEC = "6" }
-          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC = "5" }
-          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC = "4" }
-          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC = "3" }
-          if (-not $env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC) { $env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC = "6" }
-          if (-not $env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC) { $env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = "8" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_SEC = "8" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC = "7" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC = "5" }
+          if (-not $env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC) { $env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC = "4" }
+          if (-not $env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC) { $env:FAST_LIVE_ACTIVE_NODE_TIMEOUT_SEC = "8" }
+          if (-not $env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC) { $env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC = "10" }
           if (-not $env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY) { $env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY = "0" }
-          if (-not $env:FAST_LIVE_SPOT_MAX_ITERATIONS) { $env:FAST_LIVE_SPOT_MAX_ITERATIONS = "2" }
-          if (-not $env:FAST_LIVE_SPOT_MAX_THREADS) { $env:FAST_LIVE_SPOT_MAX_THREADS = "4" }
-          if (-not $env:FAST_LIVE_SPOT_MAX_RAISE_CAP) { $env:FAST_LIVE_SPOT_MAX_RAISE_CAP = "3" }
-          if (-not $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD) { $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = "0.58" }
-          if (-not $env:FAST_LIVE_SPOT_BET_SIZES) { $env:FAST_LIVE_SPOT_BET_SIZES = "0.33,0.75,1.0" }
-          if (-not $env:FAST_LIVE_SPOT_RAISE_SIZES) { $env:FAST_LIVE_SPOT_RAISE_SIZES = "1.0,2.0,2.5" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_ITERATIONS) { $env:FAST_LIVE_SPOT_MAX_ITERATIONS = "3" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_THREADS) { $env:FAST_LIVE_SPOT_MAX_THREADS = "6" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_RAISE_CAP) { $env:FAST_LIVE_SPOT_MAX_RAISE_CAP = "4" }
+          if (-not $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD) { $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = "0.55" }
+          if (-not $env:FAST_LIVE_SPOT_BET_SIZES) { $env:FAST_LIVE_SPOT_BET_SIZES = "0.33,0.75,1.0,1.25" }
+          if (-not $env:FAST_LIVE_SPOT_RAISE_SIZES) { $env:FAST_LIVE_SPOT_RAISE_SIZES = "1.0,2.0,2.5,3.0" }
           Write-Log ("fast_live tuning: baseline(f/t/r)={0}/{1}/{2}s active_node={3}s active_node_flop={4}s lookup_only={5} iters={6} threads={7} raise_cap={8} ai_th={9} bets={10} raises={11}" -f `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC, `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC, `
