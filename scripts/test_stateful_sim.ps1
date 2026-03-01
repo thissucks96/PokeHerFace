@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Runs the passive-villain stateful hand simulation against the local bridge server and outputs a summary report.
+Runs the stateful hand simulation against the local bridge server and outputs a summary report.
 
 .DESCRIPTION
-This script wraps the Python `run_stateful_sim.py` tool. It simulates N hands of Flop -> Turn -> River back-to-back, managing pot and stack geometry automatically against a dummy "call station" villain. It does not use computer vision or OCR timeouts.
+This script wraps the Python `run_stateful_sim.py` tool. It simulates N hands of Flop -> Turn -> River back-to-back, managing pot and stack geometry automatically with configurable villain mode (`scripted_tight`, `scripted_aggressive`, `engine_random`). It does not use computer vision or OCR timeouts.
 
 .PARAMETER Preset
 The LLM config preset to pass to the bridge (default "local_qwen3_coder_30b").
@@ -22,6 +22,12 @@ Maximum seconds to wait for a single bridge /solve request (default 60).
 
 .PARAMETER Aggressive
 Use the aggressive villain harness variant where villain leads 75% pot into hero each street.
+
+.PARAMETER VillainMode
+Explicit villain policy mode: scripted_tight, scripted_aggressive, engine_random.
+
+.PARAMETER ArtifactDir
+Optional artifact output directory for payload/response pairs (dataset builder compatible).
 #>
 [CmdletBinding()]
 param (
@@ -31,7 +37,10 @@ param (
     [int]$Hands = 20,
     [string]$OutputDir = "",
     [int]$TimeoutSec = 60,
-    [switch]$Aggressive
+    [switch]$Aggressive,
+    [ValidateSet("scripted_tight","scripted_aggressive","engine_random")]
+    [string]$VillainMode = "",
+    [string]$ArtifactDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +57,17 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 }
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
+$resolvedArtifactDir = ""
+if (-not [string]::IsNullOrWhiteSpace($ArtifactDir)) {
+    if (-not [System.IO.Path]::IsPathRooted($ArtifactDir)) {
+        $ArtifactDir = Join-Path $workspaceRoot $ArtifactDir
+    }
+    $resolvedArtifactDir = [System.IO.Path]::GetFullPath($ArtifactDir)
+    if (-not (Test-Path $resolvedArtifactDir)) {
+        $null = New-Item -ItemType Directory -Path $resolvedArtifactDir -Force
+    }
+}
+
 if (-not (Test-Path $simScript)) {
     Write-Error "Cannot find stateful simulator python script: $simScript"
     exit 1
@@ -61,8 +81,11 @@ $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd_HHmmss")
 $outputFile = Join-Path $OutputDir "stateful_sim_report.${RuntimeProfile}_${Hands}hands.${timestamp}.json"
 
 Write-Host "==========================================" -ForegroundColor Cyan
-if ($Aggressive) {
+if ($Aggressive -or ($VillainMode -eq "scripted_aggressive")) {
     Write-Host " Aggressive-Villain Stateful Simulator    " -ForegroundColor Cyan
+}
+elseif ($VillainMode -eq "engine_random") {
+    Write-Host " Engine-Random Villain Stateful Simulator " -ForegroundColor Cyan
 }
 else {
     Write-Host " Passive-Villain Stateful Simulator       " -ForegroundColor Cyan
@@ -88,6 +111,12 @@ $pythonArgs = @(
 
 if ($Aggressive) {
     $pythonArgs += "--aggressive"
+}
+if (-not [string]::IsNullOrWhiteSpace($VillainMode)) {
+    $pythonArgs += @("--villain-mode", $VillainMode)
+}
+if (-not [string]::IsNullOrWhiteSpace($resolvedArtifactDir)) {
+    $pythonArgs += @("--artifact-dir", $resolvedArtifactDir)
 }
 
 Write-Host "Executing python harness..." -ForegroundColor DarkGray

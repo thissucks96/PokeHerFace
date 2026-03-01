@@ -161,6 +161,25 @@ Run class-specific acceptance suites:
 .\scripts\test_acceptance.ps1 -Suite river_class23 -Preset local_qwen3_coder_30b
 ```
 
+Run stateful sim directly with explicit villain mode (for local neural data generation):
+
+```powershell
+.\scripts\test_stateful_sim.ps1 -Hands 50 -RuntimeProfile fast_live -VillainMode engine_random -ArtifactDir 5_Vision_Extraction/out/flop_engine
+.\scripts\test_stateful_sim.ps1 -Hands 30 -RuntimeProfile fast_live -VillainMode scripted_aggressive -ArtifactDir 5_Vision_Extraction/out/flop_engine
+.\scripts\test_stateful_sim.ps1 -Hands 20 -RuntimeProfile fast_live -VillainMode scripted_tight -ArtifactDir 5_Vision_Extraction/out/flop_engine
+```
+
+Run the mixed neural collection recipe (recommended):
+
+```powershell
+.\scripts\run_neural_collection_recipe.ps1 -TotalHands 300 -RuntimeProfile fast_live
+```
+
+Default recipe mix:
+- 65% `engine_random` (engine-vs-engine style)
+- 25% `scripted_aggressive`
+- 10% `scripted_tight`
+
 Runtime profile selection (A_2 toggle):
 
 ```powershell

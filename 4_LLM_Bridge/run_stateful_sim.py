@@ -9,6 +9,7 @@ import json
 import random
 import statistics
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -53,6 +54,7 @@ AGGRESSIVE_VILLAIN_POLICY = {
     "folds": "disabled",
 }
 AGGRESSIVE_LEGAL_ACTIONS = ["fold", "call", "raise_75", "all_in"]
+VILLAIN_MODE_CHOICES = ["scripted_tight", "scripted_aggressive", "engine_random"]
 
 def _get_card_val(card_str: str) -> tuple[int, str]:
     if len(card_str) == 3 and card_str.startswith("10"):
@@ -214,6 +216,77 @@ def _aggressive_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[flo
         return json.loads(json.dumps(FAST_BET_SIZING))
     return json.loads(json.dumps(DEFAULT_BET_SIZING))
 
+
+def _extract_action_map_and_result(resp_json: Dict[str, Any]) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+    result_block = resp_json.get("result", {}) or {}
+    action_map = result_block.get("root_actions", [])
+    if bool(result_block.get("active_node_found")) and isinstance(result_block.get("active_node_actions"), list):
+        action_map = result_block.get("active_node_actions", [])
+    if not isinstance(action_map, list):
+        action_map = []
+    filtered: list[Dict[str, Any]] = [a for a in action_map if isinstance(a, dict)]
+    return filtered, result_block
+
+
+def _sample_action_from_solver_map(
+    action_map: List[Dict[str, Any]],
+    *,
+    reference_pot: int,
+    aggressive: bool,
+    weighted_sample: bool,
+    default_action: str,
+) -> tuple[str, list[Dict[str, Any]], str]:
+    if not action_map:
+        return default_action, [], "fallback_decision"
+
+    action_map_log: List[Dict[str, Any]] = []
+    best_freq = -1.0
+    chosen_action = default_action
+    weighted_candidates: Dict[str, float] = {}
+
+    for a in action_map:
+        freq = float(a.get("avg_frequency", a.get("frequency", 0)))
+        action_base = a.get("action", "check")
+        amount = a.get("amount")
+        mapped_action = _map_solver_action_to_harness_action(
+            str(action_base),
+            amount,
+            aggressive=aggressive,
+            reference_pot=reference_pot,
+        )
+        action_map_log.append(
+            {
+                "solver_action": str(action_base),
+                "amount": amount,
+                "avg_frequency": freq,
+                "mapped_action": mapped_action,
+            }
+        )
+        if weighted_sample and freq > 0.0:
+            weighted_candidates[mapped_action] = weighted_candidates.get(mapped_action, 0.0) + freq
+        if freq > best_freq:
+            best_freq = freq
+            chosen_action = mapped_action
+
+    if weighted_sample and weighted_candidates:
+        population = list(weighted_candidates.keys())
+        weights = [max(0.0, float(weighted_candidates[key])) for key in population]
+        if sum(weights) > 0.0:
+            return random.choices(population, weights=weights, k=1)[0], action_map_log, "weighted_sample"
+    return chosen_action, action_map_log, "argmax"
+
+
+def _artifact_write(artifact_dir: Optional[Path], stage: str, payload: Dict[str, Any], response: Dict[str, Any]) -> None:
+    if artifact_dir is None:
+        return
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    token = uuid.uuid4().hex[:6]
+    payload_path = artifact_dir / f"{stage}_payload_{stamp}_{token}.json"
+    response_path = artifact_dir / f"{stage}_response_{stamp}_{token}.json"
+    payload_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    response_path.write_text(json.dumps(response, indent=2), encoding="utf-8")
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hands", type=int, default=20, help="Number of full hands to simulate")
@@ -229,16 +302,34 @@ def main() -> int:
     parser.add_argument("--thread-count", type=int, default=14, help="Thread count for each solve")
     parser.add_argument("--raise-cap", type=int, default=2, help="Raise cap for the simulated solve tree")
     parser.add_argument("--oop", action="store_true", help="Run the hero out of position instead of in position")
-    parser.add_argument("--aggressive", action="store_true", help="Use an aggressive betting villain instead of a passive one")
+    parser.add_argument("--aggressive", action="store_true", help="Legacy shortcut: same as --villain-mode scripted_aggressive")
+    parser.add_argument(
+        "--villain-mode",
+        choices=VILLAIN_MODE_CHOICES,
+        default="",
+        help="Villain policy mode: scripted_tight, scripted_aggressive, or engine_random.",
+    )
     parser.add_argument("--allow-donk-bets", action="store_true", help="Disable the default remove_donk_bets simplification")
     parser.add_argument("--disable-compress-strategy", action="store_true", help="Disable compress_strategy in spot payloads")
+    parser.add_argument(
+        "--artifact-dir",
+        default="",
+        help="Optional directory to write payload/response artifacts for dataset building.",
+    )
     parser.add_argument("--output", required=True, help="Output JSON map")
     args = parser.parse_args()
 
-    active_policy = AGGRESSIVE_VILLAIN_POLICY if args.aggressive else PASSIVE_VILLAIN_POLICY
-    active_mode = "stateful_aggressive_villain_heads_up" if args.aggressive else "stateful_passive_villain_heads_up"
-    active_legal_actions = AGGRESSIVE_LEGAL_ACTIONS if args.aggressive else DEFAULT_LEGAL_ACTIONS
-    facing_action_value = "facing_bet_75" if args.aggressive else "checked_to_hero"
+    villain_mode = str(args.villain_mode or "").strip().lower()
+    if not villain_mode:
+        villain_mode = "scripted_aggressive" if args.aggressive else "scripted_tight"
+    aggressive_mode = villain_mode in {"scripted_aggressive", "engine_random"}
+    active_policy = AGGRESSIVE_VILLAIN_POLICY if aggressive_mode else PASSIVE_VILLAIN_POLICY
+    active_mode = f"stateful_{villain_mode}_heads_up"
+    active_legal_actions = AGGRESSIVE_LEGAL_ACTIONS if aggressive_mode else DEFAULT_LEGAL_ACTIONS
+    facing_action_value = "facing_bet_75" if aggressive_mode else "checked_to_hero"
+    artifact_dir: Optional[Path] = None
+    if str(args.artifact_dir or "").strip():
+        artifact_dir = Path(str(args.artifact_dir)).resolve()
 
     scenario: Dict[str, Any] = {
         "mode": active_mode,
@@ -247,22 +338,22 @@ def main() -> int:
         "villain_policy": active_policy,
         "legal_actions": active_legal_actions,
         "villain_range": DEFAULT_VILLAIN_RANGE,
-        "in_position_player": 2 if args.aggressive else (2 if args.oop else 1),
+        "in_position_player": 2 if aggressive_mode else (2 if args.oop else 1),
         "starting_stack_bb": args.starting_stack_bb,
         "starting_pot_bb": args.starting_pot_bb,
         "minimum_bet": args.minimum_bet_bb,
         "all_in_threshold": args.all_in_threshold,
         "iterations": args.iterations,
         "thread_count": args.thread_count,
-        "remove_donk_bets": False if args.aggressive else not args.allow_donk_bets,
+        "remove_donk_bets": False if aggressive_mode else not args.allow_donk_bets,
         "raise_cap": args.raise_cap,
         "compress_strategy": not args.disable_compress_strategy,
-        "bet_sizing": _aggressive_bet_sizing(args.runtime_profile) if args.aggressive else _scenario_bet_sizing(args.runtime_profile),
+        "bet_sizing": _aggressive_bet_sizing(args.runtime_profile) if aggressive_mode else _scenario_bet_sizing(args.runtime_profile),
     }
 
     results = []
     
-    mode_label = "aggressive-villain" if args.aggressive else "passive-villain"
+    mode_label = villain_mode
     print(f"Starting {mode_label} state harness (Hands: {args.hands})")
     
     total_latency_by_street = {"flop": [], "turn": [], "river": []}
@@ -313,15 +404,69 @@ def main() -> int:
             current_board = full_board[:board_count]
             base_pot = pot
             villain_bet = 0
+            villain_action = "check"
+            villain_action_map_log: List[Dict[str, Any]] = []
+            villain_selection_mode = "scripted"
             lead_sizes = scenario["bet_sizing"].get(street_name, {}).get("bet_sizes", [0.75])
             lead_ratio = float(lead_sizes[0]) if lead_sizes else 0.75
-            if args.aggressive:
+            if villain_mode == "scripted_aggressive":
                 villain_bet = max(int(scenario["minimum_bet"]), int(round(base_pot * lead_ratio)))
                 villain_bet = min(hero_stack, villain_bet)
+                villain_action = "bet_75" if villain_bet > 0 else "check"
+            elif villain_mode == "engine_random":
+                villain_spot = _build_engine_spot(
+                    villain_hole,
+                    current_board,
+                    base_pot,
+                    hero_stack,
+                    scenario,
+                    active_node_path="",
+                )
+                villain_payload = {
+                    "spot": villain_spot,
+                    "timeout_sec": args.timeout,
+                    "quiet": True,
+                    "auto_select_best": True,
+                    "ev_keep_margin": 0.001,
+                    "llm": {"preset": args.preset},
+                    "enable_multi_node_locks": False,
+                    "runtime_profile": args.runtime_profile,
+                }
+                try:
+                    r_v = requests.post(args.endpoint, json=villain_payload, timeout=args.timeout + 10)
+                    r_v.raise_for_status()
+                    villain_resp = r_v.json()
+                    _artifact_write(
+                        artifact_dir=artifact_dir,
+                        stage=f"stateful_sim_villain_h{h_idx+1}_{street_name}",
+                        payload=villain_payload,
+                        response=villain_resp,
+                    )
+                    villain_action_map, _ = _extract_action_map_and_result(villain_resp)
+                    villain_action, villain_action_map_log, villain_selection_mode = _sample_action_from_solver_map(
+                        villain_action_map,
+                        reference_pot=base_pot,
+                        aggressive=False,
+                        weighted_sample=True,
+                        default_action="check",
+                    )
+                except Exception:
+                    villain_action = "check"
+                    villain_selection_mode = "engine_fallback_check"
+
+                if villain_action in {"bet_33", "bet_75", "raise_75", "all_in"}:
+                    if villain_action == "bet_33":
+                        villain_bet = max(int(scenario["minimum_bet"]), int(round(base_pot * 0.33)))
+                    elif villain_action in {"bet_75", "raise_75"}:
+                        villain_bet = max(int(scenario["minimum_bet"]), int(round(base_pot * 0.75)))
+                    else:
+                        villain_bet = hero_stack
+                    villain_bet = min(hero_stack, villain_bet)
             decision_pot = pot + villain_bet
             decision_stack = hero_stack
+            street_facing_action = "facing_bet_75" if villain_bet > 0 else "checked_to_hero"
             active_node_path = ""
-            if args.aggressive and villain_bet > 0:
+            if villain_bet > 0:
                 active_node_path = f"root/p1:check/p2:bet:{villain_bet}"
             solve_pot = base_pot if active_node_path else decision_pot
             spot = _build_engine_spot(
@@ -345,11 +490,17 @@ def main() -> int:
             }
             
             t_start = time.perf_counter()
-            resp_json = {}
+            resp_json: Dict[str, Any] = {}
             try:
                 r = requests.post(args.endpoint, json=payload, timeout=args.timeout + 10)
                 r.raise_for_status()
                 resp_json = r.json()
+                _artifact_write(
+                    artifact_dir=artifact_dir,
+                    stage=f"stateful_sim_hero_h{h_idx+1}_{street_name}",
+                    payload=payload,
+                    response=resp_json,
+                )
             except Exception as e:
                 error_msg = str(e)
                 if isinstance(e, RequestException) and e.response is not None:
@@ -360,21 +511,17 @@ def main() -> int:
             t_elapsed = time.perf_counter() - t_start
             
             metrics = resp_json.get("metrics", {})
-            result_block = resp_json.get("result", {}) or {}
-            action_map = result_block.get("root_actions", [])
-            if bool(result_block.get("active_node_found")) and isinstance(result_block.get("active_node_actions"), list):
-                action_map = result_block.get("active_node_actions", [])
+            action_map, result_block = _extract_action_map_and_result(resp_json)
             strat_source = str(resp_json.get("selected_strategy") or result_block.get("selected_strategy") or "unknown")
             strategy_source_counts[strat_source] = strategy_source_counts.get(strat_source, 0) + 1
             total_latency_by_street[street_name].append(t_elapsed)
+            # Map choice to exact sizes
+            chosen_action = "call" if villain_bet > 0 else "check"
             action_map_log: List[Dict[str, Any]] = []
             selection_mode = "fallback_decision"
-            
-            # Map choice to exact sizes
-            chosen_action = "call" if args.aggressive else "check"
             if not action_map and result_block.get("decision"):
                  raw_action = str(result_block["decision"].get("action", "check")).strip().lower()
-                 if args.aggressive:
+                 if villain_bet > 0:
                      if raw_action == "fold":
                          chosen_action = "fold"
                      elif raw_action == "all_in":
@@ -386,48 +533,20 @@ def main() -> int:
                  elif "bet" in raw_action:
                       chosen_action = "bet_33" # Fallback heuristic assumption
             else:
-                 best_freq = -1.0
-                 weighted_candidates: Dict[str, float] = {}
-                 for a in action_map:
-                     freq = float(a.get("avg_frequency", a.get("frequency", 0)))
-                     action_base = a.get("action", "check")
-                     amount = a.get("amount")
-                     mapped_action = _map_solver_action_to_harness_action(
-                         str(action_base),
-                         amount,
-                         aggressive=args.aggressive,
-                         reference_pot=base_pot,
-                     )
-                     action_map_log.append(
-                         {
-                             "solver_action": str(action_base),
-                             "amount": amount,
-                             "avg_frequency": freq,
-                             "mapped_action": mapped_action,
-                         }
-                     )
-                     if args.aggressive and freq > 0.0:
-                         weighted_candidates[mapped_action] = weighted_candidates.get(mapped_action, 0.0) + freq
-                     if freq > best_freq:
-                         best_freq = freq
-                         chosen_action = mapped_action
-                 if args.aggressive and weighted_candidates:
-                     population = list(weighted_candidates.keys())
-                     weights = [max(0.0, float(weighted_candidates[key])) for key in population]
-                     if sum(weights) > 0.0:
-                         chosen_action = random.choices(population, weights=weights, k=1)[0]
-                         selection_mode = "weighted_sample"
-                     else:
-                         selection_mode = "argmax"
-                 else:
-                     selection_mode = "argmax"
+                 chosen_action, action_map_log, selection_mode = _sample_action_from_solver_map(
+                     action_map,
+                     reference_pot=base_pot,
+                     aggressive=(villain_bet > 0),
+                     weighted_sample=(villain_bet > 0),
+                     default_action=chosen_action,
+                 )
 
             action_counts_by_street[street_name][chosen_action] = action_counts_by_street[street_name].get(chosen_action, 0) + 1
 
             # Math application
             invested = 0
             min_bet = int(spot["minimum_bet"])
-            if args.aggressive:
+            if villain_bet > 0:
                 raise_extra = max(min_bet, int(round(base_pot * 0.75)))
                 if chosen_action == "fold":
                     pot = decision_pot
@@ -469,8 +588,11 @@ def main() -> int:
             
             hand_record["streets"].append({ # type: ignore
                 "street": street_name,
-                "facing_action": facing_action_value,
+                "facing_action": street_facing_action,
                 "legal_actions": scenario["legal_actions"],
+                "villain_action": villain_action,
+                "villain_action_selection_mode": villain_selection_mode,
+                "villain_action_map": villain_action_map_log,
                 "solve_spot": {
                     "hero_range": spot["hero_range"],
                     "villain_range": spot["villain_range"],

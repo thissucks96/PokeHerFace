@@ -35,6 +35,13 @@ This creates the folder layout and writes starter local configs (if missing):
 
 ## Core Scripts
 
+0. Collect mixed training artifacts with a repeatable villain recipe:
+
+```powershell
+python .\scripts\setup_local_neural_workspace.py
+.\scripts\run_neural_collection_recipe.ps1 -TotalHands 300 -RuntimeProfile fast_live
+```
+
 1. Analyze/build dataset rows (analysis-only by default):
 
 ```powershell
