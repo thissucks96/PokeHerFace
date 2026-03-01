@@ -208,9 +208,12 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
     result = response.get("result")
     if not isinstance(result, dict):
         return None
+    result_input = result.get("input")
+    engine_input = result_input if isinstance(result_input, dict) else {}
+    effective_spot = engine_input if engine_input else spot
 
     meta = spot.get("meta") if isinstance(spot.get("meta"), dict) else {}
-    board = spot.get("board") if isinstance(spot.get("board"), list) else []
+    board = effective_spot.get("board") if isinstance(effective_spot.get("board"), list) else []
     street = _detect_street(board)
     runtime_profile = str(payload.get("runtime_profile") or "").strip().lower()
     if not runtime_profile:
@@ -230,26 +233,31 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
         "selection_reason": str(response.get("selection_reason") or ""),
     }
     features = {
-        "hero_range": str(spot.get("hero_range") or ""),
-        "villain_range": str(spot.get("villain_range") or ""),
+        "hero_range": str(effective_spot.get("hero_range") or ""),
+        "villain_range": str(effective_spot.get("villain_range") or ""),
         "board": board,
-        "active_node_path": str(spot.get("active_node_path") or ""),
-        "in_position_player": _safe_int(spot.get("in_position_player"), 2),
-        "starting_stack": _safe_int(spot.get("starting_stack"), 0),
-        "starting_pot": _safe_int(spot.get("starting_pot"), 0),
-        "minimum_bet": _safe_int(spot.get("minimum_bet"), 0),
-        "all_in_threshold": _safe_float(spot.get("all_in_threshold"), 0.67),
-        "iterations": _safe_int(spot.get("iterations"), 0),
-        "thread_count": _safe_int(spot.get("thread_count"), 0),
-        "raise_cap": _safe_int(spot.get("raise_cap"), 0),
+        "active_node_path": str(effective_spot.get("active_node_path") or ""),
+        "in_position_player": _safe_int(effective_spot.get("in_position_player"), 2),
+        "starting_stack": _safe_int(effective_spot.get("starting_stack"), 0),
+        "starting_pot": _safe_int(effective_spot.get("starting_pot"), 0),
+        "minimum_bet": _safe_int(effective_spot.get("minimum_bet"), 0),
+        "all_in_threshold": _safe_float(effective_spot.get("all_in_threshold"), 0.67),
+        "iterations": _safe_int(effective_spot.get("iterations"), 0),
+        "min_exploitability": _safe_float(effective_spot.get("min_exploitability"), -1.0),
+        "thread_count": _safe_int(effective_spot.get("thread_count"), 0),
+        "remove_donk_bets": bool(effective_spot.get("remove_donk_bets", True)),
+        "raise_cap": _safe_int(effective_spot.get("raise_cap"), 0),
+        "compress_strategy": bool(effective_spot.get("compress_strategy", True)),
+        "bet_sizing": effective_spot.get("bet_sizing") if isinstance(effective_spot.get("bet_sizing"), dict) else {},
         "facing_bet": _safe_int(meta.get("facing_bet"), 0),
         "hero_street_commit": _safe_int(meta.get("hero_street_commit"), 0),
         "villain_street_commit": _safe_int(meta.get("villain_street_commit"), 0),
-        "current_pot": _safe_int(meta.get("current_pot", spot.get("starting_pot")), 0),
+        "current_pot": _safe_int(meta.get("current_pot", effective_spot.get("starting_pot")), 0),
         "hero_chips": _safe_int(meta.get("current_hero_chips"), 0),
         "villain_chips": _safe_int(meta.get("current_villain_chips"), 0),
         "hero_is_small_blind": bool(meta.get("hero_is_small_blind", True)),
         "hero_cards": meta.get("hero_cards") if isinstance(meta.get("hero_cards"), list) else [],
+        "engine_input_applied": bool(engine_input),
     }
     target = {
         "selected_action": chosen_action,

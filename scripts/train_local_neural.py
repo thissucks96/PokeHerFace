@@ -126,6 +126,7 @@ class TeacherRowsDataset(Dataset):
             _safe_float(features.get("minimum_bet"), 0.0),
             _safe_float(features.get("all_in_threshold"), 0.67),
             _safe_float(features.get("iterations"), 0.0),
+            _safe_float(features.get("min_exploitability"), -1.0),
             _safe_float(features.get("thread_count"), 0.0),
             _safe_float(features.get("raise_cap"), 0.0),
             _safe_float(features.get("facing_bet"), 0.0),
@@ -135,6 +136,8 @@ class TeacherRowsDataset(Dataset):
             _safe_float(features.get("hero_chips"), 0.0),
             _safe_float(features.get("villain_chips"), 0.0),
             1.0 if bool(features.get("hero_is_small_blind", True)) else 0.0,
+            1.0 if bool(features.get("remove_donk_bets", True)) else 0.0,
+            1.0 if bool(features.get("compress_strategy", True)) else 0.0,
             _street_to_float(source.get("street", "")),
         ]
         for i, value in enumerate(numeric):
@@ -152,6 +155,7 @@ class TeacherRowsDataset(Dataset):
             f"stg:{source.get('stage', '')}",
             f"street:{source.get('street', '')}",
             f"hero_cards:{','.join(features.get('hero_cards', []) if isinstance(features.get('hero_cards'), list) else [])}",
+            f"bs:{json.dumps(features.get('bet_sizing', {}), sort_keys=True)}",
         ]
         tail_start = min(len(numeric), max(0, input_dim // 4))
         tail_buckets = max(1, input_dim - tail_start)

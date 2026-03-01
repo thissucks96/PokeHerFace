@@ -129,6 +129,7 @@ def _validate_row(row: dict[str, Any], idx: int) -> list[str]:
         "minimum_bet",
         "all_in_threshold",
         "iterations",
+        "min_exploitability",
         "thread_count",
         "raise_cap",
         "facing_bet",
@@ -143,6 +144,34 @@ def _validate_row(row: dict[str, Any], idx: int) -> list[str]:
         if isinstance(value, (int, float)):
             continue
         errors.append(f"row[{idx}]: features.{key} must be numeric")
+
+    bool_keys = [
+        "remove_donk_bets",
+        "compress_strategy",
+        "hero_is_small_blind",
+    ]
+    for key in bool_keys:
+        if isinstance(features.get(key), bool):
+            continue
+        errors.append(f"row[{idx}]: features.{key} must be bool")
+
+    bet_sizing = features.get("bet_sizing")
+    if not isinstance(bet_sizing, dict):
+        errors.append(f"row[{idx}]: features.bet_sizing must be object")
+    else:
+        for street_name in ("flop", "turn", "river"):
+            cfg = bet_sizing.get(street_name)
+            if cfg is None:
+                continue
+            if not isinstance(cfg, dict):
+                errors.append(f"row[{idx}]: features.bet_sizing.{street_name} must be object")
+                continue
+            for arr_key in ("bet_sizes", "raise_sizes"):
+                arr_val = cfg.get(arr_key)
+                if arr_val is None:
+                    continue
+                if not isinstance(arr_val, list) or not all(isinstance(v, (int, float)) for v in arr_val):
+                    errors.append(f"row[{idx}]: features.bet_sizing.{street_name}.{arr_key} must be numeric list")
 
     return errors
 
