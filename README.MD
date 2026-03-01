@@ -394,6 +394,9 @@ Optional neural-brain stage (`2_Neural_Brain` DyypHoldem adapter):
     - agreement/disagreement flag,
     - elapsed time and any neural error code.
   - UI session logs now emit `neural_shadow_result` events for every completed engine job.
+  - when DyypHoldem assets are unavailable (for example Git LFS pointer files are present but binary objects are missing),
+    the adapter now returns a clearly flagged `surrogate_neural_policy` shadow result (`neural_surrogate=true`) so
+    telemetry pipelines remain operational; surrogate outputs are blocked from `prefer` auto-apply and are treated as shadow-only.
 - neural runtime now also supports these compatibility envs in `2_Neural_Brain`:
   - `DYYPHOLDEM_USE_GPU` (`auto`/`1`/`0`)
   - `DYYPHOLDEM_CFR_ITERS`

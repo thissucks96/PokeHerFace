@@ -115,6 +115,8 @@ def build_report(
             "selected_action": str(neural.get("selected_action") or ""),
             "neural_chosen_action": str(neural.get("neural_chosen_action") or ""),
             "agrees_with_selected": neural.get("agrees_with_selected"),
+            "neural_adapter": str(neural.get("neural_adapter") or ""),
+            "neural_surrogate": _safe_bool(neural.get("neural_surrogate")),
         }
         rows.append(row)
 
@@ -129,6 +131,7 @@ def build_report(
 
     by_profile: dict[str, dict[str, Any]] = {}
     by_street: dict[str, dict[str, Any]] = {}
+    by_adapter: dict[str, dict[str, Any]] = {}
     grouped_profile: dict[str, list[dict[str, Any]]] = defaultdict(list)
     grouped_street: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -169,6 +172,21 @@ def build_report(
             ),
         }
 
+    grouped_adapter: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        adapter_key = row["neural_adapter"] or "none"
+        grouped_adapter[adapter_key].append(row)
+    for key, group in grouped_adapter.items():
+        by_adapter[key] = {
+            "count": len(group),
+            "attempted": sum(1 for r in group if r["neural_attempted"]),
+            "available": sum(1 for r in group if r["neural_available"]),
+            "surrogate": sum(1 for r in group if r["neural_surrogate"]),
+            "neural_elapsed_mean_sec": (
+                sum(r["neural_elapsed_sec"] for r in group) / len(group) if group else 0.0
+            ),
+        }
+
     disagreement_counter = Counter()
     for row in rows:
         if row.get("agrees_with_selected") is False:
@@ -190,6 +208,7 @@ def build_report(
             "bridge_total_p95_sec": _quantile([r["bridge_total_sec"] for r in rows], 0.95),
             "runtime_profiles": by_profile,
             "streets": by_street,
+            "adapters": by_adapter,
             "top_disagreements": disagreement_counter.most_common(20),
         },
         "rows": rows,
@@ -215,6 +234,8 @@ def build_report(
                 "solver_sec",
                 "neural_elapsed_sec",
                 "neural_mode",
+                "neural_adapter",
+                "neural_surrogate",
                 "neural_error",
                 "response_path",
             ],

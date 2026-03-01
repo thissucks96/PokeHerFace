@@ -953,12 +953,18 @@ def _build_neural_shadow_summary(
     neural_choice = ""
     neural_actions: list[str] = []
     neural_root_count = 0
+    neural_adapter = ""
+    neural_surrogate = False
     if isinstance(payload, dict):
         neural_choice = _normalize_action_token(str(payload.get("chosen_action", "")).strip().lower())
         neural_actions = _normalize_action_summary_tokens(payload.get("root_actions", []))
         neural_root = payload.get("root_actions")
         if isinstance(neural_root, list):
             neural_root_count = len(neural_root)
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            neural_adapter = str(meta.get("adapter") or "")
+            neural_surrogate = bool(meta.get("surrogate", False))
     agree: Optional[bool] = None
     if neural_choice and selected_action:
         if neural_choice == selected_action:
@@ -982,6 +988,8 @@ def _build_neural_shadow_summary(
         "allowed_actions_in": list(allowed_actions_in),
         "neural_allowed_actions": neural_actions,
         "neural_root_action_count": int(neural_root_count),
+        "neural_adapter": neural_adapter,
+        "neural_surrogate": neural_surrogate,
     }
     return summary
 
@@ -1746,14 +1754,18 @@ def _build_fast_failover_response(
         neural_root_actions = neural_payload.get("root_actions")
         neural_allowed = _normalize_action_summary_tokens(neural_root_actions)
         neural_choice = _normalize_action_token(str(neural_payload.get("chosen_action", "")).strip().lower())
+        neural_meta = neural_payload.get("meta") if isinstance(neural_payload.get("meta"), dict) else {}
+        neural_surrogate = bool(neural_meta.get("surrogate", False))
         if isinstance(neural_root_actions, list) and neural_root_actions:
             root_actions = neural_root_actions
         if neural_allowed:
             allowed_actions = neural_allowed
         if neural_choice:
             chosen_action = neural_choice
-        if NEURAL_BRAIN_MODE in {"prefer", "prefer_on_fast_failover"}:
+        if NEURAL_BRAIN_MODE in {"prefer", "prefer_on_fast_failover"} and not neural_surrogate:
             neural_applied = True
+        elif NEURAL_BRAIN_MODE in {"prefer", "prefer_on_fast_failover"} and neural_surrogate:
+            neural_error = "surrogate_shadow_only"
 
     selected_strategy = "neural_brain" if neural_applied else "fallback_lookup_policy"
     effective_selection_reason = (
@@ -2419,7 +2431,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             )
             if isinstance(neural_payload, dict):
                 neural_allowed = _normalize_action_summary_tokens(neural_payload.get("root_actions", []))
-                if NEURAL_BRAIN_MODE == "prefer":
+                neural_meta = neural_payload.get("meta") if isinstance(neural_payload.get("meta"), dict) else {}
+                neural_surrogate = bool(neural_meta.get("surrogate", False))
+                if NEURAL_BRAIN_MODE == "prefer" and not neural_surrogate:
                     result = _apply_neural_overlay_to_result(result, neural_payload)
                     selected_strategy = "neural_brain"
                     selection_reason = "neural_brain_preferred"
@@ -2427,6 +2441,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                     if neural_allowed:
                         allowed_root_actions = neural_allowed
                     neural_applied = True
+                elif NEURAL_BRAIN_MODE == "prefer" and neural_surrogate:
+                    neural_error = "surrogate_shadow_only"
         else:
             neural_error = "global_budget_exhausted_before_neural_stage"
     elif NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE == "prefer_on_fast_failover":
