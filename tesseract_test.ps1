@@ -7292,10 +7292,10 @@ function Ensure-BackendsRunning {
           if (-not $env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY) { $env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY = "0" }
           if (-not $env:FAST_LIVE_SPOT_MAX_ITERATIONS) { $env:FAST_LIVE_SPOT_MAX_ITERATIONS = "2" }
           if (-not $env:FAST_LIVE_SPOT_MAX_THREADS) { $env:FAST_LIVE_SPOT_MAX_THREADS = "4" }
-          if (-not $env:FAST_LIVE_SPOT_MAX_RAISE_CAP) { $env:FAST_LIVE_SPOT_MAX_RAISE_CAP = "2" }
+          if (-not $env:FAST_LIVE_SPOT_MAX_RAISE_CAP) { $env:FAST_LIVE_SPOT_MAX_RAISE_CAP = "3" }
           if (-not $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD) { $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = "0.58" }
-          if (-not $env:FAST_LIVE_SPOT_BET_SIZES) { $env:FAST_LIVE_SPOT_BET_SIZES = "0.33,0.75" }
-          if (-not $env:FAST_LIVE_SPOT_RAISE_SIZES) { $env:FAST_LIVE_SPOT_RAISE_SIZES = "1.0,2.0" }
+          if (-not $env:FAST_LIVE_SPOT_BET_SIZES) { $env:FAST_LIVE_SPOT_BET_SIZES = "0.33,0.75,1.0" }
+          if (-not $env:FAST_LIVE_SPOT_RAISE_SIZES) { $env:FAST_LIVE_SPOT_RAISE_SIZES = "1.0,2.0,2.5" }
           Write-Log ("fast_live tuning: baseline(f/t/r)={0}/{1}/{2}s active_node={3}s active_node_flop={4}s lookup_only={5} iters={6} threads={7} raise_cap={8} ai_th={9} bets={10} raises={11}" -f `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC, `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC, `

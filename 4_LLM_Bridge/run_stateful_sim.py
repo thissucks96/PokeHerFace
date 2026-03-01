@@ -34,9 +34,9 @@ FAST_BET_SIZING = {
     "river": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0, 2.0]},
 }
 FAST_LIVE_BET_SIZING = {
-    "flop": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0, 2.0]},
-    "turn": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0, 2.0]},
-    "river": {"bet_sizes": [0.33, 0.75], "raise_sizes": [1.0, 2.0]},
+    "flop": {"bet_sizes": [0.33, 0.75, 1.0], "raise_sizes": [1.0, 2.0, 2.5]},
+    "turn": {"bet_sizes": [0.33, 0.75, 1.0], "raise_sizes": [1.0, 2.0, 2.5]},
+    "river": {"bet_sizes": [0.33, 0.75, 1.0], "raise_sizes": [1.0, 2.0, 2.5]},
 }
 DEFAULT_LEGAL_ACTIONS = ["check", "bet_33", "bet_75", "all_in"]
 PASSIVE_VILLAIN_POLICY = {
@@ -212,8 +212,10 @@ def _scenario_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[float
 
 def _aggressive_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[float]]]:
     profile = str(runtime_profile or "").strip().lower()
-    if profile in {"fast", "fast_live"}:
+    if profile == "fast":
         return json.loads(json.dumps(FAST_BET_SIZING))
+    if profile == "fast_live":
+        return json.loads(json.dumps(FAST_LIVE_BET_SIZING))
     return json.loads(json.dumps(DEFAULT_BET_SIZING))
 
 
