@@ -210,6 +210,23 @@ FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_LIVE_SPOT_FORCE_REM
 }
 FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,0.75")
 FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0,2.0")
+SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED = os.environ.get("SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+try:
+    SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN = float(os.environ.get("SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN", "0.50"))
+except ValueError:
+    SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN = 0.50
+try:
+    SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX = float(os.environ.get("SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX", "0.92"))
+except ValueError:
+    SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX = 0.92
+try:
+    SPOT_NORMAL_MIN_ALL_IN_THRESHOLD = float(os.environ.get("SPOT_NORMAL_MIN_ALL_IN_THRESHOLD", "0.58"))
+except ValueError:
+    SPOT_NORMAL_MIN_ALL_IN_THRESHOLD = 0.58
 FAST_LIVE_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_LIVE_FAILOVER_ON_BASELINE_ERROR", "1").strip() not in {
     "0",
     "false",
@@ -1031,6 +1048,94 @@ def _detect_spot_street(spot: Dict[str, Any]) -> str:
     return "flop"
 
 
+def _extract_spot_facing_bet(spot: Dict[str, Any]) -> float:
+    facing = 0.0
+    meta = spot.get("meta")
+    if isinstance(meta, dict):
+        facing = max(facing, float(_to_float_or_none(meta.get("facing_bet")) or 0.0))
+    if facing <= 0.0:
+        active = str(spot.get("active_node_path", "")).strip()
+        facing = float(_extract_last_bet_amount_from_active_node_path(active) or 0)
+    return max(0.0, facing)
+
+
+def _dynamic_all_in_threshold(spot: Dict[str, Any], base_threshold: float) -> tuple[float, Dict[str, Any]]:
+    clamped_base = min(max(float(base_threshold), 0.50), 0.99)
+    if not SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED:
+        return clamped_base, {"enabled": False, "base": clamped_base}
+
+    board = spot.get("board", [])
+    board_len = len(board) if isinstance(board, list) else 0
+    if board_len <= 0:
+        street = "preflop"
+    elif board_len >= 5:
+        street = "river"
+    elif board_len == 4:
+        street = "turn"
+    else:
+        street = "flop"
+    facing_bet = _extract_spot_facing_bet(spot)
+    minimum_bet = float(_to_float_or_none(spot.get("minimum_bet")) or 1.0)
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0))
+    effective_pot = max(1.0, starting_pot + (facing_bet if facing_bet > 0.0 else 0.0))
+
+    stack_candidates: list[float] = []
+    starting_stack = _to_float_or_none(spot.get("starting_stack"))
+    if starting_stack is not None and starting_stack > 0.0:
+        stack_candidates.append(float(starting_stack))
+    meta = spot.get("meta")
+    if isinstance(meta, dict):
+        hero_stack_now = _to_float_or_none(meta.get("current_hero_chips"))
+        if hero_stack_now is not None and hero_stack_now > 0.0:
+            stack_candidates.append(float(hero_stack_now))
+    effective_stack = min(stack_candidates) if stack_candidates else max(1.0, starting_pot)
+    spr = float(effective_stack) / float(effective_pot)
+    facing_ratio = float(facing_bet) / float(effective_pot) if facing_bet > 0.0 else 0.0
+
+    adjust = 0.0
+    street_adjust = {
+        "preflop": 0.05,
+        "flop": 0.02,
+        "turn": -0.03,
+        "river": -0.06,
+    }
+    adjust += float(street_adjust.get(street, 0.0))
+
+    if spr <= 1.0:
+        adjust -= 0.09
+    elif spr <= 2.0:
+        adjust -= 0.06
+    elif spr <= 4.0:
+        adjust -= 0.03
+    elif spr >= 10.0:
+        adjust += 0.03
+
+    if facing_ratio >= 0.75:
+        adjust -= 0.06
+    elif facing_ratio >= 0.50:
+        adjust -= 0.04
+    elif facing_ratio >= 0.33:
+        adjust -= 0.02
+
+    active_node_path = str(spot.get("active_node_path", "")).strip()
+    if active_node_path:
+        adjust -= 0.01
+
+    out = clamped_base + adjust
+    floor = min(max(SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN, 0.50), 0.95)
+    ceiling = min(max(SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX, floor), 0.99)
+    out = min(max(out, floor), ceiling)
+    return out, {
+        "enabled": True,
+        "base": clamped_base,
+        "adjust": round(adjust, 4),
+        "street": street,
+        "spr": round(spr, 4),
+        "facing_bet": round(facing_bet, 4),
+        "facing_ratio": round(facing_ratio, 4),
+    }
+
+
 def _avg_lock_confidence(node_lock: Optional[Dict[str, Any]]) -> Optional[float]:
     if not isinstance(node_lock, dict):
         return None
@@ -1247,16 +1352,17 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
         tuned["raise_cap"] = max(1, FAST_SPOT_MAX_RAISE_CAP)
         changes["raise_cap"] = {"from": None, "to": tuned["raise_cap"]}
 
-    all_in_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
-    if all_in_threshold is not None:
-        clamped_threshold = max(FAST_SPOT_MIN_ALL_IN_THRESHOLD, float(all_in_threshold))
-        clamped_threshold = min(clamped_threshold, 0.99)
-        if abs(clamped_threshold - float(all_in_threshold)) > 1e-9:
-            changes["all_in_threshold"] = {"from": float(all_in_threshold), "to": clamped_threshold}
-        tuned["all_in_threshold"] = clamped_threshold
-    else:
-        tuned["all_in_threshold"] = min(max(FAST_SPOT_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
-        changes["all_in_threshold"] = {"from": None, "to": tuned["all_in_threshold"]}
+    raw_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
+    had_threshold = raw_threshold is not None
+    threshold_base = float(raw_threshold) if had_threshold else min(max(FAST_SPOT_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
+    dynamic_threshold, dynamic_meta = _dynamic_all_in_threshold(tuned, threshold_base)
+    clamped_threshold = max(FAST_SPOT_MIN_ALL_IN_THRESHOLD, float(dynamic_threshold))
+    clamped_threshold = min(clamped_threshold, 0.99)
+    if not had_threshold:
+        changes["all_in_threshold"] = {"from": None, "to": clamped_threshold, "dynamic": dynamic_meta}
+    elif abs(clamped_threshold - threshold_base) > 1e-9:
+        changes["all_in_threshold"] = {"from": threshold_base, "to": clamped_threshold, "dynamic": dynamic_meta}
+    tuned["all_in_threshold"] = clamped_threshold
 
     if FAST_SPOT_FORCE_COMPRESS_STRATEGY:
         old = tuned.get("compress_strategy")
@@ -1270,7 +1376,7 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
             changes["remove_donk_bets"] = {"from": old, "to": True}
 
     bet_sizes = _parse_sizing_env(FAST_SPOT_BET_SIZES_RAW, [0.5])
-    raise_sizes = _parse_sizing_env(FAST_SPOT_RAISE_SIZES_RAW, [1.0])
+    raise_sizes = _parse_sizing_env(FAST_SPOT_RAISE_SIZES_RAW, [1.0, 2.0])
     target_bet_sizing = {
         "flop": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
         "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
@@ -1333,16 +1439,17 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         tuned["raise_cap"] = max(1, FAST_LIVE_SPOT_MAX_RAISE_CAP)
         changes["raise_cap"] = {"from": None, "to": tuned["raise_cap"]}
 
-    all_in_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
-    if all_in_threshold is not None:
-        clamped_threshold = max(FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, float(all_in_threshold))
-        clamped_threshold = min(clamped_threshold, 0.99)
-        if abs(clamped_threshold - float(all_in_threshold)) > 1e-9:
-            changes["all_in_threshold"] = {"from": float(all_in_threshold), "to": clamped_threshold}
-        tuned["all_in_threshold"] = clamped_threshold
-    else:
-        tuned["all_in_threshold"] = min(max(FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
-        changes["all_in_threshold"] = {"from": None, "to": tuned["all_in_threshold"]}
+    raw_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
+    had_threshold = raw_threshold is not None
+    threshold_base = float(raw_threshold) if had_threshold else min(max(FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
+    dynamic_threshold, dynamic_meta = _dynamic_all_in_threshold(tuned, threshold_base)
+    clamped_threshold = max(FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, float(dynamic_threshold))
+    clamped_threshold = min(clamped_threshold, 0.99)
+    if not had_threshold:
+        changes["all_in_threshold"] = {"from": None, "to": clamped_threshold, "dynamic": dynamic_meta}
+    elif abs(clamped_threshold - threshold_base) > 1e-9:
+        changes["all_in_threshold"] = {"from": threshold_base, "to": clamped_threshold, "dynamic": dynamic_meta}
+    tuned["all_in_threshold"] = clamped_threshold
 
     if FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY:
         old = tuned.get("compress_strategy")
@@ -1356,7 +1463,7 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
             changes["remove_donk_bets"] = {"from": old, "to": True}
 
     bet_sizes = _parse_sizing_env(FAST_LIVE_SPOT_BET_SIZES_RAW, [0.33, 0.75])
-    raise_sizes = _parse_sizing_env(FAST_LIVE_SPOT_RAISE_SIZES_RAW, [1.0])
+    raise_sizes = _parse_sizing_env(FAST_LIVE_SPOT_RAISE_SIZES_RAW, [1.0, 2.0])
     target_bet_sizing = {
         "flop": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
         "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
@@ -1938,6 +2045,10 @@ def health() -> Dict[str, Any]:
         "fast_live_spot_force_remove_donk_bets": FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS,
         "fast_live_spot_bet_sizes_raw": FAST_LIVE_SPOT_BET_SIZES_RAW,
         "fast_live_spot_raise_sizes_raw": FAST_LIVE_SPOT_RAISE_SIZES_RAW,
+        "spot_dynamic_all_in_threshold_enabled": SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED,
+        "spot_dynamic_all_in_threshold_min": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN,
+        "spot_dynamic_all_in_threshold_max": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX,
+        "spot_normal_min_all_in_threshold": SPOT_NORMAL_MIN_ALL_IN_THRESHOLD,
         "fast_live_failover_on_baseline_error": FAST_LIVE_FAILOVER_ON_BASELINE_ERROR,
         "fast_live_force_root_only": FAST_LIVE_FORCE_ROOT_ONLY,
         "fast_live_skip_llm_stage": FAST_LIVE_SKIP_LLM_STAGE,
@@ -2027,7 +2138,27 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     effective_spot = dict(request.spot)
     fast_spot_profile_summary: Optional[Dict[str, Any]] = None
     spot_street = _detect_spot_street(request.spot)
-    if runtime_profile == "fast":
+    if runtime_profile == "normal":
+        raw_threshold = _to_float_or_none(effective_spot.get("all_in_threshold"))
+        had_threshold = raw_threshold is not None
+        threshold_base = float(raw_threshold) if had_threshold else min(max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
+        dynamic_threshold, dynamic_meta = _dynamic_all_in_threshold(effective_spot, threshold_base)
+        clamped_threshold = max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, float(dynamic_threshold))
+        clamped_threshold = min(clamped_threshold, 0.99)
+        effective_spot["all_in_threshold"] = clamped_threshold
+        if (not had_threshold) or abs(clamped_threshold - threshold_base) > 1e-9:
+            fast_spot_profile_summary = {
+                "profile": "normal",
+                "applied": True,
+                "changes": {
+                    "all_in_threshold": {
+                        "from": threshold_base if had_threshold else None,
+                        "to": clamped_threshold,
+                        "dynamic": dynamic_meta,
+                    }
+                },
+            }
+    elif runtime_profile == "fast":
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
     elif runtime_profile == "fast_live":
         effective_spot, fast_spot_profile_summary = _apply_fast_live_spot_profile(effective_spot)
