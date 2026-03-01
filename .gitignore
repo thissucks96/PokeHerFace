@@ -52,6 +52,19 @@ libs/*.zip
 2_Neural_Brain/src/**/*.tar
 2_Neural_Brain/src/**/*.model
 
+# Local train-your-own neural workspace artifacts
+2_Neural_Brain/local_pipeline/data/**
+!2_Neural_Brain/local_pipeline/data/raw_spots/.gitkeep
+!2_Neural_Brain/local_pipeline/data/processed/.gitkeep
+2_Neural_Brain/local_pipeline/artifacts/**
+!2_Neural_Brain/local_pipeline/artifacts/checkpoints/.gitkeep
+!2_Neural_Brain/local_pipeline/artifacts/exports/.gitkeep
+2_Neural_Brain/local_pipeline/reports/**
+!2_Neural_Brain/local_pipeline/reports/.gitkeep
+2_Neural_Brain/local_pipeline/tensorboard/**
+!2_Neural_Brain/local_pipeline/tensorboard/.gitkeep
+2_Neural_Brain/local_pipeline/configs/train_config.local.json
+
 # LLM bridge local outputs / secrets
 4_LLM_Bridge/.env
 4_LLM_Bridge/node_lock_outputs/

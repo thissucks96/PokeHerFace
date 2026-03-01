@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "Starter config for local neural imitation training.",
+  "data": {
+    "raw_spots_dir": "2_Neural_Brain/local_pipeline/data/raw_spots",
+    "processed_dir": "2_Neural_Brain/local_pipeline/data/processed",
+    "max_files": 0,
+    "train_split": 0.9,
+    "seed": 4090
+  },
+  "model": {
+    "name": "neural_policy_v1",
+    "input_dim": 128,
+    "hidden_dim": 256,
+    "num_layers": 3,
+    "dropout": 0.1,
+    "output_actions": [
+      "fold",
+      "check",
+      "call",
+      "raise_small",
+      "raise_big",
+      "all_in"
+    ]
+  },
+  "training": {
+    "batch_size": 512,
+    "epochs": 30,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.00001,
+    "gradient_clip_norm": 1.0
+  },
+  "outputs": {
+    "checkpoints_dir": "2_Neural_Brain/local_pipeline/artifacts/checkpoints",
+    "exports_dir": "2_Neural_Brain/local_pipeline/artifacts/exports",
+    "reports_dir": "2_Neural_Brain/local_pipeline/reports",
+    "tensorboard_dir": "2_Neural_Brain/local_pipeline/tensorboard"
+  },
+  "gates": {
+    "min_shadow_agreement_pct": 75.0,
+    "max_inference_latency_ms_p95": 50.0
+  }
+}

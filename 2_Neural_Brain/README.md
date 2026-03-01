@@ -4,6 +4,14 @@ A python implementation of [DeepHoldem](https://github.com/happypepper/DeepHolde
 
 It uses a cross-platform software stack based on Python and PyTorch and has most data for bucketing pre-calculated and stored in data files or an sqlite3 database. This reduces loading times significantly and DyypHoldem loads and reacts on a fairly modern system in reasonable time frames.
 
+## Workspace Note (Version1)
+
+In this repository, this DyypHoldem tree is treated as a legacy compatibility path.
+For current train-our-own neural work, use:
+
+- `../2_Neural_Brain/local_pipeline/README.md`
+- bootstrap command: `python ../scripts/setup_local_neural_workspace.py`
+
 
 
 ## Setup
@@ -77,4 +85,3 @@ DyppHoldem also includes a player that can play against [Slumbot](https://www.sl
 2. `python player/dyypholdem_slumbot_player.py <hands>`
 
 Specify the number of `<hands>` you like DyypHoldem to play and enjoy the show :-).
-

@@ -5,7 +5,7 @@ This workspace is organized to keep the engine, neural models, hand history data
 ## Folder Layout
 
 - `1_Engine_Core`: C++ Shark solver and build system.
-- `2_Neural_Brain`: DeepHoldem/DeepStack-style PyTorch stack and pretrained model files.
+- `2_Neural_Brain`: legacy DyypHoldem adapter code + `local_pipeline/` train-our-own neural workspace.
 - `3_Hand_Histories`: PHH/raw hand history data.
 - `4_LLM_Bridge`: Python bridge for Docker-hosted LLM -> node-lock JSON.
 - `libs`: Third-party native dependencies (including `libtorch`).
@@ -237,6 +237,19 @@ Outputs are written to:
 `5_Vision_Extraction/out/neural_shadow_reports/`
 - `missing_neural_lfs_manifest.json`
 - `missing_neural_lfs_manifest.csv`
+
+Bootstrap the local train-your-own neural workspace:
+
+```powershell
+python .\scripts\setup_local_neural_workspace.py
+```
+
+Workspace root:
+`2_Neural_Brain/local_pipeline/`
+- `configs/` (template + local config),
+- `data/raw_spots` and `data/processed`,
+- `artifacts/checkpoints` and `artifacts/exports`,
+- `reports/` and `tensorboard/`.
 
 Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 
@@ -685,10 +698,10 @@ Optional package install pass:
 
 1. Extract CUDA LibTorch into:
    `libs/libtorch`
-2. Ensure models exist in:
-   `2_Neural_Brain/data/models` (`.pt` or `.tar`)
-3. Keep large neural artifacts out of Git history:
-   `2_Neural_Brain/src/**` model assets (`.pt`, `.pkl`, `.sqlite`, `.tar`, `.model`) should be local-only.
+2. Optional legacy DyypHoldem assets (only if you are testing the old adapter path):
+   `2_Neural_Brain/data/models` + `2_Neural_Brain/src/**` model assets (`.pt`, `.pkl`, `.sqlite`, `.tar`, `.model`)
+3. For the new train-our-own path, initialize:
+   `python .\scripts\setup_local_neural_workspace.py`
 
 ## C++ GPU Bridge Configure Command
 
