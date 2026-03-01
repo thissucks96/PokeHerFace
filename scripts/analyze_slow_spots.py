@@ -219,6 +219,8 @@ def build_report(
     top_n: int,
     min_elapsed_sec: float,
     max_sessions: int | None,
+    min_board_cards: int,
+    runtime_profiles: set[str] | None,
 ) -> tuple[Path, Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     payload_cache: dict[str, dict[str, Any] | None] = {}
@@ -280,6 +282,8 @@ def build_report(
                 meta = spot.get("meta") if isinstance(spot.get("meta"), dict) else {}
                 board = spot.get("board") if isinstance(spot.get("board"), list) else []
                 board_tokens = [str(card).upper() for card in board]
+                if len(board_tokens) < min_board_cards:
+                    continue
                 street = _street_from_board(board_tokens)
                 big_blind = _safe_float(meta.get("big_blind"), default=2.0)
                 facing_bet = _safe_float(meta.get("facing_bet"), default=0.0)
@@ -324,6 +328,8 @@ def build_report(
                         ]
                     ),
                 }
+                if runtime_profiles is not None and row["runtime_profile"] not in runtime_profiles:
+                    continue
                 all_rows.append(row)
 
     all_rows.sort(key=lambda r: r["elapsed_sec"], reverse=True)
@@ -472,10 +478,26 @@ def main() -> int:
         default=None,
         help="Analyze only the most recent N session files.",
     )
+    parser.add_argument(
+        "--min-board-cards",
+        type=int,
+        default=0,
+        help="Require at least this many board cards in payload spot.board (use 3 for postflop only).",
+    )
+    parser.add_argument(
+        "--runtime-profiles",
+        type=str,
+        default="",
+        help="Comma-separated runtime profiles to include (example: fast_live,normal). Empty=all.",
+    )
     args = parser.parse_args()
 
     if not args.sessions_dir.exists():
         raise SystemExit(f"Sessions directory not found: {args.sessions_dir}")
+
+    runtime_profiles: set[str] | None = None
+    if args.runtime_profiles.strip():
+        runtime_profiles = {item.strip().lower() for item in args.runtime_profiles.split(",") if item.strip()}
 
     json_path, csv_path, txt_path = build_report(
         sessions_dir=args.sessions_dir,
@@ -483,6 +505,8 @@ def main() -> int:
         top_n=max(1, args.top_n),
         min_elapsed_sec=max(0.0, args.min_elapsed_sec),
         max_sessions=args.max_sessions,
+        min_board_cards=max(0, args.min_board_cards),
+        runtime_profiles=runtime_profiles,
     )
     print(f"Wrote JSON report: {json_path}")
     print(f"Wrote CSV report:  {csv_path}")
