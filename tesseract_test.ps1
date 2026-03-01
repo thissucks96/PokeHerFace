@@ -8837,6 +8837,44 @@ function Queue-EngineSolveForBoard {
         if ($resp.PSObject.Properties.Name -contains "llm_error" -and $resp.llm_error) {
           $llmErr = [string]$resp.llm_error
         }
+        $neuralShadow = $null
+        if (($resp.PSObject.Properties.Name -contains "neural_shadow") -and $resp.neural_shadow) {
+          $neuralShadow = $resp.neural_shadow
+        }
+        elseif (($resp.PSObject.Properties.Name -contains "metrics") -and $resp.metrics -and `
+                ($resp.metrics.PSObject.Properties.Name -contains "neural_shadow") -and $resp.metrics.neural_shadow) {
+          $neuralShadow = $resp.metrics.neural_shadow
+        }
+        $neuralAttempted = $false
+        $neuralApplied = $false
+        $neuralAgree = $null
+        $neuralChoice = ""
+        $neuralSelectedAction = ""
+        $neuralError = ""
+        $neuralElapsedSec = 0.0
+        if ($null -ne $neuralShadow) {
+          if ($neuralShadow.PSObject.Properties.Name -contains "attempted") {
+            try { $neuralAttempted = [bool]$neuralShadow.attempted } catch {}
+          }
+          if ($neuralShadow.PSObject.Properties.Name -contains "applied") {
+            try { $neuralApplied = [bool]$neuralShadow.applied } catch {}
+          }
+          if ($neuralShadow.PSObject.Properties.Name -contains "agrees_with_selected" -and $null -ne $neuralShadow.agrees_with_selected) {
+            try { $neuralAgree = [bool]$neuralShadow.agrees_with_selected } catch { $neuralAgree = $null }
+          }
+          if ($neuralShadow.PSObject.Properties.Name -contains "neural_chosen_action" -and $neuralShadow.neural_chosen_action) {
+            $neuralChoice = [string]$neuralShadow.neural_chosen_action
+          }
+          if ($neuralShadow.PSObject.Properties.Name -contains "selected_action" -and $neuralShadow.selected_action) {
+            $neuralSelectedAction = [string]$neuralShadow.selected_action
+          }
+          if ($neuralShadow.PSObject.Properties.Name -contains "error" -and $neuralShadow.error) {
+            $neuralError = [string]$neuralShadow.error
+          }
+          if ($neuralShadow.PSObject.Properties.Name -contains "elapsed_sec" -and $null -ne $neuralShadow.elapsed_sec) {
+            try { $neuralElapsedSec = [double]$neuralShadow.elapsed_sec } catch { $neuralElapsedSec = 0.0 }
+          }
+        }
         $rootActionsValue = @()
         if ($resp.PSObject.Properties.Name -contains "result" -and $resp.result) {
           $useActiveNode = $false
@@ -8884,6 +8922,13 @@ function Queue-EngineSolveForBoard {
           exploitability = $exploitability
           node_lock_kept = $kept
           llm_error = $llmErr
+          neural_attempted = [bool]$neuralAttempted
+          neural_applied = [bool]$neuralApplied
+          neural_agrees_with_selected = $neuralAgree
+          neural_choice = [string]$neuralChoice
+          neural_selected_action = [string]$neuralSelectedAction
+          neural_error = [string]$neuralError
+          neural_elapsed_sec = [double]$neuralElapsedSec
           root_actions = @($rootActionsValue)
           response_path = [string]$responsePathValue
         }
@@ -9673,6 +9718,40 @@ function Poll-EngineJobs {
         exploitability = $result.exploitability
         kept = $result.node_lock_kept
         elapsed_sec = [double]$result.elapsed_sec
+        neural_attempted = [bool]$result.neural_attempted
+        neural_applied = [bool]$result.neural_applied
+        neural_agrees_with_selected = $result.neural_agrees_with_selected
+        neural_choice = [string]$result.neural_choice
+        neural_selected_action = [string]$result.neural_selected_action
+        neural_error = [string]$result.neural_error
+        neural_elapsed_sec = [double]$result.neural_elapsed_sec
+      }
+      if ([bool]$result.neural_attempted -or $result.neural_error) {
+        $agreeText = "n/a"
+        if ($null -ne $result.neural_agrees_with_selected -and ([string]$result.neural_agrees_with_selected -ne "")) {
+          try {
+            $agreeText = $(if ([bool]$result.neural_agrees_with_selected) { "yes" } else { "no" })
+          } catch { $agreeText = "n/a" }
+        }
+        Write-Log ("Neural shadow: choice={0}, selected={1}, agree={2}, applied={3}, time={4:N2}s, err={5}" -f `
+          [string]$result.neural_choice, `
+          [string]$result.neural_selected_action, `
+          [string]$agreeText, `
+          [bool]$result.neural_applied, `
+          [double]$result.neural_elapsed_sec, `
+          [string]$result.neural_error) -Type "neural_shadow_result" -Data @{
+          job_id = [int]$jobId
+          stage = $completedStage
+          strategy = $completedStrategy
+          runtime_profile = if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }
+          neural_attempted = [bool]$result.neural_attempted
+          neural_applied = [bool]$result.neural_applied
+          neural_choice = [string]$result.neural_choice
+          neural_selected_action = [string]$result.neural_selected_action
+          neural_agrees_with_selected = $result.neural_agrees_with_selected
+          neural_elapsed_sec = [double]$result.neural_elapsed_sec
+          neural_error = [string]$result.neural_error
+        }
       }
       if ($result.llm_error) {
         Write-Log ("Engine llm_error: {0}" -f $result.llm_error)

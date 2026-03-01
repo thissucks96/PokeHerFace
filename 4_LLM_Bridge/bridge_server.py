@@ -885,6 +885,107 @@ def _normalize_action_summary_tokens(action_items: Any) -> list[str]:
     return unique
 
 
+def _action_summary_frequency(item: Dict[str, Any]) -> float:
+    if not isinstance(item, dict):
+        return 0.0
+    if isinstance(item.get("avg_frequency"), (int, float)):
+        return float(item["avg_frequency"])
+    if isinstance(item.get("frequency"), (int, float)):
+        return float(item["frequency"])
+    return 0.0
+
+
+def _pick_primary_action_token_from_summary(action_items: Any) -> str:
+    if not isinstance(action_items, list) or not action_items:
+        return ""
+    best_token = ""
+    best_freq = float("-inf")
+    for item in action_items:
+        if not isinstance(item, dict):
+            continue
+        action = _normalize_action_token(str(item.get("action", "")).strip().lower())
+        if not action:
+            continue
+        amount = item.get("amount")
+        if action in {"bet", "raise"} and isinstance(amount, (int, float)):
+            action = f"raise:{int(amount)}"
+        freq = _action_summary_frequency(item)
+        if freq > best_freq:
+            best_freq = freq
+            best_token = action
+    if best_token:
+        return best_token
+    normalized = _normalize_action_summary_tokens(action_items)
+    return normalized[0] if normalized else ""
+
+
+def _primary_action_from_result_payload(result_payload: Dict[str, Any]) -> str:
+    decision_raw = result_payload.get("decision")
+    if isinstance(decision_raw, dict):
+        token = _normalize_action_token(str(decision_raw.get("action", "")).strip().lower())
+        if token:
+            return token
+    active_found = bool(result_payload.get("active_node_found"))
+    if active_found:
+        token = _pick_primary_action_token_from_summary(result_payload.get("active_node_actions", []))
+        if token:
+            return token
+    token = _pick_primary_action_token_from_summary(result_payload.get("root_actions", []))
+    if token:
+        return token
+    allowed = _extract_allowed_root_actions(result_payload)
+    return allowed[0] if allowed else ""
+
+
+def _build_neural_shadow_summary(
+    *,
+    runtime_profile: str,
+    mode: str,
+    attempted: bool,
+    applied: bool,
+    elapsed_sec: float,
+    timeout_sec: int,
+    error: Optional[str],
+    payload: Optional[Dict[str, Any]],
+    selected_action: str,
+    allowed_actions_in: list[str],
+) -> Dict[str, Any]:
+    neural_choice = ""
+    neural_actions: list[str] = []
+    neural_root_count = 0
+    if isinstance(payload, dict):
+        neural_choice = _normalize_action_token(str(payload.get("chosen_action", "")).strip().lower())
+        neural_actions = _normalize_action_summary_tokens(payload.get("root_actions", []))
+        neural_root = payload.get("root_actions")
+        if isinstance(neural_root, list):
+            neural_root_count = len(neural_root)
+    agree: Optional[bool] = None
+    if neural_choice and selected_action:
+        if neural_choice == selected_action:
+            agree = True
+        else:
+            # Treat sized-vs-unsized raises as agreement.
+            agree = neural_choice.startswith("raise") and selected_action.startswith("raise")
+    summary = {
+        "enabled": bool(NEURAL_BRAIN_ENABLED),
+        "mode": str(mode),
+        "runtime_profile": str(runtime_profile),
+        "attempted": bool(attempted),
+        "available": bool(isinstance(payload, dict)),
+        "applied": bool(applied),
+        "elapsed_sec": float(elapsed_sec),
+        "timeout_sec": int(max(0, timeout_sec)),
+        "error": error,
+        "selected_action": selected_action,
+        "neural_chosen_action": neural_choice,
+        "agrees_with_selected": agree,
+        "allowed_actions_in": list(allowed_actions_in),
+        "neural_allowed_actions": neural_actions,
+        "neural_root_action_count": int(neural_root_count),
+    }
+    return summary
+
+
 def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
     active_found = bool(result_payload.get("active_node_found"))
     active_actions = result_payload.get("active_node_actions", [])
@@ -1630,11 +1731,17 @@ def _build_fast_failover_response(
         allowed_actions = _fallback_actions_from_spot(request.spot)
         chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
         root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+    allowed_actions_before_neural = list(allowed_actions)
+    neural_attempted = False
+    neural_timeout_effective = 0
     neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
         spot=request.spot,
         allowed_actions=allowed_actions,
         timeout_sec=NEURAL_BRAIN_TIMEOUT_SEC,
     )
+    if NEURAL_BRAIN_ENABLED:
+        neural_attempted = True
+        neural_timeout_effective = int(max(1, NEURAL_BRAIN_TIMEOUT_SEC))
     if isinstance(neural_payload, dict):
         neural_root_actions = neural_payload.get("root_actions")
         neural_allowed = _normalize_action_summary_tokens(neural_root_actions)
@@ -1669,6 +1776,19 @@ def _build_fast_failover_response(
         },
         "warnings": [f"fast_failover_applied:{baseline_error}"],
     }
+    selected_action = _primary_action_from_result_payload(result_payload)
+    neural_shadow = _build_neural_shadow_summary(
+        runtime_profile=runtime_profile,
+        mode=NEURAL_BRAIN_MODE,
+        attempted=neural_attempted,
+        applied=neural_applied,
+        elapsed_sec=neural_elapsed,
+        timeout_sec=neural_timeout_effective,
+        error=neural_error,
+        payload=neural_payload,
+        selected_action=selected_action,
+        allowed_actions_in=allowed_actions_before_neural,
+    )
     return {
         "status": "ok",
         "node_lock": None,
@@ -1683,6 +1803,7 @@ def _build_fast_failover_response(
             "rollout_classes": _extract_rollout_classes(request.spot),
         },
         "result": result_payload,
+        "neural_shadow": neural_shadow,
         "baseline_result": None,
         "locked_result": None,
         "metrics": {
@@ -1718,6 +1839,7 @@ def _build_fast_failover_response(
             "neural_error": neural_error,
             "neural_mode": NEURAL_BRAIN_MODE,
             "neural_applied": neural_applied,
+            "neural_shadow": neural_shadow,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
@@ -2283,9 +2405,12 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     neural_elapsed = 0.0
     neural_applied = False
     neural_timeout_effective = 0
+    neural_attempted = False
+    allowed_actions_before_neural = list(allowed_root_actions)
     if NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE in {"shadow", "prefer"}:
         neural_budget_remaining = max(0.0, request_deadline - time.perf_counter())
         if neural_budget_remaining >= 1.0:
+            neural_attempted = True
             neural_timeout_effective = int(max(1, min(NEURAL_BRAIN_TIMEOUT_SEC, int(math.ceil(neural_budget_remaining)))))
             neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
                 spot=request.spot,
@@ -2306,6 +2431,20 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             neural_error = "global_budget_exhausted_before_neural_stage"
     elif NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE == "prefer_on_fast_failover":
         neural_error = "skipped_non_failover_neural_stage"
+
+    selected_action = _primary_action_from_result_payload(result)
+    neural_shadow = _build_neural_shadow_summary(
+        runtime_profile=runtime_profile,
+        mode=NEURAL_BRAIN_MODE,
+        attempted=neural_attempted,
+        applied=neural_applied,
+        elapsed_sec=neural_elapsed,
+        timeout_sec=neural_timeout_effective,
+        error=neural_error,
+        payload=neural_payload,
+        selected_action=selected_action,
+        allowed_actions_in=allowed_actions_before_neural,
+    )
 
     lock_confidence = _avg_lock_confidence(node_lock)
     lock_quality_score = (
@@ -2335,6 +2474,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "rollout_classes": rollout_classes,
         },
         "result": result,
+        "neural_shadow": neural_shadow,
         "baseline_result": baseline_result,
         "locked_result": locked_result,
         "metrics": {
@@ -2379,6 +2519,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "neural_mode": NEURAL_BRAIN_MODE,
             "neural_applied": neural_applied,
             "neural_timeout_sec": neural_timeout_effective,
+            "neural_shadow": neural_shadow,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
