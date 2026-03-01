@@ -68,6 +68,7 @@ This workspace is organized to keep the engine, neural models, hand history data
   - preflop villain-action flow now forces an immediate hero preflop advice refresh when turn passes back to hero, preventing `WAIT` stalls after auto/scripted villain raises.
   - table status/logs now include explicit preflop facing context (`TO CALL X (villain total Y)` and villain action commit fields) to make blind/raise math auditable at a glance.
   - production safety autoguard: when configured profile is `normal` but hero is facing a postflop bet, UI handoff now auto-overrides to `fast_live` with a capped deadline (default `13s`) so expensive non-root solves do not stall live decisions.
+  - jam/fold tuning defaults are now less conservative in live collection/runtime paths: lower all-in thresholds (`~0.58`), wider fast/fast_live bet/raise sizing ladders, and higher fast_live raise-cap defaults to better expose all-in and mid-street fold branches.
   - preflop hero advice now has a centralized fallback path (`Ensure-PreflopHeroAdvice`) so hero-facing preflop states never remain stuck on `WAIT` when legal actions exist.
   - street detection now reads live board tokens correctly (`preflop/flop/turn/river`), preventing postflop actions from incorrectly running preflop fallback advice paths.
   - engine poll now logs line-level diagnostics for advice-apply/auto-villain exceptions and continues queue processing instead of collapsing the active hand flow.

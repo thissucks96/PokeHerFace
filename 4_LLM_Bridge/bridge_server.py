@@ -102,9 +102,9 @@ try:
 except ValueError:
     FAST_SPOT_MAX_RAISE_CAP = 2
 try:
-    FAST_SPOT_MIN_ALL_IN_THRESHOLD = float(os.environ.get("FAST_SPOT_MIN_ALL_IN_THRESHOLD", "0.80"))
+    FAST_SPOT_MIN_ALL_IN_THRESHOLD = float(os.environ.get("FAST_SPOT_MIN_ALL_IN_THRESHOLD", "0.58"))
 except ValueError:
-    FAST_SPOT_MIN_ALL_IN_THRESHOLD = 0.80
+    FAST_SPOT_MIN_ALL_IN_THRESHOLD = 0.58
 FAST_SPOT_FORCE_COMPRESS_STRATEGY = os.environ.get("FAST_SPOT_FORCE_COMPRESS_STRATEGY", "1").strip() not in {
     "0",
     "false",
@@ -115,8 +115,8 @@ FAST_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_SPOT_FORCE_REMOVE_DONK_B
     "false",
     "False",
 }
-FAST_SPOT_BET_SIZES_RAW = os.environ.get("FAST_SPOT_BET_SIZES", "0.5")
-FAST_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_SPOT_RAISE_SIZES", "1.0")
+FAST_SPOT_BET_SIZES_RAW = os.environ.get("FAST_SPOT_BET_SIZES", "0.33,0.75")
+FAST_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_SPOT_RAISE_SIZES", "1.0,2.0")
 FAST_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_FAILOVER_ON_BASELINE_ERROR", "1").strip() not in {
     "0",
     "false",
@@ -191,13 +191,13 @@ try:
 except ValueError:
     FAST_LIVE_SPOT_MAX_THREADS = 2
 try:
-    FAST_LIVE_SPOT_MAX_RAISE_CAP = int(os.environ.get("FAST_LIVE_SPOT_MAX_RAISE_CAP", "1"))
+    FAST_LIVE_SPOT_MAX_RAISE_CAP = int(os.environ.get("FAST_LIVE_SPOT_MAX_RAISE_CAP", "2"))
 except ValueError:
-    FAST_LIVE_SPOT_MAX_RAISE_CAP = 1
+    FAST_LIVE_SPOT_MAX_RAISE_CAP = 2
 try:
-    FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = float(os.environ.get("FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD", "0.80"))
+    FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = float(os.environ.get("FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD", "0.58"))
 except ValueError:
-    FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = 0.80
+    FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = 0.58
 FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY = os.environ.get("FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY", "1").strip() not in {
     "0",
     "false",
@@ -208,8 +208,8 @@ FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_LIVE_SPOT_FORCE_REM
     "false",
     "False",
 }
-FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.25")
-FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "0.75")
+FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,0.75")
+FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0,2.0")
 FAST_LIVE_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_LIVE_FAILOVER_ON_BASELINE_ERROR", "1").strip() not in {
     "0",
     "false",

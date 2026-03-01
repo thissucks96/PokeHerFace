@@ -204,6 +204,24 @@ $engineSolverTimeoutSec = 180
 if ($env:ENGINE_SOLVER_TIMEOUT_SEC -and [int]::TryParse([string]$env:ENGINE_SOLVER_TIMEOUT_SEC, [ref]$engineSolverTimeoutSec)) {
   if ($engineSolverTimeoutSec -lt 30) { $engineSolverTimeoutSec = 30 }
 }
+$engineAllInThreshold = 0.58
+if ($env:ENGINE_ALL_IN_THRESHOLD) {
+  $parsedAllInThreshold = 0.0
+  if ([double]::TryParse([string]$env:ENGINE_ALL_IN_THRESHOLD, [ref]$parsedAllInThreshold)) {
+    if ($parsedAllInThreshold -ge 0.50 -and $parsedAllInThreshold -le 0.95) {
+      $engineAllInThreshold = [double]$parsedAllInThreshold
+    }
+  }
+}
+$engineRaiseCap = 3
+if ($env:ENGINE_RAISE_CAP) {
+  $parsedRaiseCap = 0
+  if ([int]::TryParse([string]$env:ENGINE_RAISE_CAP, [ref]$parsedRaiseCap)) {
+    if ($parsedRaiseCap -ge 1 -and $parsedRaiseCap -le 6) {
+      $engineRaiseCap = [int]$parsedRaiseCap
+    }
+  }
+}
 $engineNeuralEnabled = $false
 if ($env:ENGINE_NEURAL_ENABLED -and ([string]$env:ENGINE_NEURAL_ENABLED).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $engineNeuralEnabled = $true
@@ -2926,6 +2944,8 @@ function Build-EngineSpotPayload {
   $spot.starting_stack = [int]$effectiveStack
   $spot.minimum_bet = [int]$stakes.big_blind
   $spot.starting_pot = [int]$effectivePot
+  $spot.all_in_threshold = [double]$engineAllInThreshold
+  $spot.raise_cap = [int]$engineRaiseCap
   $heroComboRange = Convert-HoleCardsToStructuralCombo -Cards @($HeroCards)
   if ($heroComboRange) {
     $spot.hero_range = [string]$heroComboRange
@@ -7273,7 +7293,10 @@ function Ensure-BackendsRunning {
           if (-not $env:FAST_LIVE_SPOT_MAX_ITERATIONS) { $env:FAST_LIVE_SPOT_MAX_ITERATIONS = "2" }
           if (-not $env:FAST_LIVE_SPOT_MAX_THREADS) { $env:FAST_LIVE_SPOT_MAX_THREADS = "4" }
           if (-not $env:FAST_LIVE_SPOT_MAX_RAISE_CAP) { $env:FAST_LIVE_SPOT_MAX_RAISE_CAP = "2" }
-          Write-Log ("fast_live tuning: baseline(f/t/r)={0}/{1}/{2}s active_node={3}s active_node_flop={4}s lookup_only={5} iters={6} threads={7}" -f `
+          if (-not $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD) { $env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD = "0.58" }
+          if (-not $env:FAST_LIVE_SPOT_BET_SIZES) { $env:FAST_LIVE_SPOT_BET_SIZES = "0.33,0.75" }
+          if (-not $env:FAST_LIVE_SPOT_RAISE_SIZES) { $env:FAST_LIVE_SPOT_RAISE_SIZES = "1.0,2.0" }
+          Write-Log ("fast_live tuning: baseline(f/t/r)={0}/{1}/{2}s active_node={3}s active_node_flop={4}s lookup_only={5} iters={6} threads={7} raise_cap={8} ai_th={9} bets={10} raises={11}" -f `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_FLOP_SEC, `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_TURN_SEC, `
             [string]$env:FAST_LIVE_BASELINE_TIMEOUT_RIVER_SEC, `
@@ -7281,7 +7304,11 @@ function Ensure-BackendsRunning {
             [string]$env:FAST_LIVE_ACTIVE_NODE_FLOP_TIMEOUT_SEC, `
             [string]$env:FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY, `
             [string]$env:FAST_LIVE_SPOT_MAX_ITERATIONS, `
-            [string]$env:FAST_LIVE_SPOT_MAX_THREADS) -Type "engine_fast_live_tuning"
+            [string]$env:FAST_LIVE_SPOT_MAX_THREADS, `
+            [string]$env:FAST_LIVE_SPOT_MAX_RAISE_CAP, `
+            [string]$env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD, `
+            [string]$env:FAST_LIVE_SPOT_BET_SIZES, `
+            [string]$env:FAST_LIVE_SPOT_RAISE_SIZES) -Type "engine_fast_live_tuning"
 
           $env:NEURAL_BRAIN_ENABLED = if ($engineNeuralEnabled) { "1" } else { "0" }
           $env:NEURAL_BRAIN_MODE = [string]$engineNeuralMode
