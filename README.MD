@@ -227,6 +227,17 @@ Outputs are written to:
 - `neural_shadow_report_<timestamp>.json` (attempt/apply/agreement rates + latency stats),
 - `neural_shadow_disagreements_<timestamp>.csv` (action-level mismatches for review).
 
+Check neural asset availability (LFS pointer vs local object presence):
+
+```powershell
+python .\scripts\check_neural_assets.py
+```
+
+Outputs are written to:
+`5_Vision_Extraction/out/neural_shadow_reports/`
+- `missing_neural_lfs_manifest.json`
+- `missing_neural_lfs_manifest.csv`
+
 Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 
 ```powershell
@@ -383,6 +394,7 @@ Optional neural-brain stage (`2_Neural_Brain` DyypHoldem adapter):
   - `NEURAL_BRAIN_CFR_SKIP_ITERS` (default `60`)
   - `NEURAL_BRAIN_ADAPTER_PATH` (default `4_LLM_Bridge/neural_brain_adapter.py`)
   - `NEURAL_BRAIN_PYTHON` (optional override interpreter path)
+  - `NEURAL_BRAIN_ROOT` (optional path to an external/local DyypHoldem bundle; defaults to `2_Neural_Brain`)
 - behavior:
   - `shadow`: runs neural inference and reports metrics without overriding selected strategy.
   - `prefer`: overlays neural action mix onto the selected result when neural inference succeeds.

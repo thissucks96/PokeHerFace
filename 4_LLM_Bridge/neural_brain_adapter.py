@@ -28,7 +28,24 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NEURAL_SRC = ROOT / "2_Neural_Brain" / "src"
+
+
+def _resolve_neural_root() -> Path:
+    env_root = str(os.environ.get("NEURAL_BRAIN_ROOT", "")).strip()
+    default_root = ROOT / "2_Neural_Brain"
+    if not env_root:
+        return default_root
+    candidate = Path(env_root)
+    if not candidate.is_absolute():
+        candidate = (ROOT / candidate).resolve()
+    src_dir = candidate / "src"
+    if (src_dir / "settings" / "arguments.py").exists():
+        return candidate
+    return default_root
+
+
+NEURAL_ROOT = _resolve_neural_root()
+NEURAL_SRC = (NEURAL_ROOT / "src").resolve()
 if str(NEURAL_SRC) not in sys.path:
     sys.path.insert(0, str(NEURAL_SRC))
 os.chdir(NEURAL_SRC)
