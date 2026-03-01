@@ -6,7 +6,9 @@
     "processed_dir": "2_Neural_Brain/local_pipeline/data/processed",
     "max_files": 0,
     "train_split": 0.9,
-    "seed": 4090
+    "seed": 4090,
+    "split_method": "hash_split_key",
+    "split_key_field": "split_key"
   },
   "model": {
     "name": "neural_policy_v1",

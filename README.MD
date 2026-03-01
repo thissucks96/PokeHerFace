@@ -260,15 +260,22 @@ python .\scripts\build_neural_dataset.py
 # 2) Materialize dataset rows (explicit write)
 python .\scripts\build_neural_dataset.py --write
 
-# 3) Validate training readiness (no training)
+# 3) Strictly validate dataset schema + class balance report
+python .\scripts\validate_neural_dataset.py --strict
+
+# 4) Validate training readiness (no training)
 python .\scripts\train_local_neural.py
 
-# 4) Run training when dataset exists
+# 5) Run training when dataset exists
 python .\scripts\train_local_neural.py --train
 
-# 5) Evaluate latest neural shadow report against promotion gates
+# 6) Evaluate latest neural shadow report against promotion gates
 python .\scripts\eval_local_neural_shadow.py
 ```
+
+Notes:
+- Dataset builder defaults are locked for production-relevant rows (`fast_live` + `normal`, postflop streets, baseline/fallback strategies).
+- Training split is deterministic by `split_key` (`split_method=hash_split_key`) to avoid random split drift between runs.
 
 Run multi-seed gauntlet (builds profiled turn/river pools from PHH by default):
 

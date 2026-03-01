@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -72,8 +71,15 @@ def _street_to_float(street: str) -> float:
 
 
 class TeacherRowsDataset(Dataset):
-    def __init__(self, rows: list[dict[str, Any]], action_to_index: dict[str, int], input_dim: int) -> None:
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        action_to_index: dict[str, int],
+        input_dim: int,
+        split_key_field: str = "split_key",
+    ) -> None:
         self.samples: list[tuple[torch.Tensor, int]] = []
+        self.split_tokens: list[str] = []
         for row in rows:
             target = row.get("target") if isinstance(row.get("target"), dict) else {}
             features = row.get("features") if isinstance(row.get("features"), dict) else {}
@@ -99,6 +105,10 @@ class TeacherRowsDataset(Dataset):
             x = self._vectorize(source=source, features=features, input_dim=input_dim)
             y = action_to_index[action]
             self.samples.append((x, y))
+            split_token = str(row.get(split_key_field) or row.get("split_key") or row.get("row_id") or "").strip()
+            if not split_token:
+                split_token = hashlib.sha256(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()
+            self.split_tokens.append(split_token)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -187,12 +197,38 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _split_indices(total: int, train_split: float, seed: int) -> tuple[list[int], list[int]]:
+def _split_indices_random(total: int, train_split: float, seed: int) -> tuple[list[int], list[int]]:
     idx = list(range(total))
-    rng = random.Random(seed)
-    rng.shuffle(idx)
+    keyed = []
+    for i in idx:
+        key = f"rnd|{seed}|{i}"
+        value = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
+        keyed.append((value, i))
+    keyed.sort(key=lambda x: x[0])
+    ordered = [i for _, i in keyed]
     pivot = int(max(1, min(total - 1, round(total * train_split)))) if total >= 2 else total
-    return idx[:pivot], idx[pivot:]
+    return ordered[:pivot], ordered[pivot:]
+
+
+def _split_indices_hash(split_tokens: list[str], train_split: float, seed: int) -> tuple[list[int], list[int]]:
+    train_idx: list[int] = []
+    val_idx: list[int] = []
+    ratio = max(0.0, min(1.0, float(train_split)))
+    for i, token in enumerate(split_tokens):
+        digest = hashlib.sha256(f"split|{seed}|{token}".encode("utf-8")).hexdigest()
+        bucket = int(digest[:8], 16) / float(0xFFFFFFFF)
+        if bucket < ratio:
+            train_idx.append(i)
+        else:
+            val_idx.append(i)
+
+    total = len(split_tokens)
+    if total >= 2:
+        if not train_idx and val_idx:
+            train_idx.append(val_idx.pop(0))
+        if not val_idx and train_idx:
+            val_idx.append(train_idx.pop(-1))
+    return train_idx, val_idx
 
 
 def _accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
@@ -243,6 +279,8 @@ def main() -> int:
     action_space = model_cfg.get("output_actions", ["fold", "check", "call", "raise_small", "raise_big", "all_in"])
     action_to_index = {str(a): i for i, a in enumerate(action_space)}
     input_dim = max(16, _safe_int(model_cfg.get("input_dim"), 128))
+    split_key_field = str(data_cfg.get("split_key_field") or "split_key").strip() or "split_key"
+    split_method = str(data_cfg.get("split_method") or "hash_split_key").strip().lower()
 
     summary: dict[str, Any] = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -258,17 +296,31 @@ def main() -> int:
         print(json.dumps(summary, indent=2))
         return 0
 
-    dataset_full = TeacherRowsDataset(rows=rows, action_to_index=action_to_index, input_dim=input_dim)
+    dataset_full = TeacherRowsDataset(
+        rows=rows,
+        action_to_index=action_to_index,
+        input_dim=input_dim,
+        split_key_field=split_key_field,
+    )
     if len(dataset_full) == 0:
         summary.update({"ok": False, "ready_for_training": False, "reason": "no_rows_with_mapped_actions"})
         print(json.dumps(summary, indent=2))
         return 0
 
-    train_idx, val_idx = _split_indices(
-        total=len(dataset_full),
-        train_split=_safe_float(data_cfg.get("train_split"), 0.9),
-        seed=_safe_int(data_cfg.get("seed"), 4090),
-    )
+    train_split = _safe_float(data_cfg.get("train_split"), 0.9)
+    split_seed = _safe_int(data_cfg.get("seed"), 4090)
+    if split_method == "random":
+        train_idx, val_idx = _split_indices_random(
+            total=len(dataset_full),
+            train_split=train_split,
+            seed=split_seed,
+        )
+    else:
+        train_idx, val_idx = _split_indices_hash(
+            split_tokens=dataset_full.split_tokens,
+            train_split=train_split,
+            seed=split_seed,
+        )
     train_set = torch.utils.data.Subset(dataset_full, train_idx)
     val_set = torch.utils.data.Subset(dataset_full, val_idx) if val_idx else None
     batch_size = max(8, _safe_int(train_cfg.get("batch_size"), 512))
@@ -282,6 +334,9 @@ def main() -> int:
             "rows_mapped": len(dataset_full),
             "train_rows": len(train_set),
             "val_rows": len(val_set) if val_set else 0,
+            "split_method": split_method,
+            "split_key_field": split_key_field,
+            "split_seed": split_seed,
         }
     )
 

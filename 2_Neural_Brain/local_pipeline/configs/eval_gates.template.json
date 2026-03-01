@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Promotion gates for local neural shadow evaluation.",
+  "description": "Promotion gates for local neural shadow evaluation before prefer-mode.",
   "minimum_rows": 100,
   "max_neural_elapsed_p95_sec": 2.0,
   "min_agree_rate_overall": 0.7,
@@ -9,5 +9,10 @@
     "turn": 0.7,
     "river": 0.72
   },
+  "min_agree_rate_by_runtime_profile": {
+    "fast_live": 0.7,
+    "normal": 0.75
+  },
+  "max_disagreement_rows_for_review": 500,
   "max_surrogate_rate": 0.5
 }

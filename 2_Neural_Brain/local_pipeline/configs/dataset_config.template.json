@@ -1,11 +1,25 @@
 {
   "version": 1,
-  "description": "Build teacher rows from bridge artifacts without cloud/API calls.",
+  "description": "Build teacher rows from local bridge artifacts with strict production-oriented filters.",
   "input": {
     "response_dir": "5_Vision_Extraction/out/flop_engine",
     "max_files": 0,
-    "runtime_profiles": [],
-    "streets": []
+    "runtime_profiles": [
+      "fast_live",
+      "normal"
+    ],
+    "streets": [
+      "flop",
+      "turn",
+      "river"
+    ],
+    "selected_strategies": [
+      "baseline_gto",
+      "fallback_lookup_policy"
+    ],
+    "include_neural_applied": false,
+    "include_surrogate": false,
+    "min_board_cards": 3
   },
   "output": {
     "rows_jsonl": "2_Neural_Brain/local_pipeline/data/raw_spots/solver_teacher_rows.jsonl",

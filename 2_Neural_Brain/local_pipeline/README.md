@@ -47,23 +47,35 @@ Write JSONL rows only when explicitly requested:
 python .\scripts\build_neural_dataset.py --write
 ```
 
-2. Validate training readiness (no training by default):
+2. Run strict dataset validation + class-balance report:
+
+```powershell
+python .\scripts\validate_neural_dataset.py --strict
+```
+
+3. Validate training readiness (no training by default):
 
 ```powershell
 python .\scripts\train_local_neural.py
 ```
 
-Run training only when explicitly requested:
+4. Run training only when explicitly requested:
 
 ```powershell
 python .\scripts\train_local_neural.py --train
 ```
 
-3. Evaluate shadow report against promotion gates:
+5. Evaluate shadow report against promotion gates:
 
 ```powershell
 python .\scripts\eval_local_neural_shadow.py
 ```
+
+## Default Safety Locks
+
+- Dataset template defaults are postflop-only with production profiles (`fast_live`, `normal`).
+- Dataset template excludes neural-applied and surrogate rows unless explicitly enabled.
+- Training template uses deterministic split by `split_key` (`split_method=hash_split_key`) to keep train/val partitions stable across reruns.
 
 ## Phase Plan
 
