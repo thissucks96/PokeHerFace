@@ -87,9 +87,9 @@ def _extract_bet_amounts(allowed_root_actions: List[str]) -> List[int]:
 
 def run(endpoint: str, timeout_sec: int) -> None:
     boards = {
-        "flop": ["ks", "qh", "7d"],
-        "turn": ["ks", "qh", "7d", "2c"],
-        "river": ["ks", "qh", "7d", "2c", "3h"],
+        "flop": ["Ks", "Qh", "7d"],
+        "turn": ["Ks", "Qh", "7d", "2c"],
+        "river": ["Ks", "Qh", "7d", "2c", "3h"],
     }
     checks: List[str] = []
 
