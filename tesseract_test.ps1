@@ -1772,6 +1772,75 @@ function Get-AdaptiveEngineSizingProfile {
   }
 }
 
+function Convert-NumberListToCsv {
+  param([object]$Values)
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($item in @($Values)) {
+    $v = 0.0
+    if ([double]::TryParse([string]$item, [ref]$v)) {
+      [void]$parts.Add(([Math]::Round([double]$v, 4).ToString([System.Globalization.CultureInfo]::InvariantCulture)))
+    }
+  }
+  if ($parts.Count -le 0) { return "" }
+  return [string]::Join(",", @($parts.ToArray()))
+}
+
+function Write-ProfileContractSnapshot {
+  param(
+    [string]$Profile,
+    [string]$Reason = "startup"
+  )
+  $normalized = ([string]$Profile).Trim().ToLowerInvariant()
+  if (-not $normalized) { $normalized = "fast_live" }
+  $snapshot = [ordered]@{
+    reason = [string]$Reason
+    profile = [string]$normalized
+    normal_postflop_override_enabled = [bool]$engineAllowNormalPostflopOverride
+    normal_postflop_override_guard_enabled = [bool]$engineFacingPostflopAutoOverrideEnabled
+    normal_postflop_deadline_sec = [int]$engineFacingPostflopDeadlineSec
+    engine_all_in_threshold_base = [double]$engineAllInThreshold
+    engine_raise_cap_base = [int]$engineRaiseCap
+  }
+
+  switch ($normalized) {
+    "shark_classic" {
+      $snapshot.contract = "shark_classic"
+      $snapshot.iterations_default = 100
+      $snapshot.all_in_threshold = 0.67
+      $snapshot.raise_cap = 3
+      $snapshot.remove_donk_bets = $true
+      $snapshot.flop_bet_sizes = "0.5,1.0"
+      $snapshot.flop_raise_sizes = "1.0"
+      $snapshot.turn_bet_sizes = "0.33,0.66,1.0"
+      $snapshot.turn_raise_sizes = "0.5,1.0"
+      $snapshot.river_bet_sizes = "0.33,0.66,1.0"
+      $snapshot.river_raise_sizes = "0.5,1.0"
+      break
+    }
+    "fast_live" {
+      $snapshot.contract = "fast_live"
+      $snapshot.iterations_cap = [string]$env:FAST_LIVE_SPOT_MAX_ITERATIONS
+      $snapshot.threads_cap = [string]$env:FAST_LIVE_SPOT_MAX_THREADS
+      $snapshot.raise_cap = [string]$env:FAST_LIVE_SPOT_MAX_RAISE_CAP
+      $snapshot.min_all_in_threshold = [string]$env:FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD
+      $snapshot.bet_sizes = [string]$env:FAST_LIVE_SPOT_BET_SIZES
+      $snapshot.raise_sizes = [string]$env:FAST_LIVE_SPOT_RAISE_SIZES
+      $snapshot.active_street_bet_keep = [string]$env:FAST_LIVE_ACTIVE_STREET_BET_KEEP
+      $snapshot.active_street_raise_keep = [string]$env:FAST_LIVE_ACTIVE_STREET_RAISE_KEEP
+      break
+    }
+    default {
+      $snapshot.contract = "normal_family"
+      $snapshot.adaptive_sizing = $true
+      $snapshot.hero_combo_range = $true
+      $snapshot.villain_range_source = "spot_template"
+      break
+    }
+  }
+
+  Write-Log ("Profile contract snapshot ({0}): profile={1}" -f [string]$Reason, [string]$normalized) -Type "profile_contract_snapshot" -Data $snapshot
+}
+
 function Get-VillainCardsText {
   return ("{0} {1}" -f [string]$script:villainCards["villain1"], [string]$script:villainCards["villain2"])
 }
@@ -9337,6 +9406,66 @@ function Queue-EngineSolveForBoard {
             }
           }
         }
+        $profileUsed = ""
+        if (($resp.PSObject.Properties.Name -contains "metrics") -and $resp.metrics -and `
+            ($resp.metrics.PSObject.Properties.Name -contains "runtime_profile") -and $resp.metrics.runtime_profile) {
+          $profileUsed = ([string]$resp.metrics.runtime_profile).Trim().ToLowerInvariant()
+        }
+        if (-not $profileUsed) {
+          $profileUsed = ([string]$runtimeProfileValue).Trim().ToLowerInvariant()
+        }
+
+        $fallbackReason = ""
+        if (($resp.PSObject.Properties.Name -contains "selection_reason") -and $resp.selection_reason) {
+          $fallbackReason = [string]$resp.selection_reason
+        }
+        if (-not $fallbackReason -and $llmErr) {
+          $fallbackReason = [string]$llmErr
+        }
+        if (-not $fallbackReason -and ($resp.PSObject.Properties.Name -contains "result") -and $resp.result -and `
+            ($resp.result.PSObject.Properties.Name -contains "warnings") -and $resp.result.warnings) {
+          $warnList = @($resp.result.warnings)
+          if ($warnList.Count -gt 0) {
+            $fallbackReason = [string]$warnList[0]
+          }
+        }
+
+        $sizingUsed = ""
+        $streetKey = "preflop"
+        $boardCount = 0
+        if (($resp.PSObject.Properties.Name -contains "result") -and $resp.result -and `
+            ($resp.result.PSObject.Properties.Name -contains "input") -and $resp.result.input -and `
+            ($resp.result.input.PSObject.Properties.Name -contains "board") -and $resp.result.input.board) {
+          $boardCount = @($resp.result.input.board).Count
+        }
+        switch ($boardCount) {
+          3 { $streetKey = "flop" }
+          4 { $streetKey = "turn" }
+          5 { $streetKey = "river" }
+          default { $streetKey = "preflop" }
+        }
+        if (($resp.PSObject.Properties.Name -contains "metrics") -and $resp.metrics -and `
+            ($resp.metrics.PSObject.Properties.Name -contains "fast_spot_profile") -and $resp.metrics.fast_spot_profile) {
+          $fsp = $resp.metrics.fast_spot_profile
+          $betCsv = Convert-NumberListToCsv -Values @($fsp.bet_sizes)
+          $raiseCsv = Convert-NumberListToCsv -Values @($fsp.raise_sizes)
+          if ($betCsv -or $raiseCsv) {
+            $sizingUsed = ("{0}:bets={1};raises={2}" -f $streetKey, $betCsv, $raiseCsv)
+          }
+        }
+        if (-not $sizingUsed -and ($resp.PSObject.Properties.Name -contains "result") -and $resp.result -and `
+            ($resp.result.PSObject.Properties.Name -contains "input") -and $resp.result.input -and `
+            ($resp.result.input.PSObject.Properties.Name -contains "bet_sizing") -and $resp.result.input.bet_sizing) {
+          $bs = $resp.result.input.bet_sizing
+          if ($streetKey -in @("flop", "turn", "river") -and ($bs.PSObject.Properties.Name -contains $streetKey)) {
+            $streetSizing = $bs.$streetKey
+            $betCsv = Convert-NumberListToCsv -Values @($streetSizing.bet_sizes)
+            $raiseCsv = Convert-NumberListToCsv -Values @($streetSizing.raise_sizes)
+            if ($betCsv -or $raiseCsv) {
+              $sizingUsed = ("{0}:bets={1};raises={2}" -f $streetKey, $betCsv, $raiseCsv)
+            }
+          }
+        }
         [pscustomobject]@{
           ok = $true
           elapsed_sec = [double]$elapsedSec
@@ -9352,6 +9481,9 @@ function Queue-EngineSolveForBoard {
           neural_error = [string]$neuralError
           neural_elapsed_sec = [double]$neuralElapsedSec
           root_actions = @($rootActionsValue)
+          profile_used = [string]$profileUsed
+          sizing_used = [string]$sizingUsed
+          fallback_reason = [string]$fallbackReason
           response_path = [string]$responsePathValue
         }
       }
@@ -10138,6 +10270,10 @@ function Poll-EngineJobs {
         strategy = [string]$result.selected_strategy
         runtime_profile = if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }
         effective_runtime_profile = if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }
+        profile_used = if ($result.profile_used) { [string]$result.profile_used } else { if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile } }
+        override_applied = [bool]((if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }) -ne (if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }))
+        sizing_used = [string]$result.sizing_used
+        fallback_reason = [string]$result.fallback_reason
         exploitability = $result.exploitability
         kept = $result.node_lock_kept
         elapsed_sec = [double]$result.elapsed_sec
@@ -10148,6 +10284,18 @@ function Poll-EngineJobs {
         neural_selected_action = [string]$result.neural_selected_action
         neural_error = [string]$result.neural_error
         neural_elapsed_sec = [double]$result.neural_elapsed_sec
+      }
+      Write-Log ("Engine telemetry: profile_used={0}, override_applied={1}, sizing={2}, fallback_reason={3}" -f `
+        $(if ($result.profile_used) { [string]$result.profile_used } else { if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile } }), `
+        [bool]((if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }) -ne (if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile })), `
+        [string]$result.sizing_used, `
+        [string]$result.fallback_reason) -Type "engine_telemetry" -Data @{
+        job_id = [int]$jobId
+        stage = $completedStage
+        profile_used = if ($result.profile_used) { [string]$result.profile_used } else { if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile } }
+        override_applied = [bool]((if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }) -ne (if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }))
+        sizing_used = [string]$result.sizing_used
+        fallback_reason = [string]$result.fallback_reason
       }
       if ([bool]$result.neural_attempted -or $result.neural_error) {
         $agreeText = "n/a"
@@ -10694,6 +10842,7 @@ $cmbEngineProfile.Add_SelectedIndexChanged({
     Write-Log ("Engine runtime profile set to: {0}" -f $engineRuntimeProfile.ToUpperInvariant()) -Type "engine_runtime_profile" -Data @{
       runtime_profile = $engineRuntimeProfile
     }
+    Write-ProfileContractSnapshot -Profile $engineRuntimeProfile -Reason "profile_changed"
     Update-EngineButtonState
   }
 })
@@ -10711,6 +10860,7 @@ $form.Add_Shown({
     keep_alive = $ollamaVisionKeepAlive
     runtime_profile = $engineRuntimeProfile
   }
+  Write-ProfileContractSnapshot -Profile $engineRuntimeProfile -Reason "startup"
   Load-RoiState
   Update-MainLayout
   $regionLabel.Text = "Selected: none"

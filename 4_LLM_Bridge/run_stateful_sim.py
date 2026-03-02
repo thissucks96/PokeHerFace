@@ -338,8 +338,11 @@ def main() -> int:
         help="Optional directory to write payload/response artifacts for dataset building.",
     )
     parser.add_argument("--output", required=True, help="Output JSON map")
+    parser.add_argument("--seed", type=int, default=None, help="Optional RNG seed for reproducible A/B runs")
     args = parser.parse_args()
     args.runtime_profile = _normalize_runtime_profile(args.runtime_profile)
+    if args.seed is not None:
+        random.seed(int(args.seed))
 
     villain_mode = str(args.villain_mode or "").strip().lower()
     if not villain_mode:
@@ -371,6 +374,7 @@ def main() -> int:
         "raise_cap": args.raise_cap,
         "compress_strategy": not args.disable_compress_strategy,
         "bet_sizing": _aggressive_bet_sizing(args.runtime_profile) if aggressive_mode else _scenario_bet_sizing(args.runtime_profile),
+        "seed": args.seed,
     }
 
     results = []
