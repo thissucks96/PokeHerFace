@@ -125,10 +125,20 @@ UI hand export:
   - `FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO` (default `0.33`)
   - `FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES` (default `rainbow|unpaired|disconnected`)
   - `FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN` / `FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL` / `FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD` (defaults `0.70` / `0.30` / `0.00`)
+- scoped fast_live baseline override (single matched turn/river bucket; weighted, legal-action-safe):
+  - `FAST_LIVE_TARGET_BUCKET_OVERRIDE_ENABLED` (default `1`)
+  - `FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET` (`turn|river`, default `river`)
+  - `FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB` / `FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB` (defaults `20` / `40`)
+  - `FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO` (default `0.33`)
+  - `FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES` (default `rainbow|unpaired|disconnected`)
+  - `FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_ALLIN` / `FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_CALL` / `FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_FOLD` (defaults `0.80` / `0.15` / `0.05`)
 - fallback telemetry now includes:
   - `metrics.fast_live_fallback_bucket_id`
   - `metrics.fast_live_flop_cbet_mix_applied`
   - `metrics.fast_live_river_small_face_override_applied`
+  - `metrics.fast_live_target_bucket_override_applied`
+  - `metrics.fast_live_target_bucket_override_bucket_id`
+  - `metrics.fast_live_target_bucket_override_selected_action`
   - `metrics.fast_live_fallback_select_time_ms`
   - `metrics.fast_live_fallback_meta` (only populated in `full`)
 

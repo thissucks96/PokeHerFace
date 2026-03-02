@@ -358,6 +358,48 @@ try:
     FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD", "0.00"))
 except ValueError:
     FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD = 0.00
+FAST_LIVE_TARGET_BUCKET_OVERRIDE_ENABLED = os.environ.get(
+    "FAST_LIVE_TARGET_BUCKET_OVERRIDE_ENABLED",
+    "1",
+).strip() not in {"0", "false", "False"}
+FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET = str(
+    os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET", "river")
+).strip().lower()
+if FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET not in {"turn", "river"}:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET = "river"
+try:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB = float(os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB", "20"))
+except ValueError:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB = 20.0
+try:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB = float(os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB", "40"))
+except ValueError:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB = 40.0
+try:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO = float(os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO", "0.33"))
+except ValueError:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO = 0.33
+FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES_RAW = os.environ.get(
+    "FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES",
+    "rainbow|unpaired|disconnected",
+)
+FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES = {
+    token.strip().lower()
+    for token in str(FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES_RAW or "").split(",")
+    if token.strip()
+}
+try:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_ALLIN = float(os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_ALLIN", "0.80"))
+except ValueError:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_ALLIN = 0.80
+try:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_CALL = float(os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_CALL", "0.15"))
+except ValueError:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_CALL = 0.15
+try:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_FOLD = float(os.environ.get("FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_FOLD", "0.05"))
+except ValueError:
+    FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_FOLD = 0.05
 FAST_LIVE_FLOP_CBET75_BOARD_CLASSES_RAW = os.environ.get(
     "FAST_LIVE_FLOP_CBET75_BOARD_CLASSES",
     "two-tone|disconnected,rainbow|disconnected,rainbow|connected",
@@ -2183,6 +2225,23 @@ def _choose_smallest_sized_action(allowed_actions: list[str], action_base: str) 
     return best_action
 
 
+def _choose_largest_sized_action(allowed_actions: list[str], action_base: str) -> Optional[str]:
+    best_action: Optional[str] = None
+    best_amount: Optional[int] = None
+    for action in allowed_actions:
+        token = str(action or "").strip().lower()
+        if not token.startswith(f"{action_base}:"):
+            continue
+        try:
+            amount = int(float(token.split(":", 1)[1]))
+        except ValueError:
+            continue
+        if best_amount is None or amount > best_amount:
+            best_amount = amount
+            best_action = token
+    return best_action
+
+
 def _choose_sized_action_by_ratio(
     allowed_actions: list[str],
     action_base: str,
@@ -2626,6 +2685,129 @@ def _token_to_root_action(token: str, chosen: str) -> Dict[str, Any]:
     if amount is not None and base in {"bet", "raise"}:
         item["amount"] = amount
     return item
+
+
+def _apply_fast_live_target_bucket_override(
+    *,
+    spot: Dict[str, Any],
+    result_payload: Dict[str, Any],
+    runtime_profile: str,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    meta: Dict[str, Any] = {
+        "applied": False,
+        "bucket_id": None,
+        "selected_action": None,
+        "reason": "not_applicable",
+    }
+    if str(runtime_profile or "").strip().lower() != "fast_live":
+        return result_payload, meta
+    if not FAST_LIVE_TARGET_BUCKET_OVERRIDE_ENABLED:
+        meta["reason"] = "disabled"
+        return result_payload, meta
+    street = _detect_spot_street(spot)
+    if street != FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET:
+        meta["reason"] = "street_mismatch"
+        return result_payload, meta
+
+    minimum_bet = float(_to_float_or_none(spot.get("minimum_bet")) or 1.0)
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0))
+    pot_bb = float(starting_pot) / max(1.0, float(minimum_bet))
+    facing_bet = _extract_spot_facing_bet(spot)
+    if facing_bet <= 0.0:
+        facing_bet = float(_extract_last_bet_amount_from_active_node_path(str(spot.get("active_node_path", "")).strip()) or 0)
+    if facing_bet <= 0.0:
+        meta["reason"] = "facing_bet_not_positive"
+        return result_payload, meta
+    facing_ratio = float(facing_bet) / max(1.0, float(starting_pot))
+    board_bucket = _classify_postflop_board_bucket(spot)
+    if not (
+        float(FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB) <= pot_bb <= float(FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB)
+        and facing_ratio <= float(FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO)
+        and board_bucket in FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES
+    ):
+        meta["reason"] = "bucket_not_matched"
+        return result_payload, meta
+
+    bucket_id = (
+        f"{street}|pot:{int(FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB)}-{int(FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB)}bb"
+        f"|face:<={FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO:.2f}|board:{board_bucket}"
+    )
+    allowed_actions = _extract_allowed_root_actions(result_payload)
+    if not allowed_actions:
+        meta.update({"bucket_id": bucket_id, "reason": "no_allowed_actions"})
+        return result_payload, meta
+
+    all_in_token: Optional[str] = None
+    if "all_in" in allowed_actions:
+        all_in_token = "all_in"
+    else:
+        all_in_token = _choose_largest_sized_action(allowed_actions, "raise")
+        if all_in_token is None and "raise" in allowed_actions:
+            all_in_token = "raise"
+    call_token: Optional[str] = "call" if "call" in allowed_actions else ("check" if "check" in allowed_actions else None)
+    fold_token: Optional[str] = "fold" if "fold" in allowed_actions else None
+
+    weighted_by_label = {
+        "all_in": _normalize_nonnegative_weight(FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_ALLIN),
+        "call": _normalize_nonnegative_weight(FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_CALL),
+        "fold": _normalize_nonnegative_weight(FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_FOLD),
+    }
+    legal_candidates: Dict[str, float] = {}
+    if all_in_token and weighted_by_label["all_in"] > 0.0:
+        legal_candidates[all_in_token] = legal_candidates.get(all_in_token, 0.0) + weighted_by_label["all_in"]
+    if call_token and weighted_by_label["call"] > 0.0:
+        legal_candidates[call_token] = legal_candidates.get(call_token, 0.0) + weighted_by_label["call"]
+    if fold_token and weighted_by_label["fold"] > 0.0:
+        legal_candidates[fold_token] = legal_candidates.get(fold_token, 0.0) + weighted_by_label["fold"]
+
+    if not legal_candidates:
+        meta.update({"bucket_id": bucket_id, "reason": "no_legal_weighted_candidates"})
+        return result_payload, meta
+
+    sampled_population = list(legal_candidates.keys())
+    sampled_weights = [float(legal_candidates[action]) for action in sampled_population]
+    sampled_action = str(random.choices(sampled_population, weights=sampled_weights, k=1)[0]).strip().lower()
+    if sampled_action not in allowed_actions:
+        sampled_action = max(legal_candidates.items(), key=lambda row: row[1])[0]
+
+    weight_total = max(1e-9, float(sum(legal_candidates.values())))
+    normalized_weights = {
+        action: (float(weight) / weight_total)
+        for action, weight in legal_candidates.items()
+    }
+    weighted_summary = []
+    for token in allowed_actions:
+        row = _token_to_root_action(token, sampled_action)
+        row["frequency"] = float(normalized_weights.get(token, 0.0))
+        weighted_summary.append(row)
+
+    updated_result = dict(result_payload)
+    updated_result["root_actions"] = weighted_summary
+    decision_raw = updated_result.get("decision", {})
+    decision = dict(decision_raw) if isinstance(decision_raw, dict) else {}
+    decision["action"] = sampled_action
+    policy = str(decision.get("policy", "")).strip()
+    decision["policy"] = f"{policy}+fast_live_bucket_override" if policy else "fast_live_bucket_override"
+    updated_result["decision"] = decision
+    warnings_raw = updated_result.get("warnings", [])
+    warnings = list(warnings_raw) if isinstance(warnings_raw, list) else []
+    if "fast_live_target_bucket_override_applied" not in warnings:
+        warnings.append("fast_live_target_bucket_override_applied")
+    updated_result["warnings"] = warnings
+
+    meta.update(
+        {
+            "applied": True,
+            "bucket_id": bucket_id,
+            "selected_action": sampled_action,
+            "reason": "applied",
+        }
+    )
+    if FAST_LIVE_TELEMETRY_LEVEL == "full":
+        meta["weighted_by_label"] = weighted_by_label
+        meta["legal_candidates"] = legal_candidates
+        meta["normalized_weights"] = normalized_weights
+    return updated_result, meta
 
 
 def _normalize_card_token(card: str) -> str:
@@ -3107,6 +3289,9 @@ def _build_fast_failover_response(
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": fast_live_flop_cbet_mix_applied,
             "fast_live_river_small_face_override_applied": fast_live_river_small_face_override_applied,
+            "fast_live_target_bucket_override_applied": False,
+            "fast_live_target_bucket_override_bucket_id": None,
+            "fast_live_target_bucket_override_selected_action": None,
             "fast_live_fallback_bucket_id": fast_live_fallback_bucket_id,
             "fast_live_fallback_select_time_ms": round(float(fast_live_fallback_select_time_ms), 4),
             "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
@@ -3234,6 +3419,16 @@ def health() -> Dict[str, Any]:
         "fast_live_river_small_face_weight_allin": FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN,
         "fast_live_river_small_face_weight_call": FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL,
         "fast_live_river_small_face_weight_fold": FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD,
+        "fast_live_target_bucket_override_enabled": FAST_LIVE_TARGET_BUCKET_OVERRIDE_ENABLED,
+        "fast_live_target_bucket_override_street": FAST_LIVE_TARGET_BUCKET_OVERRIDE_STREET,
+        "fast_live_target_bucket_override_pot_min_bb": FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MIN_BB,
+        "fast_live_target_bucket_override_pot_max_bb": FAST_LIVE_TARGET_BUCKET_OVERRIDE_POT_MAX_BB,
+        "fast_live_target_bucket_override_max_ratio": FAST_LIVE_TARGET_BUCKET_OVERRIDE_MAX_RATIO,
+        "fast_live_target_bucket_override_board_classes_raw": FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES_RAW,
+        "fast_live_target_bucket_override_board_classes": sorted(FAST_LIVE_TARGET_BUCKET_OVERRIDE_BOARD_CLASSES),
+        "fast_live_target_bucket_override_weight_allin": FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_ALLIN,
+        "fast_live_target_bucket_override_weight_call": FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_CALL,
+        "fast_live_target_bucket_override_weight_fold": FAST_LIVE_TARGET_BUCKET_OVERRIDE_WEIGHT_FOLD,
         "fast_failover_max_sized_actions": FAST_FAILOVER_MAX_SIZED_ACTIONS,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
@@ -3777,6 +3972,21 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     else:
         selection_reason = "locked_result_missing_metric_using_baseline"
 
+    fast_live_target_bucket_override_meta = {
+        "applied": False,
+        "bucket_id": None,
+        "selected_action": None,
+    }
+    if runtime_profile == "fast_live":
+        result, fast_live_target_bucket_override_meta = _apply_fast_live_target_bucket_override(
+            spot=request.spot,
+            result_payload=result,
+            runtime_profile=runtime_profile,
+        )
+        if bool(fast_live_target_bucket_override_meta.get("applied")):
+            selection_reason = f"{selection_reason}+fast_live_target_bucket_override"
+        allowed_root_actions = _extract_allowed_root_actions(result)
+
     neural_payload = None
     neural_error: Optional[str] = None
     neural_elapsed = 0.0
@@ -3915,6 +4125,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": False,
             "fast_live_river_small_face_override_applied": False,
+            "fast_live_target_bucket_override_applied": bool(fast_live_target_bucket_override_meta.get("applied")),
+            "fast_live_target_bucket_override_bucket_id": fast_live_target_bucket_override_meta.get("bucket_id"),
+            "fast_live_target_bucket_override_selected_action": fast_live_target_bucket_override_meta.get("selected_action"),
             "fast_live_fallback_bucket_id": None,
             "fast_live_fallback_select_time_ms": None,
             "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
