@@ -116,9 +116,16 @@ UI hand export:
   - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK` (default `0.10`)
 - fallback telemetry level:
   - `FAST_LIVE_TELEMETRY_LEVEL` (`lean|full`, default `lean`)
+- scoped river fallback override (single high-drift bucket tuning):
+  - `FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED` (default `1`)
+  - `FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB` / `FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB` (defaults `20` / `40`)
+  - `FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO` (default `0.33`)
+  - `FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES` (default `rainbow|unpaired|disconnected`)
+  - `FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN` / `FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL` / `FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD` (defaults `0.70` / `0.30` / `0.00`)
 - fallback telemetry now includes:
   - `metrics.fast_live_fallback_bucket_id`
   - `metrics.fast_live_flop_cbet_mix_applied`
+  - `metrics.fast_live_river_small_face_override_applied`
   - `metrics.fast_live_fallback_select_time_ms`
   - `metrics.fast_live_fallback_meta` (only populated in `full`)
 

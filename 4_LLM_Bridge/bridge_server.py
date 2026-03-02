@@ -319,6 +319,43 @@ except ValueError:
 FAST_LIVE_TELEMETRY_LEVEL = str(os.environ.get("FAST_LIVE_TELEMETRY_LEVEL", "lean")).strip().lower()
 if FAST_LIVE_TELEMETRY_LEVEL not in {"lean", "full"}:
     FAST_LIVE_TELEMETRY_LEVEL = "lean"
+FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED = os.environ.get(
+    "FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED",
+    "1",
+).strip() not in {"0", "false", "False"}
+try:
+    FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB", "20"))
+except ValueError:
+    FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB = 20.0
+try:
+    FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB", "40"))
+except ValueError:
+    FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB = 40.0
+try:
+    FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO", "0.33"))
+except ValueError:
+    FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO = 0.33
+FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES_RAW = os.environ.get(
+    "FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES",
+    "rainbow|unpaired|disconnected",
+)
+FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES = {
+    token.strip().lower()
+    for token in str(FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES_RAW or "").split(",")
+    if token.strip()
+}
+try:
+    FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN", "0.70"))
+except ValueError:
+    FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN = 0.70
+try:
+    FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL", "0.30"))
+except ValueError:
+    FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL = 0.30
+try:
+    FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD = float(os.environ.get("FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD", "0.00"))
+except ValueError:
+    FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD = 0.00
 FAST_LIVE_FLOP_CBET75_BOARD_CLASSES_RAW = os.environ.get(
     "FAST_LIVE_FLOP_CBET75_BOARD_CLASSES",
     "two-tone|disconnected,rainbow|disconnected,rainbow|connected",
@@ -2043,6 +2080,7 @@ def _fallback_actions_from_spot(spot: Dict[str, Any]) -> list[str]:
     if facing_bet > 0.0:
         if all(not token.startswith("raise:") for token in actions):
             actions.append(f"raise:{int(max(minimum_bet, round(facing_bet * 2.0)))}")
+        actions.append("all_in")
     else:
         if all(not token.startswith("bet:") for token in actions):
             actions.append(f"bet:{int(max(1.0, minimum_bet))}")
@@ -2264,6 +2302,44 @@ def _sample_fast_live_flop_cbet_mix_action(
     return sampled, meta
 
 
+def _classify_postflop_board_bucket(spot: Dict[str, Any]) -> str:
+    board = spot.get("board")
+    if not isinstance(board, list) or not board:
+        return "unknown"
+    ranks: list[int] = []
+    suits: list[str] = []
+    for card in board[:5]:
+        token = str(card or "").strip()
+        if len(token) < 2:
+            continue
+        if token[:2] == "10":
+            rank_token = "T"
+            suit_token = token[2:3].lower()
+        else:
+            rank_token = token[:1].upper()
+            suit_token = token[-1:].lower()
+        rank_val = _RANK_VALUE_MAP.get(rank_token)
+        if rank_val is None:
+            continue
+        ranks.append(rank_val)
+        suits.append(suit_token)
+    if len(ranks) < 3:
+        return "unknown"
+    unique_suits = len(set(suits))
+    if unique_suits >= 3:
+        suit_class = "rainbow"
+    elif unique_suits == 2:
+        suit_class = "two-tone"
+    elif unique_suits == 1:
+        suit_class = "monotone"
+    else:
+        suit_class = "unknown"
+    paired = len(set(ranks)) < len(ranks)
+    unique_ranks = sorted(set(ranks))
+    connected = len(unique_ranks) >= 2 and (max(unique_ranks) - min(unique_ranks) <= (len(unique_ranks) + 1))
+    return f"{suit_class}|{'paired' if paired else 'unpaired'}|{'connected' if connected else 'disconnected'}"
+
+
 def _classify_flop_board_bucket(spot: Dict[str, Any]) -> str:
     board = spot.get("board")
     if not isinstance(board, list):
@@ -2403,10 +2479,12 @@ def _choose_fast_failover_action(
     runtime_profile: str = "",
 ) -> tuple[str, Dict[str, Any]]:
     street = _detect_spot_street(spot)
+    profile = str(runtime_profile or "").strip().lower()
     facing_bet = 0.0
     action_meta: Dict[str, Any] = {
         "bucket_id": None,
         "fast_live_flop_cbet_mix_applied": False,
+        "fast_live_river_small_face_override_applied": False,
     }
     meta = spot.get("meta")
     if isinstance(meta, dict):
@@ -2417,6 +2495,44 @@ def _choose_fast_failover_action(
     if facing_bet > 0.0:
         minimum_bet = _to_float_or_none(spot.get("minimum_bet")) or 1.0
         starting_pot = _to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0)
+        pot_bb = float(starting_pot) / max(1.0, float(minimum_bet))
+        facing_ratio = float(facing_bet) / max(1.0, float(starting_pot))
+        board_bucket = _classify_postflop_board_bucket(spot)
+        if (
+            profile == "fast_live"
+            and FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED
+            and street == "river"
+            and float(FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB) <= pot_bb <= float(FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB)
+            and facing_ratio <= float(FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO)
+            and board_bucket in FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES
+        ):
+            bucket_id = (
+                f"river|pot:{int(FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB)}-{int(FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB)}bb"
+                f"|face:<={FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO:.2f}|board:{board_bucket}"
+            )
+            weighted_candidates: Dict[str, float] = {
+                "all_in": _normalize_nonnegative_weight(FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN),
+                "call": _normalize_nonnegative_weight(FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL),
+                "fold": _normalize_nonnegative_weight(FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD),
+            }
+            legal_candidates = {
+                action: float(weight)
+                for action, weight in weighted_candidates.items()
+                if action in allowed_actions and float(weight) > 0.0
+            }
+            action_meta["bucket_id"] = bucket_id
+            action_meta["fast_live_river_small_face_override_applied"] = True
+            if FAST_LIVE_TELEMETRY_LEVEL == "full":
+                action_meta["river_override_weights"] = weighted_candidates
+                action_meta["river_override_candidates"] = legal_candidates
+            if legal_candidates:
+                population = list(legal_candidates.keys())
+                weights = [legal_candidates[action] for action in population]
+                chosen = str(random.choices(population, weights=weights, k=1)[0]).strip().lower()
+                if chosen not in allowed_actions:
+                    chosen = max(legal_candidates.items(), key=lambda row: row[1])[0]
+                return chosen, action_meta
+
         texture = _extract_board_texture_flags(spot)
         denominator = max(1.0, starting_pot + facing_bet)
         mdf = max(0.0, min(1.0, starting_pot / denominator))
@@ -2827,6 +2943,9 @@ def _build_fast_failover_response(
     fast_live_fallback_select_time_ms = max(0.0, (time.perf_counter() - fallback_select_started) * 1000.0)
     fast_live_fallback_bucket_id = failover_action_meta.get("bucket_id")
     fast_live_flop_cbet_mix_applied = bool(failover_action_meta.get("fast_live_flop_cbet_mix_applied", False))
+    fast_live_river_small_face_override_applied = bool(
+        failover_action_meta.get("fast_live_river_small_face_override_applied", False)
+    )
     fast_live_fallback_meta: Optional[Dict[str, Any]] = None
     if FAST_LIVE_TELEMETRY_LEVEL == "full":
         fast_live_fallback_meta = dict(failover_action_meta)
@@ -2899,6 +3018,12 @@ def _build_fast_failover_response(
         warnings_list = list(warnings) if isinstance(warnings, list) else []
         if "fast_live_flop_cbet_mix_applied" not in warnings_list:
             warnings_list.append("fast_live_flop_cbet_mix_applied")
+        result_payload["warnings"] = warnings_list
+    if fast_live_river_small_face_override_applied:
+        warnings = result_payload.get("warnings")
+        warnings_list = list(warnings) if isinstance(warnings, list) else []
+        if "fast_live_river_small_face_override_applied" not in warnings_list:
+            warnings_list.append("fast_live_river_small_face_override_applied")
         result_payload["warnings"] = warnings_list
     result_payload, allowed_actions, risk_gate = _apply_equity_risk_gate(
         spot=request.spot,
@@ -2975,6 +3100,7 @@ def _build_fast_failover_response(
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": fast_live_flop_cbet_mix_applied,
+            "fast_live_river_small_face_override_applied": fast_live_river_small_face_override_applied,
             "fast_live_fallback_bucket_id": fast_live_fallback_bucket_id,
             "fast_live_fallback_select_time_ms": round(float(fast_live_fallback_select_time_ms), 4),
             "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
@@ -3091,6 +3217,15 @@ def health() -> Dict[str, Any]:
         "fast_live_flop_cbet_mix_weight_bet33": FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET33,
         "fast_live_flop_cbet_mix_weight_check": FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK,
         "fast_live_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
+        "fast_live_river_small_face_override_enabled": FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED,
+        "fast_live_river_small_face_pot_min_bb": FAST_LIVE_RIVER_SMALL_FACE_POT_MIN_BB,
+        "fast_live_river_small_face_pot_max_bb": FAST_LIVE_RIVER_SMALL_FACE_POT_MAX_BB,
+        "fast_live_river_small_face_max_ratio": FAST_LIVE_RIVER_SMALL_FACE_MAX_RATIO,
+        "fast_live_river_small_face_board_classes_raw": FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES_RAW,
+        "fast_live_river_small_face_board_classes": sorted(FAST_LIVE_RIVER_SMALL_FACE_BOARD_CLASSES),
+        "fast_live_river_small_face_weight_allin": FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_ALLIN,
+        "fast_live_river_small_face_weight_call": FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_CALL,
+        "fast_live_river_small_face_weight_fold": FAST_LIVE_RIVER_SMALL_FACE_WEIGHT_FOLD,
         "fast_failover_max_sized_actions": FAST_FAILOVER_MAX_SIZED_ACTIONS,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
@@ -3771,6 +3906,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": False,
+            "fast_live_river_small_face_override_applied": False,
             "fast_live_fallback_bucket_id": None,
             "fast_live_fallback_select_time_ms": None,
             "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
