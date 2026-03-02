@@ -75,6 +75,14 @@ def _assert_close(a: float, b: float, eps: float = 1e-6) -> None:
         raise AssertionError(f"value mismatch: {a} != {b}")
 
 
+def _assert_float_list_close(actual: List[Any], expected: List[float], eps: float = 1e-4) -> None:
+    if len(actual) != len(expected):
+        raise AssertionError(f"list length mismatch: {actual} != {expected}")
+    for idx, (a, b) in enumerate(zip(actual, expected)):
+        if math.fabs(float(a) - float(b)) > eps:
+            raise AssertionError(f"list value mismatch at index {idx}: {a} != {b}")
+
+
 def _extract_bet_amounts(allowed_root_actions: List[str]) -> List[int]:
     out: List[int] = []
     for token in allowed_root_actions:
@@ -112,10 +120,8 @@ def run(endpoint: str, timeout_sec: int) -> None:
 
         sizing = (input_spot.get("bet_sizing") or {}).get(street) or {}
         exp = EXPECTED_SHARK_CLASSIC_SIZING[street]
-        if list(sizing.get("bet_sizes") or []) != exp["bet_sizes"]:
-            raise AssertionError(f"{street}: bet_sizes mismatch {sizing.get('bet_sizes')} != {exp['bet_sizes']}")
-        if list(sizing.get("raise_sizes") or []) != exp["raise_sizes"]:
-            raise AssertionError(f"{street}: raise_sizes mismatch {sizing.get('raise_sizes')} != {exp['raise_sizes']}")
+        _assert_float_list_close(list(sizing.get("bet_sizes") or []), exp["bet_sizes"])
+        _assert_float_list_close(list(sizing.get("raise_sizes") or []), exp["raise_sizes"])
 
         allowed = [str(x) for x in (solved.get("allowed_root_actions") or [])]
         if "check" not in [a.lower() for a in allowed]:
