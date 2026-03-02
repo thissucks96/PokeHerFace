@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 from collections import deque
 from datetime import datetime, timezone
 import json
@@ -257,6 +258,17 @@ FAST_LIVE_FAILOVER_ON_BASELINE_ERROR = os.environ.get("FAST_LIVE_FAILOVER_ON_BAS
 }
 FAST_LIVE_FORCE_ROOT_ONLY = os.environ.get("FAST_LIVE_FORCE_ROOT_ONLY", "1").strip() not in {"0", "false", "False"}
 FAST_LIVE_SKIP_LLM_STAGE = os.environ.get("FAST_LIVE_SKIP_LLM_STAGE", "1").strip() not in {"0", "false", "False"}
+FAST_LIVE_NORMAL_RACE_ENABLED = os.environ.get("FAST_LIVE_NORMAL_RACE_ENABLED", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+try:
+    FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC", "10"))
+except ValueError:
+    FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC = 10
+if FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC < 1:
+    FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC = 1
 try:
     NORMAL_BASELINE_TIMEOUT_SEC = int(os.environ.get("NORMAL_BASELINE_TIMEOUT_SEC", "900"))
 except ValueError:
@@ -1678,6 +1690,133 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
     return tuned, summary
 
 
+def _apply_normal_spot_profile(spot: Dict[str, Any], profile_label: str = "normal") -> tuple[Dict[str, Any], Dict[str, Any]]:
+    tuned = dict(spot)
+    changes: Dict[str, Any] = {}
+    raw_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
+    had_threshold = raw_threshold is not None
+    threshold_base = float(raw_threshold) if had_threshold else min(max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
+    dynamic_threshold, dynamic_meta = _dynamic_all_in_threshold(tuned, threshold_base)
+    clamped_threshold = max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, float(dynamic_threshold))
+    clamped_threshold = min(clamped_threshold, 0.99)
+    tuned["all_in_threshold"] = clamped_threshold
+    if not had_threshold:
+        changes["all_in_threshold"] = {"from": None, "to": clamped_threshold, "dynamic": dynamic_meta}
+    elif abs(clamped_threshold - threshold_base) > 1e-9:
+        changes["all_in_threshold"] = {"from": threshold_base, "to": clamped_threshold, "dynamic": dynamic_meta}
+    summary = {
+        "profile": profile_label,
+        "applied": True,
+        "min_all_in_threshold": SPOT_NORMAL_MIN_ALL_IN_THRESHOLD,
+        "changes": changes,
+    }
+    return tuned, summary
+
+
+def _run_fast_live_normal_baseline_race(
+    *,
+    shark_cli: Path,
+    request_spot: Dict[str, Any],
+    fast_live_spot: Dict[str, Any],
+    fast_live_timeout_sec: int,
+    request_timeout_sec: int,
+    quiet: bool,
+) -> Dict[str, Any]:
+    race_timeout_sec = max(1, min(int(request_timeout_sec), int(FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC)))
+    fast_timeout_sec = max(1, min(int(fast_live_timeout_sec), int(race_timeout_sec)))
+    normal_spot, _ = _apply_normal_spot_profile(request_spot, "normal")
+
+    def _worker(label: str, spot_payload: Dict[str, Any], timeout_sec: int) -> Dict[str, Any]:
+        started = time.perf_counter()
+        try:
+            run = _run_shark_cli(
+                shark_cli,
+                spot_payload=spot_payload,
+                node_lock_payload=None,
+                timeout_sec=int(timeout_sec),
+                quiet=quiet,
+            )
+            return {
+                "label": label,
+                "run": run,
+                "error": None,
+                "elapsed_sec": time.perf_counter() - started,
+                "timeout_sec": int(timeout_sec),
+            }
+        except HTTPException as exc:
+            return {
+                "label": label,
+                "run": None,
+                "error": f"{exc.status_code}:{exc.detail}",
+                "elapsed_sec": time.perf_counter() - started,
+                "timeout_sec": int(timeout_sec),
+            }
+
+    selected: Optional[Dict[str, Any]] = None
+    normal_outcome: Optional[Dict[str, Any]] = None
+    fast_outcome: Optional[Dict[str, Any]] = None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        future_map: Dict[concurrent.futures.Future[Dict[str, Any]], str] = {
+            executor.submit(_worker, "normal", normal_spot, race_timeout_sec): "normal",
+            executor.submit(_worker, "fast_live", fast_live_spot, fast_timeout_sec): "fast_live",
+        }
+        race_deadline = time.perf_counter() + float(race_timeout_sec)
+        while future_map:
+            remaining = race_deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            done, _ = concurrent.futures.wait(
+                list(future_map.keys()),
+                timeout=remaining,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+            if not done:
+                break
+            batch: list[Dict[str, Any]] = []
+            for fut in done:
+                label = future_map.pop(fut)
+                try:
+                    outcome = fut.result()
+                except Exception as exc:  # defensive: never let race crash solve()
+                    outcome = {
+                        "label": label,
+                        "run": None,
+                        "error": f"race_worker_exception:{exc}",
+                        "elapsed_sec": 0.0,
+                        "timeout_sec": race_timeout_sec if label == "normal" else fast_timeout_sec,
+                    }
+                if label == "normal":
+                    normal_outcome = outcome
+                else:
+                    fast_outcome = outcome
+                batch.append(outcome)
+            normal_success = next(
+                (row for row in batch if row.get("label") == "normal" and row.get("run") is not None),
+                None,
+            )
+            if normal_success is not None:
+                selected = normal_success
+                break
+            if selected is None:
+                fast_success = next(
+                    (row for row in batch if row.get("label") == "fast_live" and row.get("run") is not None),
+                    None,
+                )
+                if fast_success is not None:
+                    selected = fast_success
+                    break
+        for fut in future_map.keys():
+            fut.cancel()
+
+    return {
+        "selected": selected,
+        "normal": normal_outcome,
+        "fast_live": fast_outcome,
+        "race_timeout_sec": race_timeout_sec,
+        "fast_timeout_sec": fast_timeout_sec,
+    }
+
+
 def _fallback_actions_from_spot(spot: Dict[str, Any]) -> list[str]:
     street = _detect_spot_street(spot)
     actions: list[str] = []
@@ -2494,6 +2633,8 @@ def health() -> Dict[str, Any]:
         "fast_live_failover_on_baseline_error": FAST_LIVE_FAILOVER_ON_BASELINE_ERROR,
         "fast_live_force_root_only": FAST_LIVE_FORCE_ROOT_ONLY,
         "fast_live_skip_llm_stage": FAST_LIVE_SKIP_LLM_STAGE,
+        "fast_live_normal_race_enabled": FAST_LIVE_NORMAL_RACE_ENABLED,
+        "fast_live_normal_race_timeout_sec": FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
         "normal_locked_timeout_sec": NORMAL_LOCKED_TIMEOUT_SEC,
@@ -2582,25 +2723,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     spot_street = _detect_spot_street(request.spot)
     is_normal_profile = runtime_profile in {"normal", "normal_neural"}
     if is_normal_profile:
-        raw_threshold = _to_float_or_none(effective_spot.get("all_in_threshold"))
-        had_threshold = raw_threshold is not None
-        threshold_base = float(raw_threshold) if had_threshold else min(max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
-        dynamic_threshold, dynamic_meta = _dynamic_all_in_threshold(effective_spot, threshold_base)
-        clamped_threshold = max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, float(dynamic_threshold))
-        clamped_threshold = min(clamped_threshold, 0.99)
-        effective_spot["all_in_threshold"] = clamped_threshold
-        if (not had_threshold) or abs(clamped_threshold - threshold_base) > 1e-9:
-            fast_spot_profile_summary = {
-                "profile": runtime_profile,
-                "applied": True,
-                "changes": {
-                    "all_in_threshold": {
-                        "from": threshold_base if had_threshold else None,
-                        "to": clamped_threshold,
-                        "dynamic": dynamic_meta,
-                    }
-                },
-            }
+        effective_spot, fast_spot_profile_summary = _apply_normal_spot_profile(effective_spot, runtime_profile)
     elif runtime_profile == "fast":
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
     elif runtime_profile == "fast_live":
@@ -2684,13 +2807,52 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     baseline_result: Dict[str, Any]
     baseline_solver_time = 0.0
     try:
-        baseline_run = _run_shark_cli(
-            shark_cli,
-            spot_payload=effective_spot,
-            node_lock_payload=None,
-            timeout_sec=stage_budgets["baseline_timeout_sec"],
-            quiet=request.quiet,
-        )
+        if runtime_profile == "fast_live" and FAST_LIVE_NORMAL_RACE_ENABLED:
+            race = _run_fast_live_normal_baseline_race(
+                shark_cli=shark_cli,
+                request_spot=request.spot,
+                fast_live_spot=effective_spot,
+                fast_live_timeout_sec=int(stage_budgets["baseline_timeout_sec"]),
+                request_timeout_sec=int(request.timeout_sec),
+                quiet=request.quiet,
+            )
+            selected = race.get("selected")
+            if not isinstance(selected, dict) or not isinstance(selected.get("run"), dict):
+                normal_error = (race.get("normal") or {}).get("error")
+                fast_error = (race.get("fast_live") or {}).get("error")
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"fast_live_normal_race_failed normal={normal_error} fast_live={fast_error}",
+                )
+            baseline_run = selected["run"]
+            race_selected = str(selected.get("label") or "unknown")
+            race_meta = {
+                "enabled": True,
+                "selected": race_selected,
+                "race_timeout_sec": race.get("race_timeout_sec"),
+                "fast_timeout_sec": race.get("fast_timeout_sec"),
+                "normal": {
+                    "ok": bool((race.get("normal") or {}).get("run") is not None),
+                    "error": (race.get("normal") or {}).get("error"),
+                    "elapsed_sec": (race.get("normal") or {}).get("elapsed_sec"),
+                },
+                "fast_live": {
+                    "ok": bool((race.get("fast_live") or {}).get("run") is not None),
+                    "error": (race.get("fast_live") or {}).get("error"),
+                    "elapsed_sec": (race.get("fast_live") or {}).get("elapsed_sec"),
+                },
+            }
+            if not isinstance(fast_spot_profile_summary, dict):
+                fast_spot_profile_summary = {"profile": "fast_live", "applied": True, "changes": {}}
+            fast_spot_profile_summary["normal_race"] = race_meta
+        else:
+            baseline_run = _run_shark_cli(
+                shark_cli,
+                spot_payload=effective_spot,
+                node_lock_payload=None,
+                timeout_sec=stage_budgets["baseline_timeout_sec"],
+                quiet=request.quiet,
+            )
         baseline_result = baseline_run["result"]
         baseline_solver_time = baseline_run["solver_wall_time_sec"]
     except HTTPException as exc:
