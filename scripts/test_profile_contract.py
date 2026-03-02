@@ -26,17 +26,19 @@ EXPECTED_BET_AMOUNTS = {
 
 def _build_spot(board: List[str]) -> Dict[str, Any]:
     return {
-        "hero_range": "55+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
-        "villain_range": "33+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
+        # Keep regression spot intentionally lightweight so contract checks validate profile wiring,
+        # not brute-force runtime under huge trees.
+        "hero_range": "QQ+,AKs,AKo,AQs",
+        "villain_range": "JJ+,AQs+,AKo,KQs",
         "board": list(board),
         "in_position_player": 1,
-        "starting_stack": 100,
+        "starting_stack": 20,
         "starting_pot": 10,
         "minimum_bet": 2,
         "all_in_threshold": 0.67,
-        "iterations": 100,
+        "iterations": 40,
         "min_exploitability": -1.0,
-        "thread_count": 6,
+        "thread_count": 4,
         "remove_donk_bets": True,
         "raise_cap": 3,
         "compress_strategy": True,
