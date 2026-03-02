@@ -515,7 +515,26 @@ def main() -> int:
                         weighted_sample=True,
                         default_action="check",
                     )
-                except Exception:
+                except Exception as e:
+                    villain_error = str(e)
+                    status_code = None
+                    body_text = None
+                    if isinstance(e, RequestException) and e.response is not None:
+                        status_code = int(e.response.status_code)
+                        body_text = e.response.text
+                        villain_error += f" | Body: {body_text}"
+                    _artifact_write(
+                        artifact_dir=artifact_dir,
+                        stage=f"stateful_sim_villain_h{h_idx+1}_{street_name}_error",
+                        payload=villain_payload,
+                        response={
+                            "status": "error",
+                            "error": villain_error,
+                            "error_type": _classify_error(villain_error),
+                            "http_status": status_code,
+                            "body": body_text,
+                        },
+                    )
                     villain_action = "check"
                     villain_selection_mode = "engine_fallback_check"
 
@@ -568,14 +587,30 @@ def main() -> int:
                 )
             except Exception as e:
                 error_msg = str(e)
+                status_code = None
+                body_text = None
                 if isinstance(e, RequestException) and e.response is not None:
-                    error_msg += f" | Body: {e.response.text}"
+                    status_code = int(e.response.status_code)
+                    body_text = e.response.text
+                    error_msg += f" | Body: {body_text}"
                 error_type = _classify_error(error_msg)
                 error_counts[error_type] = int(error_counts.get(error_type, 0)) + 1
                 street_bucket = error_counts_by_street.get(street_name, {})
                 street_bucket[error_type] = int(street_bucket.get(error_type, 0)) + 1
                 error_counts_by_street[street_name] = street_bucket
                 hands_with_error += 1
+                _artifact_write(
+                    artifact_dir=artifact_dir,
+                    stage=f"stateful_sim_hero_h{h_idx+1}_{street_name}_error",
+                    payload=payload,
+                    response={
+                        "status": "error",
+                        "error": error_msg,
+                        "error_type": error_type,
+                        "http_status": status_code,
+                        "body": body_text,
+                    },
+                )
                 hand_record["streets"].append({"street": street_name, "error": error_msg, "error_type": error_type}) # type: ignore
                 active = False
                 break
