@@ -84,6 +84,7 @@ UI hand export:
 - `fast_live`: production candidate (bounded latency + stronger spot tuning)
 - `normal`: full-latency path for offline quality reference
 - `normal_neural`: placeholder profile for neural teaching/data collection (normal-like solve path, separately tagged)
+- `shark_classic`: Shark-original contract profile (flop 50/100 + raise 100; turn/river 33/66/100 + raise 50/100, donk-check forced, all-in threshold 0.67, raise cap 3)
 
 `fast_live` now supports a baseline race mode:
 - runs `normal` and `fast_live` baseline solves in parallel
@@ -93,6 +94,9 @@ UI hand export:
 `fast_live` active-node sizing now keeps a small subset (not only one size) on the active street:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
+
+`normal` no longer silently auto-overrides to `fast_live` postflop unless explicitly enabled:
+- `ENGINE_ALLOW_NORMAL_POSTFLOP_OVERRIDE=1`
 
 `fast` is deprecated and aliases to `fast_live`.
 

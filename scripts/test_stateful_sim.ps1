@@ -32,7 +32,7 @@ Optional artifact output directory for payload/response pairs (dataset builder c
 [CmdletBinding()]
 param (
     [string]$Preset = "local_qwen3_coder_30b",
-    [ValidateSet("fast", "fast_live", "normal", "normal_neural")]
+    [ValidateSet("fast", "fast_live", "normal", "normal_neural", "shark_classic")]
     [string]$RuntimeProfile = "fast_live",
     [int]$Hands = 20,
     [string]$OutputDir = "",
@@ -154,3 +154,4 @@ if (Test-Path $outputFile) {
 }
 
 exit 0
+

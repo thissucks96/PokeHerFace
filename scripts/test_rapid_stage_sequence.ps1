@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$Preset = "local_qwen3_coder_30b",
-  [ValidateSet("fast", "fast_live", "normal")]
+  [ValidateSet("fast", "fast_live", "normal", "normal_neural", "shark_classic")]
   [string]$RuntimeProfile = "fast",
   [double]$StaggerMs = 150,
   [int]$SolverTimeout = 180,
@@ -210,3 +210,4 @@ try {
 finally {
   # Keep services running by default; this is primarily a profiling helper.
 }
+

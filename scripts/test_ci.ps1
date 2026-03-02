@@ -1,6 +1,6 @@
 param(
     [string]$Preset = "local_qwen3_coder_30b",
-  [ValidateSet("fast", "fast_live", "normal")]
+  [ValidateSet("fast", "fast_live", "normal", "normal_neural", "shark_classic")]
     [string]$RuntimeProfile = "",
     [string]$CanonicalManifest = "",
     [string]$Output = "",
@@ -158,3 +158,4 @@ Write-Host ("  fallback_rate={0}" -f $FallbackRate)
 Write-Host ("  lock_applied_rate={0}" -f $LockAppliedRate)
 Write-Host ("  keep_rate={0}" -f $KeepRate)
 exit 0
+

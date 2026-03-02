@@ -3,7 +3,7 @@ param(
   [ValidateSet("turn_class1", "river_class23", "canonical_turn_ci")]
   [string]$Suite = "canonical_turn_ci",
   [string]$Preset = "local_qwen3_coder_30b",
-  [ValidateSet("fast", "fast_live", "normal")]
+  [ValidateSet("fast", "fast_live", "normal", "normal_neural", "shark_classic")]
   [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$CallsPerSpot = 1,
@@ -114,3 +114,4 @@ finally {
     Stop-TestServices -State $state
   }
 }
+

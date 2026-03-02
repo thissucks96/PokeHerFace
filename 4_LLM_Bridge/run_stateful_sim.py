@@ -38,6 +38,11 @@ FAST_LIVE_BET_SIZING = {
     "turn": {"bet_sizes": [0.33, 0.75, 1.0, 1.25], "raise_sizes": [1.0, 2.0, 2.5, 3.0]},
     "river": {"bet_sizes": [0.33, 0.75, 1.0, 1.25], "raise_sizes": [1.0, 2.0, 2.5, 3.0]},
 }
+SHARK_CLASSIC_BET_SIZING = {
+    "flop": {"bet_sizes": [0.5, 1.0], "raise_sizes": [1.0]},
+    "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
+    "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
+}
 DEFAULT_LEGAL_ACTIONS = ["check", "bet_33", "bet_75", "all_in"]
 PASSIVE_VILLAIN_POLICY = {
     "checked_to": "check",
@@ -207,6 +212,8 @@ def _scenario_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[float
         return json.loads(json.dumps(FAST_BET_SIZING))
     if profile == "fast_live":
         return json.loads(json.dumps(FAST_LIVE_BET_SIZING))
+    if profile == "shark_classic":
+        return json.loads(json.dumps(SHARK_CLASSIC_BET_SIZING))
     return json.loads(json.dumps(DEFAULT_BET_SIZING))
 
 
@@ -216,6 +223,8 @@ def _aggressive_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[flo
         return json.loads(json.dumps(FAST_BET_SIZING))
     if profile == "fast_live":
         return json.loads(json.dumps(FAST_LIVE_BET_SIZING))
+    if profile == "shark_classic":
+        return json.loads(json.dumps(SHARK_CLASSIC_BET_SIZING))
     return json.loads(json.dumps(DEFAULT_BET_SIZING))
 
 
@@ -224,7 +233,7 @@ def _normalize_runtime_profile(profile: str) -> str:
     if value in {"fast", "live_fast"}:
         print("run_stateful_sim: runtime-profile 'fast' is deprecated; using 'fast_live'.")
         return "fast_live"
-    if value in {"fast_live", "normal", "normal_neural"}:
+    if value in {"fast_live", "normal", "normal_neural", "shark_classic"}:
         return value
     return "fast_live"
 

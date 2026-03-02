@@ -179,13 +179,17 @@ if ($env:ENGINE_RUNTIME_PROFILE) {
   if ($parsedRuntimeProfile -in @("live_fast", "fast")) {
     $parsedRuntimeProfile = "fast_live"
   }
-  if ($parsedRuntimeProfile -in @("fast_live", "normal", "normal_neural")) {
+  if ($parsedRuntimeProfile -in @("fast_live", "normal", "normal_neural", "shark_classic")) {
     $engineRuntimeProfile = $parsedRuntimeProfile
   }
 }
 $engineFacingPostflopAutoOverrideEnabled = $true
 if ($env:ENGINE_FACING_POSTFLOP_AUTOCAP -and ([string]$env:ENGINE_FACING_POSTFLOP_AUTOCAP).Trim().ToLowerInvariant() -in @("0", "false", "no", "off")) {
   $engineFacingPostflopAutoOverrideEnabled = $false
+}
+$engineAllowNormalPostflopOverride = $false
+if ($env:ENGINE_ALLOW_NORMAL_POSTFLOP_OVERRIDE -and ([string]$env:ENGINE_ALLOW_NORMAL_POSTFLOP_OVERRIDE).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
+  $engineAllowNormalPostflopOverride = $true
 }
 $engineFacingPostflopDeadlineSec = 13
 if ($env:ENGINE_FACING_POSTFLOP_DEADLINE_SEC) {
@@ -4548,6 +4552,7 @@ $cmbEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbEngineProfile.Items.Add("fast_live")
 [void]$cmbEngineProfile.Items.Add("normal")
 [void]$cmbEngineProfile.Items.Add("normal_neural")
+[void]$cmbEngineProfile.Items.Add("shark_classic")
 $profileIdx = $cmbEngineProfile.Items.IndexOf($engineRuntimeProfile)
 if ($profileIdx -lt 0) { $profileIdx = 0 }
 $cmbEngineProfile.SelectedIndex = $profileIdx
@@ -9119,14 +9124,14 @@ function Queue-EngineSolveForBoard {
   if ($configuredRuntimeProfile -in @("fast", "live_fast")) {
     $configuredRuntimeProfile = "fast_live"
   }
-  if ($configuredRuntimeProfile -notin @("fast_live", "normal", "normal_neural")) {
+  if ($configuredRuntimeProfile -notin @("fast_live", "normal", "normal_neural", "shark_classic")) {
     $configuredRuntimeProfile = "fast_live"
   }
   $effectiveRuntimeProfile = $configuredRuntimeProfile
   $effectiveSolverTimeoutSec = [int]$engineSolverTimeoutSec
   $boardCountForProfile = Get-ValidBoardCardCount -Tokens @($boardTokensInput)
   $isPostflopSpot = ($boardCountForProfile -ge 3)
-  if ($engineFacingPostflopAutoOverrideEnabled -and ($configuredRuntimeProfile -eq "normal") -and $isPostflopSpot) {
+  if ($engineFacingPostflopAutoOverrideEnabled -and $engineAllowNormalPostflopOverride -and ($configuredRuntimeProfile -eq "normal") -and $isPostflopSpot) {
     $effectiveRuntimeProfile = "fast_live"
     $effectiveSolverTimeoutSec = [int]([Math]::Max(3, [Math]::Min([int]$effectiveSolverTimeoutSec, [int]$engineFacingPostflopDeadlineSec)))
     Write-Log ("Engine runtime override: NORMAL -> FAST_LIVE (postflop board={0}, facing_bet={1}, deadline={2}s)." -f [int]$boardCountForProfile, [int]$script:currentFacingBetAmount, [int]$effectiveSolverTimeoutSec) -Type "engine_runtime_override" -Data @{

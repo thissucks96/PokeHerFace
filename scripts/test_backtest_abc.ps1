@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$Preset = "local_qwen3_coder_30b",
-  [ValidateSet("fast", "fast_live", "normal")]
+  [ValidateSet("fast", "fast_live", "normal", "normal_neural", "shark_classic")]
   [string]$RuntimeProfile = "",
   [double]$EvKeepMargin = 0.001,
   [int]$Seed = 4090,
@@ -81,3 +81,4 @@ finally {
     Stop-TestServices -State $state
   }
 }
+

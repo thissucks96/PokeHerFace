@@ -33,7 +33,7 @@ Bridge timeout for each solve call.
 [CmdletBinding()]
 param(
     [string]$Preset = "local_qwen3_coder_30b",
-    [ValidateSet("fast", "fast_live", "normal")]
+    [ValidateSet("fast", "fast_live", "normal", "normal_neural", "shark_classic")]
     [string]$RuntimeProfile = "fast_live",
     [int]$TotalHands = 300,
     [string]$OutputDir = "4_LLM_Bridge/examples/synthetic_hands/recipes",
@@ -147,3 +147,4 @@ Write-Host "Recipe completed." -ForegroundColor Green
 Write-Host "Manifest: $manifestPath" -ForegroundColor Green
 Write-Host "Next: python .\scripts\build_neural_dataset.py --write" -ForegroundColor Yellow
 exit 0
+
