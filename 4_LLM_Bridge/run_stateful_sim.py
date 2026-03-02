@@ -294,19 +294,18 @@ def _evaluate_shark_classic_complexity_guard(
     stack = int(max(0, int(spot.get("starting_stack", 0))))
     villain_width = _estimate_range_width(str(spot.get("villain_range", "")))
     active_node_path = str(spot.get("active_node_path", "")).strip()
-    has_active_path = bool(active_node_path)
     timeout = int(max(1, int(effective_timeout_sec)))
 
     high_stack = stack >= 80
     wide_range = villain_width >= 20
     limited_budget = timeout <= 180
 
-    if high_stack and wide_range and has_active_path and limited_budget:
+    if high_stack and wide_range and limited_budget:
         return {
             "skip": True,
             "reason": (
                 "complexity_guard_skip: shark_classic high-complexity flop spot "
-                f"(stack={stack}, villain_range_width={villain_width}, timeout={timeout}, active_node_path=1)"
+                f"(stack={stack}, villain_range_width={villain_width}, timeout={timeout}, active_node_path={int(bool(active_node_path))})"
             ),
             "meta": {
                 "stack": stack,
@@ -504,8 +503,8 @@ def main() -> int:
         hero_hole, villain_hole, full_board = _deal_hand(deck)
         
         # State: Postflop start (hero/villain already reached flop in a simplified heads-up pot)
-        pot = int(args.starting_pot_bb)
-        hero_stack = int(args.starting_stack_bb)
+        pot = int(scenario["starting_pot_bb"])
+        hero_stack = int(scenario["starting_stack_bb"])
 
         hand_record: Dict[str, Any] = {
             "hand_index": h_idx + 1,
