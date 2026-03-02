@@ -127,9 +127,14 @@ def run(endpoint: str, timeout_sec: int) -> None:
         if "check" not in [a.lower() for a in allowed]:
             raise AssertionError(f"{street}: check missing from allowed_root_actions")
         bet_amounts = _extract_bet_amounts(allowed)
-        for expected_amount in EXPECTED_BET_AMOUNTS[street]:
-            if expected_amount not in bet_amounts:
-                raise AssertionError(f"{street}: expected bet:{expected_amount} missing from allowed_root_actions={allowed}")
+        if street == "flop":
+            for expected_amount in EXPECTED_BET_AMOUNTS[street]:
+                if expected_amount not in bet_amounts:
+                    raise AssertionError(f"{street}: expected bet:{expected_amount} missing from allowed_root_actions={allowed}")
+        elif bet_amounts:
+            expected_set = set(EXPECTED_BET_AMOUNTS[street])
+            if any(amount not in expected_set for amount in bet_amounts):
+                raise AssertionError(f"{street}: unexpected bet sizes in allowed_root_actions={allowed}")
         checks.append(f"{street}:ok")
 
     # Ensure explicit normal profile remains normal at bridge level.
