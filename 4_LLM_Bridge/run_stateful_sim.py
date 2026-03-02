@@ -219,6 +219,16 @@ def _aggressive_bet_sizing(runtime_profile: str) -> Dict[str, Dict[str, List[flo
     return json.loads(json.dumps(DEFAULT_BET_SIZING))
 
 
+def _normalize_runtime_profile(profile: str) -> str:
+    value = str(profile or "").strip().lower()
+    if value in {"fast", "live_fast"}:
+        print("run_stateful_sim: runtime-profile 'fast' is deprecated; using 'fast_live'.")
+        return "fast_live"
+    if value in {"fast_live", "normal"}:
+        return value
+    return "fast_live"
+
+
 def _extract_action_map_and_result(resp_json: Dict[str, Any]) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
     result_block = resp_json.get("result", {}) or {}
     action_map = result_block.get("root_actions", [])
@@ -294,7 +304,7 @@ def main() -> int:
     parser.add_argument("--hands", type=int, default=20, help="Number of full hands to simulate")
     parser.add_argument("--endpoint", default="http://127.0.0.1:8000/solve", help="Bridge /solve endpoint")
     parser.add_argument("--preset", default="local_qwen3_coder_30b")
-    parser.add_argument("--runtime-profile", default="fast")
+    parser.add_argument("--runtime-profile", default="fast_live")
     parser.add_argument("--timeout", type=int, default=60, help="Bridge request timeout sec")
     parser.add_argument("--starting-stack-bb", type=int, default=100, help="Starting effective stack in big blinds")
     parser.add_argument("--starting-pot-bb", type=int, default=6, help="Starting pot size in big blinds at flop")
@@ -320,6 +330,7 @@ def main() -> int:
     )
     parser.add_argument("--output", required=True, help="Output JSON map")
     args = parser.parse_args()
+    args.runtime_profile = _normalize_runtime_profile(args.runtime_profile)
 
     villain_mode = str(args.villain_mode or "").strip().lower()
     if not villain_mode:

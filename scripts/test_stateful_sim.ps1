@@ -9,7 +9,7 @@ This script wraps the Python `run_stateful_sim.py` tool. It simulates N hands of
 The LLM config preset to pass to the bridge (default "local_qwen3_coder_30b").
 
 .PARAMETER RuntimeProfile
-The runtime latency profile "fast" or "normal" (default "fast").
+The runtime latency profile "fast_live" or "normal" (default "fast_live").
 
 .PARAMETER Hands
 Number of hands to simulate (default 20).
@@ -33,7 +33,7 @@ Optional artifact output directory for payload/response pairs (dataset builder c
 param (
     [string]$Preset = "local_qwen3_coder_30b",
     [ValidateSet("fast", "fast_live", "normal")]
-    [string]$RuntimeProfile = "fast",
+    [string]$RuntimeProfile = "fast_live",
     [int]$Hands = 20,
     [string]$OutputDir = "",
     [int]$TimeoutSec = 60,
@@ -44,6 +44,11 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($RuntimeProfile -eq "fast") {
+    Write-Warning "RuntimeProfile 'fast' is deprecated; using 'fast_live'."
+    $RuntimeProfile = "fast_live"
+}
 
 $workspaceRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $bridgeServerDir = Join-Path $workspaceRoot "4_LLM_Bridge"

@@ -36,8 +36,11 @@ DEFAULT_LLM_CONFIG = {
     "preset": "local_qwen3_coder_30b",
 }
 RUNTIME_PROFILE_DEFAULT = str(os.environ.get("RUNTIME_PROFILE_DEFAULT", "normal")).strip().lower()
-if RUNTIME_PROFILE_DEFAULT not in {"fast", "fast_live", "normal"}:
+if RUNTIME_PROFILE_DEFAULT == "fast":
+    RUNTIME_PROFILE_DEFAULT = "fast_live"
+if RUNTIME_PROFILE_DEFAULT not in {"fast_live", "normal"}:
     RUNTIME_PROFILE_DEFAULT = "normal"
+_FAST_PROFILE_DEPRECATED_WARNED = False
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
 PROD_CLASS1_MULTI_NODE_LIVE = os.environ.get("PROD_CLASS1_MULTI_NODE_LIVE", "1").strip() not in {"0", "false", "False"}
 PROD_RIVER_MULTI_NODE_SHADOW = os.environ.get("PROD_RIVER_MULTI_NODE_SHADOW", "0").strip() not in {"0", "false", "False"}
@@ -520,7 +523,7 @@ class SolveRequest(BaseModel):
     )
     runtime_profile: Optional[str] = Field(
         default=None,
-        description="Runtime profile: fast | normal. Controls per-stage latency budgets.",
+        description="Runtime profile: fast_live | normal. 'fast' is deprecated and maps to fast_live.",
     )
 
 
@@ -1375,10 +1378,14 @@ def _resolve_multi_node_policy(request: SolveRequest, llm_config: Dict[str, Any]
 
 
 def _normalize_runtime_profile(profile: Optional[str]) -> str:
+    global _FAST_PROFILE_DEPRECATED_WARNED
     value = str(profile or "").strip().lower()
-    if value == "live_fast":
+    if value in {"live_fast", "fast"}:
         value = "fast_live"
-    if value in {"fast", "fast_live", "normal"}:
+        if not _FAST_PROFILE_DEPRECATED_WARNED:
+            print("bridge_server: runtime_profile 'fast' is deprecated; using 'fast_live'.")
+            _FAST_PROFILE_DEPRECATED_WARNED = True
+    if value in {"fast_live", "normal"}:
         return value
     return RUNTIME_PROFILE_DEFAULT
 

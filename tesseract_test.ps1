@@ -173,13 +173,13 @@ catch {
 $engineSpotTemplatePath = if ($env:ENGINE_SPOT_TEMPLATE_PATH) { [string]$env:ENGINE_SPOT_TEMPLATE_PATH } else { (Join-Path $PSScriptRoot "4_LLM_Bridge\examples\spot.sample.json") }
 $engineOutputDir = if ($env:ENGINE_OCR_OUT_DIR) { [string]$env:ENGINE_OCR_OUT_DIR } else { (Join-Path $PSScriptRoot "5_Vision_Extraction\out\flop_engine") }
 $engineLlmPreset = if ($env:ENGINE_LLM_PRESET) { [string]$env:ENGINE_LLM_PRESET } else { "local_qwen3_coder_30b" }
-$engineRuntimeProfile = "fast"
+$engineRuntimeProfile = "fast_live"
 if ($env:ENGINE_RUNTIME_PROFILE) {
   $parsedRuntimeProfile = ([string]$env:ENGINE_RUNTIME_PROFILE).Trim().ToLowerInvariant()
-  if ($parsedRuntimeProfile -eq "live_fast") {
+  if ($parsedRuntimeProfile -in @("live_fast", "fast")) {
     $parsedRuntimeProfile = "fast_live"
   }
-  if ($parsedRuntimeProfile -in @("fast", "fast_live", "normal")) {
+  if ($parsedRuntimeProfile -in @("fast_live", "normal")) {
     $engineRuntimeProfile = $parsedRuntimeProfile
   }
 }
@@ -4542,7 +4542,6 @@ $cmbEngineProfile.DropDownStyle = "DropDownList"
 $cmbEngineProfile.Location = New-Object System.Drawing.Point(700, 211)
 $cmbEngineProfile.Size = New-Object System.Drawing.Size(100, 24)
 $cmbEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-[void]$cmbEngineProfile.Items.Add("fast")
 [void]$cmbEngineProfile.Items.Add("fast_live")
 [void]$cmbEngineProfile.Items.Add("normal")
 $profileIdx = $cmbEngineProfile.Items.IndexOf($engineRuntimeProfile)
@@ -8958,8 +8957,11 @@ function Queue-EngineSolveForBoard {
   $boardTokensInput = @($BoardTokens)
   $boardText = ($boardTokensInput -join " ")
   $configuredRuntimeProfile = ([string]$engineRuntimeProfile).Trim().ToLowerInvariant()
-  if ($configuredRuntimeProfile -notin @("fast", "fast_live", "normal")) {
-    $configuredRuntimeProfile = "fast"
+  if ($configuredRuntimeProfile -in @("fast", "live_fast")) {
+    $configuredRuntimeProfile = "fast_live"
+  }
+  if ($configuredRuntimeProfile -notin @("fast_live", "normal")) {
+    $configuredRuntimeProfile = "fast_live"
   }
   $effectiveRuntimeProfile = $configuredRuntimeProfile
   $effectiveSolverTimeoutSec = [int]$engineSolverTimeoutSec

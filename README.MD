@@ -65,9 +65,10 @@ UI tester:
 
 ## Runtime Profiles
 
-- `fast`: low-latency compact solve path
 - `fast_live`: production candidate (bounded latency + stronger spot tuning)
 - `normal`: full-latency path for offline quality reference
+
+`fast` is deprecated and aliases to `fast_live`.
 
 ## Neural Mode
 
