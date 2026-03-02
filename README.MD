@@ -67,7 +67,8 @@ This workspace is organized to keep the engine, neural models, hand history data
   - screen-capture/OCR execution paths are now disabled by default for local manual-state testing; set `POKERBOT_ENABLE_SCREEN_CAPTURE=1` to re-enable capture-based OCR runs.
   - preflop villain-action flow now forces an immediate hero preflop advice refresh when turn passes back to hero, preventing `WAIT` stalls after auto/scripted villain raises.
   - table status/logs now include explicit preflop facing context (`TO CALL X (villain total Y)` and villain action commit fields) to make blind/raise math auditable at a glance.
-  - production safety autoguard: when configured profile is `normal` but hero is facing a postflop bet, UI handoff now auto-overrides to `fast_live` with a capped deadline (default `13s`) so expensive non-root solves do not stall live decisions.
+  - production safety autoguard: when configured profile is `normal`, all postflop UI handoffs now auto-override to `fast_live` with a capped deadline (default `13s`) so expensive non-root solves do not stall live decisions.
+  - all-in terminal lock now force-runs remaining board + showdown as soon as both stacks are all-in, preventing deadlocks on exhausted-action states.
   - jam/fold tuning defaults are now less conservative in live collection/runtime paths: lower all-in thresholds (`~0.58`), wider fast/fast_live bet/raise sizing ladders, and higher fast_live raise-cap defaults to better expose all-in and mid-street fold branches.
   - solver spots now apply a dynamic all-in-threshold policy (street + SPR + facing-bet aware) for both `normal` and `fast_live` flows, so jam sensitivity adapts by spot complexity instead of staying static.
   - `fast_live` defaults are now tuned closer to normal-style strategy depth (higher per-street budgets, higher raise cap, richer bet/raise ladders, and active-node flop lookup enabled by default) while keeping bounded live-time safeguards.

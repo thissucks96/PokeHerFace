@@ -2949,6 +2949,28 @@ function Try-ResolveAllInRunoutIfNoActions {
     return $false
   }
 
+  # Heads-up lock: once both stacks are all-in, always force immediate runout/showdown.
+  if ($heroAllIn -and $villainAllIn) {
+    $boardCount = Get-ValidBoardCardCount -Tokens @($lastBoardTokens)
+    if ($boardCount -lt 3) {
+      Deal-NextStreetCards -Street "flop"
+      Reset-StreetActionState
+      $boardCount = 3
+    }
+    if ($boardCount -lt 4) {
+      Deal-NextStreetCards -Street "turn"
+      Reset-StreetActionState
+      $boardCount = 4
+    }
+    if ($boardCount -lt 5) {
+      Deal-NextStreetCards -Street "river"
+      Reset-StreetActionState
+    }
+    [void](Resolve-ShowdownAndAwardPot)
+    Write-Log "Forced all-in runout resolved to showdown." -Type "allin_runout"
+    return $true
+  }
+
   $heroLegal = @(Get-HeroLegalActionTokens)
   $villainLegal = @(Get-VillainLegalActionTokens)
   if ($heroLegal.Count -gt 0 -or $villainLegal.Count -gt 0) {
@@ -6922,6 +6944,8 @@ function Set-AdviceFromEngineResult {
 
     $script:lastRecommendedCallAmount = 0
     $script:lastRecommendedRaiseAmount = 0
+    # Refresh dynamic CHECK/CALL + RAISE/ALL-IN modes from live commitments before legal filtering.
+    Update-CheckCallButtonModeFromState
     $heroTurn = [bool](Test-IsHeroTurn)
     $legalTokens = @()
     if ($heroTurn) {
@@ -7061,6 +7085,28 @@ function Set-AdviceFromEngineResult {
     $sortedRowsArray = $sortedRowsArrayList.ToArray()
     $script:adviceActionPrimary = Get-AdviceDecisionPrimary -WeightedRows $sortedRowsArray
     $script:lastAdviceWeightedRows = $sortedRowsArray
+    if ($heroTurn -and $legalTokens.Count -gt 0) {
+      $primaryToken = ([string]$script:adviceActionPrimary).Trim().ToUpperInvariant()
+      if (($primaryToken -eq "CHECK") -and (-not ($legalTokens -contains "CHECK")) -and ($legalTokens -contains "CALL")) {
+        $script:adviceActionPrimary = "CALL"
+      }
+      elseif (($primaryToken -eq "CALL" -or $primaryToken -eq "CALL ANY") -and (-not ($legalTokens -contains "CALL")) -and ($legalTokens -contains "CHECK")) {
+        $script:adviceActionPrimary = "CHECK"
+      }
+      elseif (($primaryToken -like "BET*" -or $primaryToken -like "RAISE*") -and (-not ($legalTokens -contains "RAISE")) -and ($legalTokens -contains "ALL IN")) {
+        $script:adviceActionPrimary = "ALL IN"
+      }
+      elseif (($primaryToken -eq "ALL IN") -and (-not ($legalTokens -contains "ALL IN")) -and ($legalTokens -contains "RAISE")) {
+        $script:adviceActionPrimary = "RAISE"
+      }
+      elseif (-not ($legalTokens -contains $primaryToken.Split(" ")[0])) {
+        if ($legalTokens -contains "CALL") { $script:adviceActionPrimary = "CALL" }
+        elseif ($legalTokens -contains "CHECK") { $script:adviceActionPrimary = "CHECK" }
+        elseif ($legalTokens -contains "FOLD") { $script:adviceActionPrimary = "FOLD" }
+        elseif ($legalTokens -contains "RAISE") { $script:adviceActionPrimary = "RAISE" }
+        elseif ($legalTokens -contains "ALL IN") { $script:adviceActionPrimary = "ALL IN" }
+      }
+    }
 
     $secondaryLines = New-Object System.Collections.Generic.List[string]
     if ($mixParts.Count -gt 0) { [void]$secondaryLines.Add(($mixParts -join " | ")) }
@@ -8876,15 +8922,16 @@ function Queue-EngineSolveForBoard {
   $effectiveRuntimeProfile = $configuredRuntimeProfile
   $effectiveSolverTimeoutSec = [int]$engineSolverTimeoutSec
   $boardCountForProfile = Get-ValidBoardCardCount -Tokens @($boardTokensInput)
-  $isPostflopFacingBet = ($boardCountForProfile -ge 3) -and ([int]$script:currentFacingBetAmount -gt 0)
-  if ($engineFacingPostflopAutoOverrideEnabled -and ($configuredRuntimeProfile -eq "normal") -and $isPostflopFacingBet) {
+  $isPostflopSpot = ($boardCountForProfile -ge 3)
+  if ($engineFacingPostflopAutoOverrideEnabled -and ($configuredRuntimeProfile -eq "normal") -and $isPostflopSpot) {
     $effectiveRuntimeProfile = "fast_live"
     $effectiveSolverTimeoutSec = [int]([Math]::Max(3, [Math]::Min([int]$effectiveSolverTimeoutSec, [int]$engineFacingPostflopDeadlineSec)))
-    Write-Log ("Engine runtime override: NORMAL -> FAST_LIVE (postflop facing_bet={0}, deadline={1}s)." -f [int]$script:currentFacingBetAmount, [int]$effectiveSolverTimeoutSec) -Type "engine_runtime_override" -Data @{
+    Write-Log ("Engine runtime override: NORMAL -> FAST_LIVE (postflop board={0}, facing_bet={1}, deadline={2}s)." -f [int]$boardCountForProfile, [int]$script:currentFacingBetAmount, [int]$effectiveSolverTimeoutSec) -Type "engine_runtime_override" -Data @{
       stage = $StageLabel
       board = $boardTokensInput
       configured_profile = $configuredRuntimeProfile
       effective_profile = $effectiveRuntimeProfile
+      board_cards = [int]$boardCountForProfile
       facing_bet = [int]$script:currentFacingBetAmount
       deadline_sec = [int]$effectiveSolverTimeoutSec
     }
