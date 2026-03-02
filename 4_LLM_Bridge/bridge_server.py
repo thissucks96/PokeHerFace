@@ -315,6 +315,23 @@ SHARK_CLASSIC_BET_SIZING = {
     "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
     "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
 }
+SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED = os.environ.get("SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+try:
+    SHARK_CLASSIC_GUARD_MIN_STACK = int(os.environ.get("SHARK_CLASSIC_GUARD_MIN_STACK", "80"))
+except ValueError:
+    SHARK_CLASSIC_GUARD_MIN_STACK = 80
+try:
+    SHARK_CLASSIC_GUARD_MIN_VILLAIN_RANGE_WIDTH = int(os.environ.get("SHARK_CLASSIC_GUARD_MIN_VILLAIN_RANGE_WIDTH", "20"))
+except ValueError:
+    SHARK_CLASSIC_GUARD_MIN_VILLAIN_RANGE_WIDTH = 20
+try:
+    SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC = int(os.environ.get("SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC", "180"))
+except ValueError:
+    SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC = 180
 ENABLE_CLOUD_CANDIDATE_SEARCH = os.environ.get("ENABLE_CLOUD_CANDIDATE_SEARCH", "0").strip() not in {
     "0",
     "false",
@@ -1234,6 +1251,46 @@ def _detect_spot_street(spot: Dict[str, Any]) -> str:
         if len(board) == 4:
             return "turn"
     return "flop"
+
+
+def _estimate_range_width(range_text: str) -> int:
+    tokens = [segment.strip() for segment in str(range_text or "").split(",")]
+    return len([token for token in tokens if token])
+
+
+def _evaluate_shark_classic_complexity_guard(
+    *,
+    runtime_profile: str,
+    spot: Dict[str, Any],
+    timeout_sec: int,
+    street: str,
+) -> Dict[str, Any]:
+    if str(runtime_profile or "").strip().lower() != "shark_classic":
+        return {"skip": False}
+    if not SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED:
+        return {"skip": False}
+    if str(street or "").strip().lower() != "flop":
+        return {"skip": False}
+    stack = int(max(0, int(_to_float_or_none(spot.get("starting_stack")) or 0)))
+    villain_range_width = _estimate_range_width(str(spot.get("villain_range", "")))
+    timeout = int(max(1, int(timeout_sec)))
+    if (
+        stack >= SHARK_CLASSIC_GUARD_MIN_STACK
+        and villain_range_width >= SHARK_CLASSIC_GUARD_MIN_VILLAIN_RANGE_WIDTH
+        and timeout <= SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC
+    ):
+        return {
+            "skip": True,
+            "reason": "complexity_guard_skip",
+            "meta": {
+                "stack": stack,
+                "villain_range_width": villain_range_width,
+                "timeout_sec": timeout,
+                "street": street,
+                "runtime_profile": runtime_profile,
+            },
+        }
+    return {"skip": False}
 
 
 def _extract_spot_facing_bet(spot: Dict[str, Any]) -> float:
@@ -2811,6 +2868,21 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
     elif runtime_profile == "fast_live":
         effective_spot, fast_spot_profile_summary = _apply_fast_live_spot_profile(effective_spot)
+    guard = _evaluate_shark_classic_complexity_guard(
+        runtime_profile=runtime_profile,
+        spot=effective_spot,
+        timeout_sec=int(request.timeout_sec),
+        street=spot_street,
+    )
+    if bool(guard.get("skip")):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "complexity_guard_skip",
+                "reason": str(guard.get("reason") or "complexity_guard_skip"),
+                "meta": guard.get("meta", {}),
+            },
+        )
 
     if runtime_profile == "fast" and spot_street == "flop" and FAST_FLOP_LOOKUP_ONLY:
         total_bridge_time = time.perf_counter() - bridge_started
