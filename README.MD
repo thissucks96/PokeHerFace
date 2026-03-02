@@ -54,7 +54,7 @@ Direct reproducible A/B (same seed):
 
 ```powershell
 python 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile fast_live --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_fast_live_seed4090.json
-python 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile shark_classic --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_shark_classic_seed4090.json
+python 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile shark_classic --timeout-shark-classic 180 --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_shark_classic_seed4090.json
 ```
 
 Fast-live tuning sweep (tracks latency deltas vs baseline):
@@ -126,6 +126,10 @@ Use shadow first for validation; promote only after agreement/latency gates are 
 ```powershell
 python scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
 ```
+
+- Stateful sim reports are now `stateful_sim_report.v3` and include:
+  - profile-aware timeout metadata (`timeout_sec_default`, `timeout_sec_effective`)
+  - aggregated error classes (`error_counts`, `error_counts_by_street`, `hands_with_error`)
 
 ## Next Best Steps
 
