@@ -5636,10 +5636,28 @@ function Build-CurrentHandSnapshotText {
   $adviceRows = @()
   foreach ($row in @($script:lastAdviceWeightedRows)) {
     if ($null -eq $row) { continue }
-    $action = [string]$row.action
-    $freq = [double]($row.frequency)
-    if ($row.PSObject.Properties.Name -contains "amount" -and $null -ne $row.amount -and [string]$row.amount -ne "") {
-      $adviceRows += ("{0}:{1} ({2:P0})" -f $action, [int]$row.amount, $freq)
+    $action = ""
+    $freq = 0.0
+    $amount = $null
+    if ($row -is [System.Collections.IDictionary]) {
+      if ($row.Contains("action") -and $null -ne $row["action"]) { $action = [string]$row["action"] }
+      elseif ($row.Contains("token") -and $null -ne $row["token"]) { $action = [string]$row["token"] }
+      if ($row.Contains("frequency") -and $null -ne $row["frequency"]) { try { $freq = [double]$row["frequency"] } catch { $freq = 0.0 } }
+      elseif ($row.Contains("avg_frequency") -and $null -ne $row["avg_frequency"]) { try { $freq = [double]$row["avg_frequency"] } catch { $freq = 0.0 } }
+      if ($row.Contains("amount") -and $null -ne $row["amount"] -and [string]$row["amount"] -ne "") { $amount = $row["amount"] }
+    }
+    else {
+      if ($row.PSObject.Properties.Name -contains "action" -and $null -ne $row.action) { $action = [string]$row.action }
+      elseif ($row.PSObject.Properties.Name -contains "token" -and $null -ne $row.token) { $action = [string]$row.token }
+      if ($row.PSObject.Properties.Name -contains "frequency" -and $null -ne $row.frequency) { try { $freq = [double]$row.frequency } catch { $freq = 0.0 } }
+      elseif ($row.PSObject.Properties.Name -contains "avg_frequency" -and $null -ne $row.avg_frequency) { try { $freq = [double]$row.avg_frequency } catch { $freq = 0.0 } }
+      if ($row.PSObject.Properties.Name -contains "amount" -and $null -ne $row.amount -and [string]$row.amount -ne "") { $amount = $row.amount }
+    }
+    if ([string]::IsNullOrWhiteSpace($action)) {
+      continue
+    }
+    if ($null -ne $amount) {
+      $adviceRows += ("{0}:{1} ({2:P0})" -f $action, [int]$amount, $freq)
     }
     else {
       $adviceRows += ("{0} ({1:P0})" -f $action, $freq)
@@ -5695,9 +5713,10 @@ function Copy-CurrentHandSnapshotToClipboard {
   try {
     $snapshot = Build-CurrentHandSnapshotText
     [System.Windows.Forms.Clipboard]::SetText([string]$snapshot)
+    $logLinesNow = @(Get-HandLogLinesFromCurrentHand)
     Write-Log "Copied hand snapshot to clipboard." -Type "copy_hand_snapshot" -Data @{
       hand_index = [int]$script:handCounter
-      log_lines = [int](Get-HandLogLinesFromCurrentHand).Count
+      log_lines = [int]$logLinesNow.Count
     }
   }
   catch {
