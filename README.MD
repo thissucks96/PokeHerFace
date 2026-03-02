@@ -103,6 +103,7 @@ UI hand export:
 `fast_live` active-node sizing now keeps a small subset (not only one size) on the active street:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
+- `FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE` (default `0`; keep off for lower flop latency)
 - baseline-path river tree controls (non-fallback tuning lever):
   - `FAST_LIVE_RIVER_BET_SIZES` (default empty -> inherits `FAST_LIVE_SPOT_BET_SIZES`)
   - `FAST_LIVE_RIVER_RAISE_SIZES` (default empty -> inherits `FAST_LIVE_SPOT_RAISE_SIZES`)

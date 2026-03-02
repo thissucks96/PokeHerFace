@@ -213,6 +213,14 @@ FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_LIVE_SPOT_FORCE_REM
     "false",
     "False",
 }
+FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE = os.environ.get(
+    "FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE",
+    "0",
+).strip() not in {
+    "0",
+    "false",
+    "False",
+}
 FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,0.75,1.0,1.25")
 FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0,2.0,2.5,3.0")
 FAST_LIVE_RIVER_BET_SIZES_RAW = os.environ.get("FAST_LIVE_RIVER_BET_SIZES", "")
@@ -1801,7 +1809,10 @@ def _apply_fast_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict
 def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     tuned = dict(spot)
     changes: Dict[str, Any] = {}
-    preserve_donk_tree = bool(str(tuned.get("active_node_path", "")).strip())
+    preserve_donk_tree = (
+        bool(str(tuned.get("active_node_path", "")).strip())
+        and FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE
+    )
 
     iterations = _to_float_or_none(tuned.get("iterations"))
     if iterations is not None:
@@ -3390,6 +3401,7 @@ def health() -> Dict[str, Any]:
         "fast_live_spot_min_all_in_threshold": FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD,
         "fast_live_spot_force_compress_strategy": FAST_LIVE_SPOT_FORCE_COMPRESS_STRATEGY,
         "fast_live_spot_force_remove_donk_bets": FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS,
+        "fast_live_preserve_donk_tree_on_active_node": FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE,
         "fast_live_spot_bet_sizes_raw": FAST_LIVE_SPOT_BET_SIZES_RAW,
         "fast_live_spot_raise_sizes_raw": FAST_LIVE_SPOT_RAISE_SIZES_RAW,
         "fast_live_river_bet_sizes_raw": FAST_LIVE_RIVER_BET_SIZES_RAW,
