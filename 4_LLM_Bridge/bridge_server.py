@@ -316,6 +316,9 @@ try:
     FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK = float(os.environ.get("FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK", "0.10"))
 except ValueError:
     FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK = 0.10
+FAST_LIVE_TELEMETRY_LEVEL = str(os.environ.get("FAST_LIVE_TELEMETRY_LEVEL", "lean")).strip().lower()
+if FAST_LIVE_TELEMETRY_LEVEL not in {"lean", "full"}:
+    FAST_LIVE_TELEMETRY_LEVEL = "lean"
 FAST_LIVE_FLOP_CBET75_BOARD_CLASSES_RAW = os.environ.get(
     "FAST_LIVE_FLOP_CBET75_BOARD_CLASSES",
     "two-tone|disconnected,rainbow|disconnected,rainbow|connected",
@@ -2232,14 +2235,15 @@ def _sample_fast_live_flop_cbet_mix_action(
     meta: Dict[str, Any] = {
         "fast_live_flop_cbet_mix_applied": False,
         "bucket_id": bucket_id,
-        "board_bucket": board_bucket,
-        "pot": float(starting_pot),
-        "weights": weights,
-        "candidates": [
+    }
+    if FAST_LIVE_TELEMETRY_LEVEL == "full":
+        meta["board_bucket"] = board_bucket
+        meta["pot"] = float(starting_pot)
+        meta["weights"] = weights
+        meta["candidates"] = [
             {"action": action, "weight": round(weight, 4)}
             for action, weight in sorted(legal_candidates.items(), key=lambda row: row[1], reverse=True)
-        ],
-    }
+        ]
 
     if not legal_candidates:
         return None, meta
@@ -2255,7 +2259,8 @@ def _sample_fast_live_flop_cbet_mix_action(
         sampled = max(legal_candidates.items(), key=lambda row: row[1])[0]
 
     meta["fast_live_flop_cbet_mix_applied"] = True
-    meta["selected_action"] = sampled
+    if FAST_LIVE_TELEMETRY_LEVEL == "full":
+        meta["selected_action"] = sampled
     return sampled, meta
 
 
@@ -2808,6 +2813,7 @@ def _build_fast_failover_response(
         "bucket_id": None,
         "fast_live_flop_cbet_mix_applied": False,
     }
+    fallback_select_started = time.perf_counter()
     if use_active_node_flop_policy:
         allowed_actions, chosen_action, root_actions = _build_fast_live_active_node_flop_fallback_policy(request.spot)
     else:
@@ -2818,8 +2824,12 @@ def _build_fast_failover_response(
             runtime_profile=runtime_profile,
         )
         root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+    fast_live_fallback_select_time_ms = max(0.0, (time.perf_counter() - fallback_select_started) * 1000.0)
     fast_live_fallback_bucket_id = failover_action_meta.get("bucket_id")
     fast_live_flop_cbet_mix_applied = bool(failover_action_meta.get("fast_live_flop_cbet_mix_applied", False))
+    fast_live_fallback_meta: Optional[Dict[str, Any]] = None
+    if FAST_LIVE_TELEMETRY_LEVEL == "full":
+        fast_live_fallback_meta = dict(failover_action_meta)
     facing_bet_for_bias = _extract_spot_facing_bet(request.spot)
     fast_live_flop_cbet75_bias_applied = bool(
         _is_fast_live_flop_cbet75_bias_spot(
@@ -2966,6 +2976,9 @@ def _build_fast_failover_response(
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": fast_live_flop_cbet_mix_applied,
             "fast_live_fallback_bucket_id": fast_live_fallback_bucket_id,
+            "fast_live_fallback_select_time_ms": round(float(fast_live_fallback_select_time_ms), 4),
+            "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
+            "fast_live_fallback_meta": fast_live_fallback_meta,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
@@ -3077,6 +3090,7 @@ def health() -> Dict[str, Any]:
         "fast_live_flop_cbet_mix_weight_bet75": FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET75,
         "fast_live_flop_cbet_mix_weight_bet33": FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET33,
         "fast_live_flop_cbet_mix_weight_check": FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK,
+        "fast_live_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
         "fast_failover_max_sized_actions": FAST_FAILOVER_MAX_SIZED_ACTIONS,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
@@ -3758,6 +3772,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": False,
             "fast_live_fallback_bucket_id": None,
+            "fast_live_fallback_select_time_ms": None,
+            "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
+            "fast_live_fallback_meta": None,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,

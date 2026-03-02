@@ -114,9 +114,13 @@ UI hand export:
   - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET75` (default `0.70`)
   - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET33` (default `0.20`)
   - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK` (default `0.10`)
+- fallback telemetry level:
+  - `FAST_LIVE_TELEMETRY_LEVEL` (`lean|full`, default `lean`)
 - fallback telemetry now includes:
   - `metrics.fast_live_fallback_bucket_id`
   - `metrics.fast_live_flop_cbet_mix_applied`
+  - `metrics.fast_live_fallback_select_time_ms`
+  - `metrics.fast_live_fallback_meta` (only populated in `full`)
 
 `normal` no longer silently auto-overrides to `fast_live` postflop unless explicitly enabled:
 - `ENGINE_ALLOW_NORMAL_POSTFLOP_OVERRIDE=1`
