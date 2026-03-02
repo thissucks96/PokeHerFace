@@ -50,6 +50,18 @@ Stateful synthetic sim:
 .\scripts\test_stateful_sim.ps1 -Hands 50 -RuntimeProfile fast_live -VillainMode scripted_aggressive
 ```
 
+Fast-live tuning sweep (tracks latency deltas vs baseline):
+
+```powershell
+.\scripts\run_fast_live_tuning_sweep.ps1 -Hands 8 -VillainMode scripted_aggressive
+```
+
+Outputs:
+- Per-config report JSON files in `4_LLM_Bridge\examples\synthetic_hands\fast_live_tuning\`
+- Sweep summary JSON + CSV with:
+  - `bb_100` delta vs baseline
+  - flop/turn/river latency deltas vs baseline
+
 Acceptance:
 
 ```powershell
