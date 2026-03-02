@@ -9,7 +9,7 @@ This script wraps the Python `run_stateful_sim.py` tool. It simulates N hands of
 The LLM config preset to pass to the bridge (default "local_qwen3_coder_30b").
 
 .PARAMETER RuntimeProfile
-The runtime latency profile "fast_live" or "normal" (default "fast_live").
+The runtime latency profile "fast_live", "normal", or "normal_neural" (default "fast_live").
 
 .PARAMETER Hands
 Number of hands to simulate (default 20).
@@ -32,7 +32,7 @@ Optional artifact output directory for payload/response pairs (dataset builder c
 [CmdletBinding()]
 param (
     [string]$Preset = "local_qwen3_coder_30b",
-    [ValidateSet("fast", "fast_live", "normal")]
+    [ValidateSet("fast", "fast_live", "normal", "normal_neural")]
     [string]$RuntimeProfile = "fast_live",
     [int]$Hands = 20,
     [string]$OutputDir = "",

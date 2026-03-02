@@ -179,7 +179,7 @@ if ($env:ENGINE_RUNTIME_PROFILE) {
   if ($parsedRuntimeProfile -in @("live_fast", "fast")) {
     $parsedRuntimeProfile = "fast_live"
   }
-  if ($parsedRuntimeProfile -in @("fast_live", "normal")) {
+  if ($parsedRuntimeProfile -in @("fast_live", "normal", "normal_neural")) {
     $engineRuntimeProfile = $parsedRuntimeProfile
   }
 }
@@ -4544,6 +4544,7 @@ $cmbEngineProfile.Size = New-Object System.Drawing.Size(100, 24)
 $cmbEngineProfile.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 [void]$cmbEngineProfile.Items.Add("fast_live")
 [void]$cmbEngineProfile.Items.Add("normal")
+[void]$cmbEngineProfile.Items.Add("normal_neural")
 $profileIdx = $cmbEngineProfile.Items.IndexOf($engineRuntimeProfile)
 if ($profileIdx -lt 0) { $profileIdx = 0 }
 $cmbEngineProfile.SelectedIndex = $profileIdx
@@ -8960,7 +8961,7 @@ function Queue-EngineSolveForBoard {
   if ($configuredRuntimeProfile -in @("fast", "live_fast")) {
     $configuredRuntimeProfile = "fast_live"
   }
-  if ($configuredRuntimeProfile -notin @("fast_live", "normal")) {
+  if ($configuredRuntimeProfile -notin @("fast_live", "normal", "normal_neural")) {
     $configuredRuntimeProfile = "fast_live"
   }
   $effectiveRuntimeProfile = $configuredRuntimeProfile

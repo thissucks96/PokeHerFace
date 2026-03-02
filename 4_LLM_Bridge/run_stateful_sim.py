@@ -224,7 +224,7 @@ def _normalize_runtime_profile(profile: str) -> str:
     if value in {"fast", "live_fast"}:
         print("run_stateful_sim: runtime-profile 'fast' is deprecated; using 'fast_live'.")
         return "fast_live"
-    if value in {"fast_live", "normal"}:
+    if value in {"fast_live", "normal", "normal_neural"}:
         return value
     return "fast_live"
 

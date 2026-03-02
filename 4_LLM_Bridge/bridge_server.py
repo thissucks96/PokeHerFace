@@ -38,7 +38,7 @@ DEFAULT_LLM_CONFIG = {
 RUNTIME_PROFILE_DEFAULT = str(os.environ.get("RUNTIME_PROFILE_DEFAULT", "normal")).strip().lower()
 if RUNTIME_PROFILE_DEFAULT == "fast":
     RUNTIME_PROFILE_DEFAULT = "fast_live"
-if RUNTIME_PROFILE_DEFAULT not in {"fast_live", "normal"}:
+if RUNTIME_PROFILE_DEFAULT not in {"fast_live", "normal", "normal_neural"}:
     RUNTIME_PROFILE_DEFAULT = "normal"
 _FAST_PROFILE_DEPRECATED_WARNED = False
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
@@ -523,7 +523,7 @@ class SolveRequest(BaseModel):
     )
     runtime_profile: Optional[str] = Field(
         default=None,
-        description="Runtime profile: fast_live | normal. 'fast' is deprecated and maps to fast_live.",
+        description="Runtime profile: fast_live | normal | normal_neural. 'fast' is deprecated and maps to fast_live.",
     )
 
 
@@ -1385,7 +1385,7 @@ def _normalize_runtime_profile(profile: Optional[str]) -> str:
         if not _FAST_PROFILE_DEPRECATED_WARNED:
             print("bridge_server: runtime_profile 'fast' is deprecated; using 'fast_live'.")
             _FAST_PROFILE_DEPRECATED_WARNED = True
-    if value in {"fast_live", "normal"}:
+    if value in {"fast_live", "normal", "normal_neural"}:
         return value
     return RUNTIME_PROFILE_DEFAULT
 
@@ -2580,7 +2580,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     effective_spot = dict(request.spot)
     fast_spot_profile_summary: Optional[Dict[str, Any]] = None
     spot_street = _detect_spot_street(request.spot)
-    if runtime_profile == "normal":
+    is_normal_profile = runtime_profile in {"normal", "normal_neural"}
+    if is_normal_profile:
         raw_threshold = _to_float_or_none(effective_spot.get("all_in_threshold"))
         had_threshold = raw_threshold is not None
         threshold_base = float(raw_threshold) if had_threshold else min(max(SPOT_NORMAL_MIN_ALL_IN_THRESHOLD, 0.50), 0.99)
@@ -2590,7 +2591,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         effective_spot["all_in_threshold"] = clamped_threshold
         if (not had_threshold) or abs(clamped_threshold - threshold_base) > 1e-9:
             fast_spot_profile_summary = {
-                "profile": "normal",
+                "profile": runtime_profile,
                 "applied": True,
                 "changes": {
                     "all_in_threshold": {

@@ -67,6 +67,7 @@ UI tester:
 
 - `fast_live`: production candidate (bounded latency + stronger spot tuning)
 - `normal`: full-latency path for offline quality reference
+- `normal_neural`: placeholder profile for neural teaching/data collection (normal-like solve path, separately tagged)
 
 `fast` is deprecated and aliases to `fast_live`.
 
