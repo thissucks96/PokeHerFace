@@ -75,6 +75,10 @@ UI tester:
 .\tesseract_test.ps1
 ```
 
+UI hand export:
+- Use `Copy Hand Snapshot` (right panel) or right-click `Table State` overlay -> `Copy Hand Snapshot`.
+- Snapshot includes current state (cards/board/pot/commits/status/advice) plus current hand log lines.
+
 ## Runtime Profiles
 
 - `fast_live`: production candidate (bounded latency + stronger spot tuning)

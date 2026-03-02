@@ -355,6 +355,7 @@ $trkRaiseAmount = $null
 $lblRaiseAmountTitle = $null
 $lblRaiseAmountValue = $null
 $btnToggleVillainCards = $null
+$btnCopyHandSnapshot = $null
 $cmbVillainMode = $null
 $cmbVillainStyle = $null
 $lblCurrentPotValue = $null
@@ -398,6 +399,8 @@ $preparedNextBurnPile = @()
 $handResolved = $false
 $completedHandPrepared = $false
 $handCounter = 0
+$currentHandLogStartIndex = 0
+$uiLogEntryBuffer = New-Object System.Collections.Generic.List[object]
 $heroIsSmallBlind = $true
 $lastHandSummaryText = ""
 $showVillainCards = $false
@@ -5112,6 +5115,19 @@ $btnVillainActionMenu.BackColor = [System.Drawing.Color]::FromArgb(88, 56, 92)
 $advicePanel.Controls.Add($btnVillainActionMenu)
 $script:btnVillainActionMenu = $btnVillainActionMenu
 
+$btnCopyHandSnapshot = New-Object System.Windows.Forms.Button
+$btnCopyHandSnapshot.Text = "Copy Hand Snapshot"
+$btnCopyHandSnapshot.Location = New-Object System.Drawing.Point(18, 730)
+$btnCopyHandSnapshot.Size = New-Object System.Drawing.Size(210, 28)
+$btnCopyHandSnapshot.FlatStyle = "Flat"
+$btnCopyHandSnapshot.ForeColor = [System.Drawing.Color]::White
+$btnCopyHandSnapshot.BackColor = [System.Drawing.Color]::FromArgb(56, 82, 108)
+$btnCopyHandSnapshot.Add_Click({
+  Copy-CurrentHandSnapshotToClipboard
+}.GetNewClosure())
+$advicePanel.Controls.Add($btnCopyHandSnapshot)
+$script:btnCopyHandSnapshot = $btnCopyHandSnapshot
+
 $villainActionMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $btnVillainActionMenu.Add_Click({
   Show-VillainActionMenu
@@ -5432,14 +5448,16 @@ function Update-MainLayout {
   $cmbVillainStyle.Size = New-Object System.Drawing.Size($innerWidth, 24)
   $btnVillainActionMenu.Location = New-Object System.Drawing.Point(18, ($stateTopY + 376))
   $btnVillainActionMenu.Size = New-Object System.Drawing.Size($innerWidth, 28)
+  $btnCopyHandSnapshot.Location = New-Object System.Drawing.Point(18, ($stateTopY + 410))
+  $btnCopyHandSnapshot.Size = New-Object System.Drawing.Size($innerWidth, 28)
 
   $settleButtonWidth = [Math]::Max(84, [int](($innerWidth - $gap) / 2))
-  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stateTopY + 410))
+  $btnHeroWinsPot.Location = New-Object System.Drawing.Point(18, ($stateTopY + 444))
   $btnHeroWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
-  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stateTopY + 410))
+  $btnVillainWinsPot.Location = New-Object System.Drawing.Point(($btnHeroWinsPot.Right + $gap), ($stateTopY + 444))
   $btnVillainWinsPot.Size = New-Object System.Drawing.Size($settleButtonWidth, 26)
 
-  $detailTopY = [int]($btnVillainActionMenu.Bottom + 12)
+  $detailTopY = [int]($btnCopyHandSnapshot.Bottom + 12)
   $availableDetailHeight = [int]($advicePanel.ClientSize.Height - ($detailTopY + 10))
   $canShowDetail = ($availableDetailHeight -ge 100)
   $adviceMetaTitle.Visible = $canShowDetail
@@ -5465,7 +5483,7 @@ function Apply-UiPolish {
     $btnPick, $btnOnce, $btnRandomCard, $btnAutoStart, $btnAutoStop, $btnRunEngine, $btnNewHand, $btnRestart,
     $btnTargets, $btnResetRois, $btnSetHeroes, $btnQuickToggle, $btnRunFlop1, $btnRunFlop2, $btnRunFlop3,
     $btnRunTurn, $btnRunRiver, $btnRunFlopSet, $btnRunHero, $btnCheck, $btnFold, $btnRaise, $btnRaise25, $btnRaise50, $btnRaise100, $btnCall, $btnAllIn,
-    $btnToggleVillainCards, $btnVillainActionMenu
+    $btnToggleVillainCards, $btnVillainActionMenu, $btnCopyHandSnapshot
   )
   foreach ($btn in @($buttonList)) {
     if ($null -eq $btn -or $btn.IsDisposed) { continue }
@@ -5544,6 +5562,19 @@ function Write-Log {
 
   $stamp = (Get-Date).ToString("HH:mm:ss")
   $line = "[$stamp] $Message"
+  $entry = [pscustomobject]@{
+    ts = [DateTime]::UtcNow
+    line = [string]$line
+    type = [string]$Type
+    message = [string]$Message
+  }
+  [void]$script:uiLogEntryBuffer.Add($entry)
+  if ($script:uiLogEntryBuffer.Count -gt 12000) {
+    $script:uiLogEntryBuffer.RemoveAt(0)
+    if ($script:currentHandLogStartIndex -gt 0) {
+      $script:currentHandLogStartIndex = [int]([Math]::Max(0, $script:currentHandLogStartIndex - 1))
+    }
+  }
   Write-StyledLogLine -LineText $line -LineType $Type
   try {
     Add-Content -Path $uiLogTextPath -Value $line -Encoding UTF8
@@ -5571,6 +5602,107 @@ function Write-Log {
     Set-Content -Path $uiLogLatestPath -Value ($latest | ConvertTo-Json -Depth 5) -Encoding UTF8
   }
   catch {}
+}
+
+function Get-HandLogLinesFromCurrentHand {
+  $lines = @()
+  $count = [int]$script:uiLogEntryBuffer.Count
+  if ($count -le 0) {
+    return $lines
+  }
+  $start = [int]([Math]::Max(0, $script:currentHandLogStartIndex))
+  if ($start -ge $count) {
+    $start = [int]([Math]::Max(0, $count - 1))
+  }
+  for ($i = $start; $i -lt $count; $i++) {
+    $row = $script:uiLogEntryBuffer[$i]
+    if ($null -ne $row) {
+      $lines += [string]$row.line
+    }
+  }
+  return $lines
+}
+
+function Build-CurrentHandSnapshotText {
+  $street = Get-CurrentStreetName
+  $heroRole = if ([bool]$script:heroIsSmallBlind) { "SB / BTN" } else { "BB" }
+  $villainRole = if ([bool]$script:heroIsSmallBlind) { "BB" } else { "SB / BTN" }
+  $heroCardsNow = Get-HeroCardsText
+  $villainCardsNow = Get-VillainCardsText
+  $boardNow = Get-BoardTokensText
+  $burnNow = Get-BurnPileText
+  $legalHero = @((Get-HeroLegalActionTokens) | ForEach-Object { ([string]$_).ToUpperInvariant() })
+  $legalVillain = @((Get-VillainLegalActionTokens) | ForEach-Object { ([string]$_).ToUpperInvariant() })
+  $adviceRows = @()
+  foreach ($row in @($script:lastAdviceWeightedRows)) {
+    if ($null -eq $row) { continue }
+    $action = [string]$row.action
+    $freq = [double]($row.frequency)
+    if ($row.PSObject.Properties.Name -contains "amount" -and $null -ne $row.amount -and [string]$row.amount -ne "") {
+      $adviceRows += ("{0}:{1} ({2:P0})" -f $action, [int]$row.amount, $freq)
+    }
+    else {
+      $adviceRows += ("{0} ({1:P0})" -f $action, $freq)
+    }
+  }
+  $handLog = Get-HandLogLinesFromCurrentHand
+  $snapshotLines = @(
+    "=== POKER HAND SNAPSHOT ==="
+    ("Generated (UTC): {0}" -f [DateTime]::UtcNow.ToString("o"))
+    ("Session: {0}" -f [string]$uiSessionId)
+    ("Hand #: {0}" -f [int]$script:handCounter)
+    ""
+    "STATE"
+    ("Street: {0}" -f $street)
+    ("Hand Resolved: {0}" -f [bool]$script:handResolved)
+    ("Hero Role: {0}" -f $heroRole)
+    ("Villain Role: {0}" -f $villainRole)
+    ("Hero Cards: {0}" -f $heroCardsNow)
+    ("Villain Cards (actual): {0}" -f $villainCardsNow)
+    ("Villain Cards (display): {0}" -f (Get-VisibleVillainCardsText))
+    ("Board: {0}" -f $boardNow)
+    ("Burn Pile: {0}" -f $burnNow)
+    ("Pot: {0}" -f [int]$script:currentPotAmount)
+    ("Hero Chips: {0}" -f [int]$script:currentHeroChips)
+    ("Villain Chips: {0}" -f [int]$script:currentVillainChips)
+    ("Facing Bet (Hero): {0}" -f [int]$script:currentFacingBetAmount)
+    ("Hero Street Commit: {0}" -f [int]$script:currentHeroStreetCommit)
+    ("Villain Street Commit: {0}" -f [int]$script:currentVillainStreetCommit)
+    ("Last Hero Action: {0}" -f [string]$script:lastHeroAction)
+    ("Last Villain Action: {0}" -f [string]$script:lastVillainAction)
+    ("Table Status: {0}" -f [string]$script:lblTableStatusValue.Text)
+    ("Hero Legal Actions: {0}" -f $(if ($legalHero.Count -gt 0) { $legalHero -join ", " } else { "(none)" }))
+    ("Villain Legal Actions: {0}" -f $(if ($legalVillain.Count -gt 0) { $legalVillain -join ", " } else { "(none)" }))
+    ("Villain Mode/Style: {0}/{1}" -f [string]$script:villainMode, [string]$script:villainStyle)
+    ""
+    "ADVICE"
+    ("Primary: {0}" -f [string]$script:advicePrimary)
+    ("Detail: {0}" -f [string]$script:adviceSecondary)
+    ("Weighted Actions: {0}" -f $(if ($adviceRows.Count -gt 0) { $adviceRows -join " | " } else { "(none)" }))
+    ""
+    "HAND LOG"
+  )
+  if ($handLog.Count -gt 0) {
+    $snapshotLines += $handLog
+  }
+  else {
+    $snapshotLines += "(no hand log lines recorded yet)"
+  }
+  return ($snapshotLines -join "`r`n")
+}
+
+function Copy-CurrentHandSnapshotToClipboard {
+  try {
+    $snapshot = Build-CurrentHandSnapshotText
+    [System.Windows.Forms.Clipboard]::SetText([string]$snapshot)
+    Write-Log "Copied hand snapshot to clipboard." -Type "copy_hand_snapshot" -Data @{
+      hand_index = [int]$script:handCounter
+      log_lines = [int](Get-HandLogLinesFromCurrentHand).Count
+    }
+  }
+  catch {
+    Write-Log ("Copy hand snapshot failed: {0}" -f $_.Exception.Message) -Type "copy_hand_snapshot_error"
+  }
 }
 
 function Initialize-SessionLogs {
@@ -7256,6 +7388,13 @@ function New-TableStateOverlayContextMenu {
     Request-NewHandCycle
   }.GetNewClosure())
   [void]$menu.Items.Add($itemNewHand)
+  $itemCopy = New-Object System.Windows.Forms.ToolStripMenuItem
+  $itemCopy.Text = "Copy Hand Snapshot"
+  $itemCopy.Add_Click({
+    param($sender, $e)
+    Copy-CurrentHandSnapshotToClipboard
+  }.GetNewClosure())
+  [void]$menu.Items.Add($itemCopy)
   return $menu
 }
 
@@ -9601,6 +9740,7 @@ function Reset-NewHandState {
 }
 
 function Start-NewHandPreserveChips {
+  $script:currentHandLogStartIndex = [int]$script:uiLogEntryBuffer.Count
   $preservedChips = [int]$script:currentHeroChips
   $preservedVillainChips = [int]$script:currentVillainChips
   Reset-NewHandState
