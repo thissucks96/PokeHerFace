@@ -238,6 +238,35 @@ def _normalize_runtime_profile(profile: str) -> str:
     return "fast_live"
 
 
+def _resolve_profile_timeout(runtime_profile: str, args: argparse.Namespace) -> int:
+    profile = str(runtime_profile or "").strip().lower()
+    explicit_map = {
+        "fast_live": args.timeout_fast_live,
+        "normal": args.timeout_normal,
+        "normal_neural": args.timeout_normal_neural,
+        "shark_classic": args.timeout_shark_classic,
+    }
+    selected = explicit_map.get(profile)
+    if selected is None or int(selected) <= 0:
+        return int(args.timeout)
+    return int(selected)
+
+
+def _classify_error(error_msg: str) -> str:
+    text = str(error_msg or "").lower()
+    if "422" in text:
+        return "422_validation"
+    if "invalid unordered_map" in text or "invalid unordered_map<k, t> key" in text:
+        return "shark_parse_invalid_key"
+    if "504" in text or "gateway timeout" in text or "timed out" in text:
+        return "504_timeout"
+    if "500" in text or "internal server error" in text:
+        return "500_internal"
+    if "connection refused" in text or "max retries exceeded" in text:
+        return "bridge_unreachable"
+    return "other"
+
+
 def _extract_action_map_and_result(resp_json: Dict[str, Any]) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
     result_block = resp_json.get("result", {}) or {}
     action_map = result_block.get("root_actions", [])
@@ -315,6 +344,10 @@ def main() -> int:
     parser.add_argument("--preset", default="local_qwen3_coder_30b")
     parser.add_argument("--runtime-profile", default="fast_live")
     parser.add_argument("--timeout", type=int, default=60, help="Bridge request timeout sec")
+    parser.add_argument("--timeout-fast-live", type=int, default=None, help="Optional override timeout for fast_live profile")
+    parser.add_argument("--timeout-normal", type=int, default=None, help="Optional override timeout for normal profile")
+    parser.add_argument("--timeout-normal-neural", type=int, default=None, help="Optional override timeout for normal_neural profile")
+    parser.add_argument("--timeout-shark-classic", type=int, default=None, help="Optional override timeout for shark_classic profile")
     parser.add_argument("--starting-stack-bb", type=int, default=100, help="Starting effective stack in big blinds")
     parser.add_argument("--starting-pot-bb", type=int, default=6, help="Starting pot size in big blinds at flop")
     parser.add_argument("--minimum-bet-bb", type=int, default=2, help="Minimum bet size in big blinds")
@@ -341,6 +374,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=None, help="Optional RNG seed for reproducible A/B runs")
     args = parser.parse_args()
     args.runtime_profile = _normalize_runtime_profile(args.runtime_profile)
+    effective_timeout_sec = _resolve_profile_timeout(args.runtime_profile, args)
     if args.seed is not None:
         random.seed(int(args.seed))
 
@@ -375,6 +409,8 @@ def main() -> int:
         "compress_strategy": not args.disable_compress_strategy,
         "bet_sizing": _aggressive_bet_sizing(args.runtime_profile) if aggressive_mode else _scenario_bet_sizing(args.runtime_profile),
         "seed": args.seed,
+        "timeout_sec_default": int(args.timeout),
+        "timeout_sec_effective": int(effective_timeout_sec),
     }
 
     results = []
@@ -385,6 +421,9 @@ def main() -> int:
     total_latency_by_street = {"flop": [], "turn": [], "river": []}
     action_counts_by_street = {"flop": {}, "turn": {}, "river": {}}
     strategy_source_counts = {}
+    error_counts = {}
+    error_counts_by_street = {"flop": {}, "turn": {}, "river": {}}
+    hands_with_error = 0
     all_in_count = 0
     all_in_streets = []
     win_loss = {"win": 0, "loss": 0, "tie": 0}
@@ -450,7 +489,7 @@ def main() -> int:
                 )
                 villain_payload = {
                     "spot": villain_spot,
-                    "timeout_sec": args.timeout,
+                    "timeout_sec": effective_timeout_sec,
                     "quiet": True,
                     "auto_select_best": True,
                     "ev_keep_margin": 0.001,
@@ -459,7 +498,7 @@ def main() -> int:
                     "runtime_profile": args.runtime_profile,
                 }
                 try:
-                    r_v = requests.post(args.endpoint, json=villain_payload, timeout=args.timeout + 10)
+                    r_v = requests.post(args.endpoint, json=villain_payload, timeout=effective_timeout_sec + 10)
                     r_v.raise_for_status()
                     villain_resp = r_v.json()
                     _artifact_write(
@@ -506,7 +545,7 @@ def main() -> int:
             
             payload = {
                 "spot": spot,
-                "timeout_sec": args.timeout,
+                "timeout_sec": effective_timeout_sec,
                 "quiet": True,
                 "auto_select_best": True,
                 "ev_keep_margin": 0.001,
@@ -518,7 +557,7 @@ def main() -> int:
             t_start = time.perf_counter()
             resp_json: Dict[str, Any] = {}
             try:
-                r = requests.post(args.endpoint, json=payload, timeout=args.timeout + 10)
+                r = requests.post(args.endpoint, json=payload, timeout=effective_timeout_sec + 10)
                 r.raise_for_status()
                 resp_json = r.json()
                 _artifact_write(
@@ -531,7 +570,13 @@ def main() -> int:
                 error_msg = str(e)
                 if isinstance(e, RequestException) and e.response is not None:
                     error_msg += f" | Body: {e.response.text}"
-                hand_record["streets"].append({"street": street_name, "error": error_msg}) # type: ignore
+                error_type = _classify_error(error_msg)
+                error_counts[error_type] = int(error_counts.get(error_type, 0)) + 1
+                street_bucket = error_counts_by_street.get(street_name, {})
+                street_bucket[error_type] = int(street_bucket.get(error_type, 0)) + 1
+                error_counts_by_street[street_name] = street_bucket
+                hands_with_error += 1
+                hand_record["streets"].append({"street": street_name, "error": error_msg, "error_type": error_type}) # type: ignore
                 active = False
                 break
             t_elapsed = time.perf_counter() - t_start
@@ -680,13 +725,19 @@ def main() -> int:
         "all_in_distribution": {s: all_in_streets.count(s) for s in set(all_in_streets)},
         "strategy_sources": strategy_source_counts,
         "avg_latency": {s: (statistics.mean(times) if times else 0.0) for s, times in total_latency_by_street.items()},
-        "actions_by_street": action_counts_by_street
+        "actions_by_street": action_counts_by_street,
+        "error_counts": error_counts,
+        "error_counts_by_street": error_counts_by_street,
+        "hands_with_error": hands_with_error,
+        "runtime_profile": args.runtime_profile,
+        "timeout_sec_default": int(args.timeout),
+        "timeout_sec_effective": int(effective_timeout_sec),
     }
 
     out_path = Path(args.output).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({
-        "schema_version": "stateful_sim_report.v2",
+        "schema_version": "stateful_sim_report.v3",
         "scenario": scenario,
         "aggregate": aggs,
         "hands": results,
