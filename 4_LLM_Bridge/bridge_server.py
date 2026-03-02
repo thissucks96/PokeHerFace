@@ -1954,7 +1954,7 @@ def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> Opt
         return None
     for segment in reversed(path_value.split("/")):
         token = segment.strip()
-        if ":bet:" not in token:
+        if ":bet:" not in token and ":raise:" not in token:
             continue
         try:
             return int(float(token.rsplit(":", 1)[1]))
@@ -1966,13 +1966,16 @@ def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> Opt
 def _build_fast_live_active_node_flop_fallback_policy(
     spot: Dict[str, Any],
 ) -> tuple[list[str], str, list[Dict[str, Any]]]:
+    facing_bet = _extract_spot_facing_bet(spot)
+    if facing_bet <= 0.0:
+        allowed_actions = _fallback_actions_from_spot(spot)
+        chosen_action = _choose_fast_failover_action(spot, allowed_actions)
+        root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+        return allowed_actions, chosen_action, root_actions
+
     minimum_bet = float(_to_float_or_none(spot.get("minimum_bet")) or 1.0)
     starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or (minimum_bet * 2.0))
-    active_node_path = str(spot.get("active_node_path", "")).strip()
-    bet_amount = float(
-        _extract_last_bet_amount_from_active_node_path(active_node_path)
-        or max(int(minimum_bet), int(round(starting_pot * 0.5)))
-    )
+    bet_amount = float(max(facing_bet, minimum_bet))
     denominator = max(1.0, starting_pot + bet_amount)
     mdf = max(0.0, min(1.0, starting_pot / denominator))
     texture = _extract_board_texture_flags(spot)
@@ -2402,10 +2405,12 @@ def _build_fast_failover_response(
     neural_error: Optional[str] = None
     neural_applied = False
     active_node_path = str(request.spot.get("active_node_path", "")).strip()
+    active_node_facing_bet = _extract_spot_facing_bet(request.spot)
     use_active_node_flop_policy = (
         runtime_profile == "fast_live"
         and _detect_spot_street(request.spot) == "flop"
         and bool(active_node_path)
+        and active_node_facing_bet > 0.0
     )
     if use_active_node_flop_policy:
         allowed_actions, chosen_action, root_actions = _build_fast_live_active_node_flop_fallback_policy(request.spot)
