@@ -97,6 +97,7 @@ UI hand export:
 `fast_live` now supports a baseline race mode:
 - runs `normal` and `fast_live` baseline solves in parallel
 - uses the first successful result (with explicit priority when `normal` wins)
+- only on configured streets (`FAST_LIVE_NORMAL_RACE_STREETS`, default `turn,river`)
 - capped by `FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC` (default `10`)
 
 `fast_live` active-node sizing now keeps a small subset (not only one size) on the active street:

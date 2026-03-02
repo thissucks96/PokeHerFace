@@ -275,6 +275,16 @@ FAST_LIVE_NORMAL_RACE_ENABLED = os.environ.get("FAST_LIVE_NORMAL_RACE_ENABLED", 
     "false",
     "False",
 }
+FAST_LIVE_NORMAL_RACE_STREETS_RAW = str(
+    os.environ.get("FAST_LIVE_NORMAL_RACE_STREETS", "turn,river")
+).strip()
+FAST_LIVE_NORMAL_RACE_STREETS = {
+    token.strip().lower()
+    for token in FAST_LIVE_NORMAL_RACE_STREETS_RAW.split(",")
+    if token.strip().lower() in {"flop", "turn", "river"}
+}
+if not FAST_LIVE_NORMAL_RACE_STREETS:
+    FAST_LIVE_NORMAL_RACE_STREETS = {"turn", "river"}
 try:
     FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC = int(os.environ.get("FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC", "10"))
 except ValueError:
@@ -3397,6 +3407,8 @@ def health() -> Dict[str, Any]:
         "fast_live_force_root_only": FAST_LIVE_FORCE_ROOT_ONLY,
         "fast_live_skip_llm_stage": FAST_LIVE_SKIP_LLM_STAGE,
         "fast_live_normal_race_enabled": FAST_LIVE_NORMAL_RACE_ENABLED,
+        "fast_live_normal_race_streets_raw": FAST_LIVE_NORMAL_RACE_STREETS_RAW,
+        "fast_live_normal_race_streets": sorted(FAST_LIVE_NORMAL_RACE_STREETS),
         "fast_live_normal_race_timeout_sec": FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC,
         "fast_live_flop_cbet75_bias_enabled": FAST_LIVE_FLOP_CBET75_BIAS_ENABLED,
         "fast_live_flop_cbet75_pot_min": FAST_LIVE_FLOP_CBET75_POT_MIN,
@@ -3623,7 +3635,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     baseline_result: Dict[str, Any]
     baseline_solver_time = 0.0
     try:
-        if runtime_profile == "fast_live" and FAST_LIVE_NORMAL_RACE_ENABLED:
+        if (
+            runtime_profile == "fast_live"
+            and FAST_LIVE_NORMAL_RACE_ENABLED
+            and spot_street in FAST_LIVE_NORMAL_RACE_STREETS
+        ):
             race = _run_fast_live_normal_baseline_race(
                 shark_cli=shark_cli,
                 request_spot=request.spot,
