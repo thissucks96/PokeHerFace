@@ -104,6 +104,12 @@ UI hand export:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
 - `FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE` (default `0`; keep off for lower flop latency)
+- targeted active-node flop reduction (applies only on flop facing-bet nodes):
+  - `FAST_LIVE_ACTIVE_NODE_FLOP_FORCE_REDUCTION` (default `1`)
+  - `FAST_LIVE_ACTIVE_NODE_FLOP_BET_SIZES` (default `0.5,1.0`)
+  - `FAST_LIVE_ACTIVE_NODE_FLOP_RAISE_SIZES` (default `1.0`)
+  - `FAST_LIVE_ACTIVE_NODE_FLOP_MAX_ITERATIONS` (default `2`)
+  - `FAST_LIVE_ACTIVE_NODE_FLOP_MAX_RAISE_CAP` (default `3`)
 - baseline-path river tree controls (non-fallback tuning lever):
   - `FAST_LIVE_RIVER_BET_SIZES` (default empty -> inherits `FAST_LIVE_SPOT_BET_SIZES`)
   - `FAST_LIVE_RIVER_RAISE_SIZES` (default empty -> inherits `FAST_LIVE_SPOT_RAISE_SIZES`)
