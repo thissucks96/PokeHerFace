@@ -537,10 +537,90 @@ app = FastAPI(title="PokerBot Bridge", version="0.1.0")
 
 
 def _validate_spot(spot: Dict[str, Any]) -> None:
-    required = ("hero_range", "villain_range", "board")
+    required = (
+        "hero_range",
+        "villain_range",
+        "board",
+        "in_position_player",
+        "starting_stack",
+        "starting_pot",
+        "minimum_bet",
+        "all_in_threshold",
+        "iterations",
+        "min_exploitability",
+        "thread_count",
+        "remove_donk_bets",
+        "raise_cap",
+        "compress_strategy",
+        "bet_sizing",
+        "active_node_path",
+    )
     missing = [k for k in required if k not in spot]
     if missing:
         raise HTTPException(status_code=400, detail=f"spot payload missing required keys: {missing}")
+
+    if not isinstance(spot.get("hero_range"), str) or not str(spot.get("hero_range")).strip():
+        raise HTTPException(status_code=400, detail="spot.hero_range must be a non-empty string")
+    if not isinstance(spot.get("villain_range"), str) or not str(spot.get("villain_range")).strip():
+        raise HTTPException(status_code=400, detail="spot.villain_range must be a non-empty string")
+    if not isinstance(spot.get("board"), list):
+        raise HTTPException(status_code=400, detail="spot.board must be a list")
+    board_len = len(spot.get("board", []))
+    if board_len not in {0, 3, 4, 5}:
+        raise HTTPException(status_code=400, detail="spot.board must contain 0 (preflop) or 3-5 cards")
+    if not isinstance(spot.get("in_position_player"), int) or isinstance(spot.get("in_position_player"), bool):
+        raise HTTPException(status_code=400, detail="spot.in_position_player must be an integer (1 or 2)")
+    if int(spot.get("in_position_player")) not in {1, 2}:
+        raise HTTPException(status_code=400, detail="spot.in_position_player must be 1 or 2")
+
+    int_fields = ("starting_stack", "starting_pot", "minimum_bet", "iterations", "thread_count", "raise_cap")
+    for field in int_fields:
+        value = spot.get(field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"spot.{field} must be an integer")
+    if int(spot.get("starting_stack", 0)) <= 0:
+        raise HTTPException(status_code=400, detail="spot.starting_stack must be > 0")
+    if int(spot.get("starting_pot", 0)) <= 0:
+        raise HTTPException(status_code=400, detail="spot.starting_pot must be > 0")
+    if int(spot.get("minimum_bet", 0)) <= 0:
+        raise HTTPException(status_code=400, detail="spot.minimum_bet must be > 0")
+    if int(spot.get("iterations", 0)) <= 0:
+        raise HTTPException(status_code=400, detail="spot.iterations must be > 0")
+    if int(spot.get("raise_cap", 0)) <= 0:
+        raise HTTPException(status_code=400, detail="spot.raise_cap must be > 0")
+
+    numeric_fields = ("all_in_threshold", "min_exploitability")
+    for field in numeric_fields:
+        value = spot.get(field)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise HTTPException(status_code=400, detail=f"spot.{field} must be a number")
+    all_in_threshold = float(spot.get("all_in_threshold"))
+    if all_in_threshold <= 0.0 or all_in_threshold > 1.0:
+        raise HTTPException(status_code=400, detail="spot.all_in_threshold must be in (0, 1]")
+
+    bool_fields = ("remove_donk_bets", "compress_strategy")
+    for field in bool_fields:
+        if not isinstance(spot.get(field), bool):
+            raise HTTPException(status_code=400, detail=f"spot.{field} must be a boolean")
+
+    if not isinstance(spot.get("active_node_path"), str):
+        raise HTTPException(status_code=400, detail="spot.active_node_path must be a string")
+    if not isinstance(spot.get("bet_sizing"), dict):
+        raise HTTPException(status_code=400, detail="spot.bet_sizing must be an object")
+    for street in ("flop", "turn", "river"):
+        street_cfg = spot["bet_sizing"].get(street)
+        if not isinstance(street_cfg, dict):
+            raise HTTPException(status_code=400, detail=f"spot.bet_sizing.{street} must be an object")
+        for key in ("bet_sizes", "raise_sizes"):
+            values = street_cfg.get(key)
+            if not isinstance(values, list):
+                raise HTTPException(status_code=400, detail=f"spot.bet_sizing.{street}.{key} must be a list")
+            for idx, item in enumerate(values):
+                if not isinstance(item, (int, float)) or isinstance(item, bool):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"spot.bet_sizing.{street}.{key}[{idx}] must be numeric",
+                    )
 
 
 def _resolve_shark_cli() -> Path:
@@ -1038,6 +1118,49 @@ def _extract_allowed_root_actions(result_payload: Dict[str, Any]) -> list[str]:
         normalized = _normalize_action_summary_tokens(active_actions)
         if normalized:
             return normalized
+    active_path = str(result_payload.get("active_node_path", "")).strip()
+    if active_path:
+        exact_catalog_actions: list[str] = []
+        nearest_catalog_actions: list[str] = []
+        target_bet_amount = _extract_last_bet_amount_from_active_node_path(active_path)
+        prefix = ""
+        if target_bet_amount is not None:
+            marker = f":bet:{target_bet_amount}"
+            if marker in active_path:
+                prefix = active_path[: active_path.rfind(marker)] + ":bet:"
+        nearest_amount_distance: Optional[int] = None
+        for entry in _extract_node_lock_catalog(result_payload):
+            node_id = str(entry.get("node_id", "")).strip()
+            actions = entry.get("actions", [])
+            if node_id == active_path:
+                exact_catalog_actions = [
+                    token
+                    for token in (_normalize_action_token(str(a).strip().lower()) for a in actions)
+                    if token
+                ]
+                break
+            if (
+                target_bet_amount is None
+                or not prefix
+                or not node_id.startswith(prefix)
+                or ":bet:" not in node_id
+            ):
+                continue
+            node_amount = _extract_last_bet_amount_from_active_node_path(node_id)
+            if node_amount is None:
+                continue
+            distance = abs(int(node_amount) - int(target_bet_amount))
+            if nearest_amount_distance is None or distance < nearest_amount_distance:
+                nearest_amount_distance = distance
+                nearest_catalog_actions = [
+                    token
+                    for token in (_normalize_action_token(str(a).strip().lower()) for a in actions)
+                    if token
+                ]
+        if exact_catalog_actions:
+            return exact_catalog_actions
+        if nearest_catalog_actions:
+            return nearest_catalog_actions
     return _normalize_action_summary_tokens(result_payload.get("root_actions", []))
 
 
@@ -2515,11 +2638,19 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             selection_reason="fast_profile_turn_lookup_only",
             multi_node_policy_reason="fast_turn_lookup_only",
         )
+    active_node_path = str(request.spot.get("active_node_path", "")).strip()
+    active_node_facing_bet = (
+        _extract_last_bet_amount_from_active_node_path(active_node_path)
+        if active_node_path
+        else None
+    )
+    critical_active_node_spot = bool(active_node_facing_bet and active_node_facing_bet > 0)
     if (
         runtime_profile == "fast_live"
         and spot_street == "flop"
         and FAST_LIVE_ACTIVE_NODE_FLOP_LOOKUP_ONLY
-        and str(request.spot.get("active_node_path", "")).strip()
+        and active_node_path
+        and not critical_active_node_spot
     ):
         total_bridge_time = time.perf_counter() - bridge_started
         _record_canary_observation(

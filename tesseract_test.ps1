@@ -3097,7 +3097,9 @@ function Build-EngineSpotPayload {
   $spot.starting_stack = [int]$effectiveStack
   $spot.minimum_bet = [int]$stakes.big_blind
   $spot.starting_pot = [int]$effectivePot
+  $spot.in_position_player = if ([bool]$script:heroIsSmallBlind) { 1 } else { 2 }
   $spot.all_in_threshold = [double]([Math]::Min([double]$engineAllInThreshold, [double]$adaptiveSizing.all_in_threshold))
+  $spot.min_exploitability = -1.0
   $spot.raise_cap = [int]([Math]::Max(1, [Math]::Min([int]$engineRaiseCap, [int]$adaptiveSizing.raise_cap)))
   if ($null -ne $adaptiveSizing.bet_sizing) {
     $spot.bet_sizing = $adaptiveSizing.bet_sizing
@@ -3144,13 +3146,53 @@ function Build-EngineSpotPayload {
       $spot.meta.hero_combo_range = [string]$heroComboRange
     }
   }
+  if (-not ($spot.PSObject.Properties.Name -contains "active_node_path")) {
+    $spot | Add-Member -NotePropertyName active_node_path -NotePropertyValue "" -Force
+  } else {
+    $spot.active_node_path = ""
+  }
   if ($useActiveNode) {
-    if (-not ($spot.PSObject.Properties.Name -contains "active_node_path")) {
-      $spot | Add-Member -NotePropertyName active_node_path -NotePropertyValue "" -Force
-    }
     $targetNodePath = ""
     if ($heroFacingBetNode) {
-      $targetNodePath = ("root/p1:check/p2:bet:{0}" -f [int]$state.facing_bet)
+      $targetBet = [int]$state.facing_bet
+      $candidateAmounts = New-Object System.Collections.Generic.List[int]
+      if ($targetBet -gt 0) { [void]$candidateAmounts.Add($targetBet) }
+      if ([int]$effectiveStack -gt 0) { [void]$candidateAmounts.Add([int]$effectiveStack) }
+      $streetKeyForCandidates = switch ($BoardCards.Count) {
+        3 { "flop" }
+        4 { "turn" }
+        5 { "river" }
+        default { "" }
+      }
+      if ($streetKeyForCandidates -and ($spot.PSObject.Properties.Name -contains "bet_sizing") -and $null -ne $spot.bet_sizing) {
+        $streetSizingProp = $spot.bet_sizing.PSObject.Properties[$streetKeyForCandidates]
+        if ($null -ne $streetSizingProp -and $null -ne $streetSizingProp.Value) {
+          foreach ($ratio in @($streetSizingProp.Value.bet_sizes)) {
+            try {
+              $amt = [int]([Math]::Round([double]$effectivePot * [double]$ratio, 0, [MidpointRounding]::AwayFromZero))
+            } catch {
+              continue
+            }
+            $amt = [int]([Math]::Max([int]$spot.minimum_bet, $amt))
+            $amt = [int]([Math]::Min([int]$effectiveStack, $amt))
+            if ($amt -gt 0) { [void]$candidateAmounts.Add($amt) }
+          }
+        }
+      }
+      $normalizedCandidates = @($candidateAmounts | Where-Object { [int]$_ -gt 0 } | Sort-Object -Unique)
+      if ($normalizedCandidates.Count -gt 0) {
+        $closest = [int]$normalizedCandidates[0]
+        $closestDist = [Math]::Abs([int]$closest - [int]$targetBet)
+        foreach ($c in $normalizedCandidates) {
+          $dist = [Math]::Abs([int]$c - [int]$targetBet)
+          if ($dist -lt $closestDist -or ($dist -eq $closestDist -and [int]$c -lt [int]$closest)) {
+            $closest = [int]$c
+            $closestDist = $dist
+          }
+        }
+        $targetBet = [int]$closest
+      }
+      $targetNodePath = ("root/p1:check/p2:bet:{0}" -f [int]$targetBet)
     }
     elseif ($heroIpCheckedToNode) {
       $targetNodePath = "root/p1:check"

@@ -13,6 +13,9 @@ Heads-up poker engine workspace:
 - `normal` profile is stronger in some spots but can stall on high-complexity nodes.
 - OCR/screen capture is currently optional and can be disabled for manual-state testing.
 - Neural path is available, but default use is shadow/controlled promotion.
+- Bridge enforces a full `spot` contract before solve (all major Shark fields required).
+- Live payloads now set dynamic `in_position_player` and always include `active_node_path`.
+- Active-node facing-bet requests now canonicalize bet amount to nearest legal tree size.
 
 ## Project Layout
 
@@ -87,4 +90,3 @@ Use shadow first for validation; promote only after agreement/latency gates are 
 2. Run side-by-side `fast_live` vs `normal` with fair timeout budgets for quality comparison.
 3. Expand neural shadow evaluation and promote selectively where safe.
 4. Revisit GPU offload for solver hot loops after CPU/routing refinement plateaus.
-
