@@ -110,6 +110,13 @@ UI hand export:
 - `FAST_LIVE_FLOP_CBET75_TARGET_RATIO` (default `0.75`)
 - `FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO` / `FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO` (defaults `0.60` / `0.90`)
 - `FAST_LIVE_FLOP_CBET75_BOARD_CLASSES` (default `two-tone|disconnected,rainbow|disconnected,rainbow|connected`)
+- weighted mix for targeted flop fallback buckets:
+  - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET75` (default `0.70`)
+  - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_BET33` (default `0.20`)
+  - `FAST_LIVE_FLOP_CBET_MIX_WEIGHT_CHECK` (default `0.10`)
+- fallback telemetry now includes:
+  - `metrics.fast_live_fallback_bucket_id`
+  - `metrics.fast_live_flop_cbet_mix_applied`
 
 `normal` no longer silently auto-overrides to `fast_live` postflop unless explicitly enabled:
 - `ENGINE_ALLOW_NORMAL_POSTFLOP_OVERRIDE=1`
