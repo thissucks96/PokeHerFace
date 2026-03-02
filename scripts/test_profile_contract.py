@@ -26,7 +26,7 @@ EXPECTED_BET_AMOUNTS = {
 
 def _build_spot(board: List[str]) -> Dict[str, Any]:
     return {
-        "hero_range": "JJ",
+        "hero_range": "55+,A2s+,K7s+,Q8s+,J8s+,T8s+,97s+,87s,76s,A9o+,KTo+,QJo",
         "villain_range": "33+,A2s+,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,75s+,64s+,A5o+,K9o+,Q9o+,J9o+,T9o",
         "board": list(board),
         "in_position_player": 1,
