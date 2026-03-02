@@ -135,6 +135,11 @@ python scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
 - `run_stateful_sim.py` now supports:
   - `--shark-classic-reference`: constrained Shark-contract reference setup (smaller stack/range for reliable fidelity runs)
   - early `complexity_guard_skip` labeling for high-complexity non-reference `shark_classic` flop spots (can be disabled with `--disable-complexity-guard`)
+- Bridge now has an optional shark-classic complexity guard for direct `/solve` calls:
+  - `SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED=1` (default on)
+  - `SHARK_CLASSIC_GUARD_MIN_STACK=80`
+  - `SHARK_CLASSIC_GUARD_MIN_VILLAIN_RANGE_WIDTH=20`
+  - `SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC=180`
 
 ## Next Best Steps
 
