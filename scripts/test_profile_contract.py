@@ -40,6 +40,7 @@ def _build_spot(board: List[str]) -> Dict[str, Any]:
         "remove_donk_bets": True,
         "raise_cap": 3,
         "compress_strategy": True,
+        "active_node_path": "",
         "bet_sizing": json.loads(json.dumps(EXPECTED_SHARK_CLASSIC_SIZING)),
     }
 
@@ -152,4 +153,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
