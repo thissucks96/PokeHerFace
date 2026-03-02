@@ -103,6 +103,14 @@ UI hand export:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
 
+`fast_live` failover now exposes multiple sized fallback actions (instead of only min-size), then applies a targeted flop c-bet bias in known disagreement buckets:
+- `FAST_FAILOVER_MAX_SIZED_ACTIONS` (default `3`)
+- `FAST_LIVE_FLOP_CBET75_BIAS_ENABLED` (default `1`)
+- `FAST_LIVE_FLOP_CBET75_POT_MIN` / `FAST_LIVE_FLOP_CBET75_POT_MAX` (defaults `10` / `20`)
+- `FAST_LIVE_FLOP_CBET75_TARGET_RATIO` (default `0.75`)
+- `FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO` / `FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO` (defaults `0.60` / `0.90`)
+- `FAST_LIVE_FLOP_CBET75_BOARD_CLASSES` (default `two-tone|disconnected,rainbow|disconnected,rainbow|connected`)
+
 `normal` no longer silently auto-overrides to `fast_live` postflop unless explicitly enabled:
 - `ENGINE_ALLOW_NORMAL_POSTFLOP_OVERRIDE=1`
 

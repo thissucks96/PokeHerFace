@@ -279,6 +279,45 @@ except ValueError:
     FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC = 10
 if FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC < 1:
     FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC = 1
+FAST_LIVE_FLOP_CBET75_BIAS_ENABLED = os.environ.get("FAST_LIVE_FLOP_CBET75_BIAS_ENABLED", "1").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+try:
+    FAST_LIVE_FLOP_CBET75_POT_MIN = float(os.environ.get("FAST_LIVE_FLOP_CBET75_POT_MIN", "10"))
+except ValueError:
+    FAST_LIVE_FLOP_CBET75_POT_MIN = 10.0
+try:
+    FAST_LIVE_FLOP_CBET75_POT_MAX = float(os.environ.get("FAST_LIVE_FLOP_CBET75_POT_MAX", "20"))
+except ValueError:
+    FAST_LIVE_FLOP_CBET75_POT_MAX = 20.0
+try:
+    FAST_LIVE_FLOP_CBET75_TARGET_RATIO = float(os.environ.get("FAST_LIVE_FLOP_CBET75_TARGET_RATIO", "0.75"))
+except ValueError:
+    FAST_LIVE_FLOP_CBET75_TARGET_RATIO = 0.75
+try:
+    FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO = float(os.environ.get("FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO", "0.60"))
+except ValueError:
+    FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO = 0.60
+try:
+    FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO = float(os.environ.get("FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO", "0.90"))
+except ValueError:
+    FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO = 0.90
+FAST_LIVE_FLOP_CBET75_BOARD_CLASSES_RAW = os.environ.get(
+    "FAST_LIVE_FLOP_CBET75_BOARD_CLASSES",
+    "two-tone|disconnected,rainbow|disconnected,rainbow|connected",
+)
+FAST_LIVE_FLOP_CBET75_BOARD_CLASSES = {
+    token.strip().lower()
+    for token in str(FAST_LIVE_FLOP_CBET75_BOARD_CLASSES_RAW or "").split(",")
+    if token.strip()
+}
+try:
+    FAST_FAILOVER_MAX_SIZED_ACTIONS = int(os.environ.get("FAST_FAILOVER_MAX_SIZED_ACTIONS", "3"))
+except ValueError:
+    FAST_FAILOVER_MAX_SIZED_ACTIONS = 3
+FAST_FAILOVER_MAX_SIZED_ACTIONS = max(1, FAST_FAILOVER_MAX_SIZED_ACTIONS)
 try:
     NORMAL_BASELINE_TIMEOUT_SEC = int(os.environ.get("NORMAL_BASELINE_TIMEOUT_SEC", "900"))
 except ValueError:
@@ -1971,12 +2010,20 @@ def _fallback_actions_from_spot(spot: Dict[str, Any]) -> list[str]:
             action_base = "raise" if facing_bet > 0.0 else "bet"
             sizes = street_cfg.get(size_key, [])
             if isinstance(sizes, list):
-                numeric_sizes = [float(x) for x in sizes if isinstance(x, (int, float)) and float(x) > 0.0]
-                if numeric_sizes:
+                numeric_sizes = sorted(
+                    {
+                        float(x)
+                        for x in sizes
+                        if isinstance(x, (int, float)) and float(x) > 0.0
+                    }
+                )
+                for idx, ratio in enumerate(numeric_sizes):
+                    if idx >= FAST_FAILOVER_MAX_SIZED_ACTIONS:
+                        break
                     if facing_bet > 0.0:
-                        amount = int(max(minimum_bet, round(facing_bet * min(numeric_sizes))))
+                        amount = int(max(minimum_bet, round(facing_bet * ratio)))
                     else:
-                        amount = int(max(minimum_bet, round(starting_pot * min(numeric_sizes))))
+                        amount = int(max(minimum_bet, round(starting_pot * ratio)))
                     actions.append(f"{action_base}:{amount}")
     if facing_bet > 0.0:
         if all(not token.startswith("raise:") for token in actions):
@@ -2077,6 +2124,98 @@ def _choose_smallest_sized_action(allowed_actions: list[str], action_base: str) 
     return best_action
 
 
+def _choose_sized_action_by_ratio(
+    allowed_actions: list[str],
+    action_base: str,
+    *,
+    reference_amount: float,
+    target_ratio: float,
+    min_ratio: Optional[float] = None,
+    max_ratio: Optional[float] = None,
+) -> Optional[str]:
+    if reference_amount <= 0.0:
+        return None
+    best_action: Optional[str] = None
+    best_distance: Optional[float] = None
+    for action in allowed_actions:
+        token = str(action or "").strip().lower()
+        if not token.startswith(f"{action_base}:"):
+            continue
+        try:
+            amount = float(token.split(":", 1)[1])
+        except ValueError:
+            continue
+        if amount <= 0.0:
+            continue
+        ratio = amount / float(reference_amount)
+        if min_ratio is not None and ratio < float(min_ratio):
+            continue
+        if max_ratio is not None and ratio > float(max_ratio):
+            continue
+        distance = abs(float(target_ratio) - float(ratio))
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best_action = token
+    return best_action
+
+
+def _classify_flop_board_bucket(spot: Dict[str, Any]) -> str:
+    board = spot.get("board")
+    if not isinstance(board, list):
+        return "unknown"
+    cards = [str(card or "").strip() for card in board[:3] if str(card or "").strip()]
+    if len(cards) < 3:
+        return "unknown"
+    suits: list[str] = []
+    ranks: list[int] = []
+    for card in cards:
+        if len(card) < 2:
+            continue
+        rank_token = "T" if card.startswith("10") else card[0].upper()
+        suit_token = card[-1].lower()
+        rank_val = _RANK_VALUE_MAP.get(rank_token)
+        if rank_val is None:
+            continue
+        ranks.append(rank_val)
+        suits.append(suit_token)
+    if len(ranks) < 3:
+        return "unknown"
+    unique_suits = len(set(suits))
+    if unique_suits == 3:
+        suit_class = "rainbow"
+    elif unique_suits == 2:
+        suit_class = "two-tone"
+    elif unique_suits == 1:
+        suit_class = "monotone"
+    else:
+        suit_class = "unknown"
+    unique_ranks = sorted(set(ranks))
+    connected = len(unique_ranks) >= 2 and (max(unique_ranks) - min(unique_ranks) <= 4)
+    conn_class = "connected" if connected else "disconnected"
+    return f"{suit_class}|{conn_class}"
+
+
+def _is_fast_live_flop_cbet75_bias_spot(
+    spot: Dict[str, Any],
+    *,
+    runtime_profile: str,
+    facing_bet: float,
+) -> bool:
+    if str(runtime_profile or "").strip().lower() != "fast_live":
+        return False
+    if not FAST_LIVE_FLOP_CBET75_BIAS_ENABLED:
+        return False
+    if _detect_spot_street(spot) != "flop":
+        return False
+    if float(facing_bet) > 0.0:
+        return False
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or 0.0)
+    if starting_pot < float(FAST_LIVE_FLOP_CBET75_POT_MIN) or starting_pot > float(FAST_LIVE_FLOP_CBET75_POT_MAX):
+        return False
+    board_bucket = _classify_flop_board_bucket(spot)
+    return board_bucket in FAST_LIVE_FLOP_CBET75_BOARD_CLASSES
+
+
 def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> Optional[int]:
     path_value = str(active_node_path or "").strip().lower()
     if not path_value:
@@ -2098,7 +2237,7 @@ def _build_fast_live_active_node_flop_fallback_policy(
     facing_bet = _extract_spot_facing_bet(spot)
     if facing_bet <= 0.0:
         allowed_actions = _fallback_actions_from_spot(spot)
-        chosen_action = _choose_fast_failover_action(spot, allowed_actions)
+        chosen_action = _choose_fast_failover_action(spot, allowed_actions, runtime_profile="fast_live")
         root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
         return allowed_actions, chosen_action, root_actions
 
@@ -2153,7 +2292,7 @@ def _build_fast_live_active_node_flop_fallback_policy(
     return allowed_actions, chosen_action, root_actions
 
 
-def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str]) -> str:
+def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str], runtime_profile: str = "") -> str:
     street = _detect_spot_street(spot)
     facing_bet = 0.0
     meta = spot.get("meta")
@@ -2189,6 +2328,23 @@ def _choose_fast_failover_action(spot: Dict[str, Any], allowed_actions: list[str
             if candidate.startswith("raise:"):
                 return candidate
         return allowed_actions[0] if allowed_actions else "call"
+
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or 0.0)
+    if _is_fast_live_flop_cbet75_bias_spot(
+        spot,
+        runtime_profile=runtime_profile,
+        facing_bet=facing_bet,
+    ):
+        target_sized_bet = _choose_sized_action_by_ratio(
+            allowed_actions,
+            "bet",
+            reference_amount=max(1.0, starting_pot),
+            target_ratio=float(FAST_LIVE_FLOP_CBET75_TARGET_RATIO),
+            min_ratio=float(FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO),
+            max_ratio=float(FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO),
+        )
+        if target_sized_bet:
+            return target_sized_bet
 
     if street in {"flop", "turn"}:
         smallest_bet = _choose_smallest_sized_action(allowed_actions, "bet")
@@ -2545,8 +2701,17 @@ def _build_fast_failover_response(
         allowed_actions, chosen_action, root_actions = _build_fast_live_active_node_flop_fallback_policy(request.spot)
     else:
         allowed_actions = _fallback_actions_from_spot(request.spot)
-        chosen_action = _choose_fast_failover_action(request.spot, allowed_actions)
+        chosen_action = _choose_fast_failover_action(request.spot, allowed_actions, runtime_profile=runtime_profile)
         root_actions = [_token_to_root_action(token, chosen_action) for token in allowed_actions]
+    facing_bet_for_bias = _extract_spot_facing_bet(request.spot)
+    fast_live_flop_cbet75_bias_applied = bool(
+        _is_fast_live_flop_cbet75_bias_spot(
+            request.spot,
+            runtime_profile=runtime_profile,
+            facing_bet=facing_bet_for_bias,
+        )
+        and str(chosen_action or "").strip().lower().startswith("bet:")
+    )
     allowed_actions_before_neural = list(allowed_actions)
     neural_attempted = False
     neural_timeout_effective = 0
@@ -2596,6 +2761,12 @@ def _build_fast_failover_response(
         },
         "warnings": [f"fast_failover_applied:{baseline_error}"],
     }
+    if fast_live_flop_cbet75_bias_applied:
+        warnings = result_payload.get("warnings")
+        warnings_list = list(warnings) if isinstance(warnings, list) else []
+        if "fast_live_flop_cbet75_bias_applied" not in warnings_list:
+            warnings_list.append("fast_live_flop_cbet75_bias_applied")
+        result_payload["warnings"] = warnings_list
     result_payload, allowed_actions, risk_gate = _apply_equity_risk_gate(
         spot=request.spot,
         result_payload=result_payload,
@@ -2669,6 +2840,7 @@ def _build_fast_failover_response(
             "neural_applied": neural_applied,
             "neural_shadow": neural_shadow,
             "risk_gate": risk_gate,
+            "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
@@ -2769,6 +2941,15 @@ def health() -> Dict[str, Any]:
         "fast_live_skip_llm_stage": FAST_LIVE_SKIP_LLM_STAGE,
         "fast_live_normal_race_enabled": FAST_LIVE_NORMAL_RACE_ENABLED,
         "fast_live_normal_race_timeout_sec": FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC,
+        "fast_live_flop_cbet75_bias_enabled": FAST_LIVE_FLOP_CBET75_BIAS_ENABLED,
+        "fast_live_flop_cbet75_pot_min": FAST_LIVE_FLOP_CBET75_POT_MIN,
+        "fast_live_flop_cbet75_pot_max": FAST_LIVE_FLOP_CBET75_POT_MAX,
+        "fast_live_flop_cbet75_target_ratio": FAST_LIVE_FLOP_CBET75_TARGET_RATIO,
+        "fast_live_flop_cbet75_min_bet_ratio": FAST_LIVE_FLOP_CBET75_MIN_BET_RATIO,
+        "fast_live_flop_cbet75_max_bet_ratio": FAST_LIVE_FLOP_CBET75_MAX_BET_RATIO,
+        "fast_live_flop_cbet75_board_classes_raw": FAST_LIVE_FLOP_CBET75_BOARD_CLASSES_RAW,
+        "fast_live_flop_cbet75_board_classes": sorted(FAST_LIVE_FLOP_CBET75_BOARD_CLASSES),
+        "fast_failover_max_sized_actions": FAST_FAILOVER_MAX_SIZED_ACTIONS,
         "normal_baseline_timeout_sec": NORMAL_BASELINE_TIMEOUT_SEC,
         "normal_llm_timeout_sec": NORMAL_LLM_TIMEOUT_SEC,
         "normal_locked_timeout_sec": NORMAL_LOCKED_TIMEOUT_SEC,
@@ -3356,6 +3537,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         selection_reason = f"{selection_reason}+risk_gate_forced_fold"
 
     selected_action = _primary_action_from_result_payload(result)
+    fast_live_flop_cbet75_bias_applied = False
     neural_shadow = _build_neural_shadow_summary(
         runtime_profile=runtime_profile,
         mode=NEURAL_BRAIN_MODE,
@@ -3445,6 +3627,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "neural_timeout_sec": neural_timeout_effective,
             "neural_shadow": neural_shadow,
             "risk_gate": risk_gate,
+            "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
