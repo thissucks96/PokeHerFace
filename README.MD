@@ -90,6 +90,10 @@ UI hand export:
 - uses the first successful result (with explicit priority when `normal` wins)
 - capped by `FAST_LIVE_NORMAL_RACE_TIMEOUT_SEC` (default `10`)
 
+`fast_live` active-node sizing now keeps a small subset (not only one size) on the active street:
+- `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
+- `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
+
 `fast` is deprecated and aliases to `fast_live`.
 
 ## Neural Mode

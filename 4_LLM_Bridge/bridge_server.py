@@ -215,6 +215,16 @@ FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_LIVE_SPOT_FORCE_REM
 }
 FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,0.75,1.0,1.25")
 FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0,2.0,2.5,3.0")
+try:
+    FAST_LIVE_ACTIVE_STREET_BET_KEEP = int(os.environ.get("FAST_LIVE_ACTIVE_STREET_BET_KEEP", "2"))
+except ValueError:
+    FAST_LIVE_ACTIVE_STREET_BET_KEEP = 2
+FAST_LIVE_ACTIVE_STREET_BET_KEEP = max(1, FAST_LIVE_ACTIVE_STREET_BET_KEEP)
+try:
+    FAST_LIVE_ACTIVE_STREET_RAISE_KEEP = int(os.environ.get("FAST_LIVE_ACTIVE_STREET_RAISE_KEEP", "2"))
+except ValueError:
+    FAST_LIVE_ACTIVE_STREET_RAISE_KEEP = 2
+FAST_LIVE_ACTIVE_STREET_RAISE_KEEP = max(1, FAST_LIVE_ACTIVE_STREET_RAISE_KEEP)
 SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED = os.environ.get("SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED", "1").strip() not in {
     "0",
     "false",
@@ -1645,6 +1655,7 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
                 fval = _to_float_or_none(value)
                 if fval is not None and fval > 0:
                     kept_bets.append(float(fval))
+                if len(kept_bets) >= FAST_LIVE_ACTIVE_STREET_BET_KEEP:
                     break
             if kept_bets:
                 active_bet_sizing[active_street]["bet_sizes"] = kept_bets
@@ -1661,7 +1672,8 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
                 if raise_cap_limit is not None:
                     trimmed = min(trimmed, float(raise_cap_limit))
                 kept_raises.append(trimmed)
-                break
+                if len(kept_raises) >= FAST_LIVE_ACTIVE_STREET_RAISE_KEEP:
+                    break
             if kept_raises:
                 active_bet_sizing[active_street]["raise_sizes"] = kept_raises
 
