@@ -215,6 +215,8 @@ FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS = os.environ.get("FAST_LIVE_SPOT_FORCE_REM
 }
 FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,0.75,1.0,1.25")
 FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0,2.0,2.5,3.0")
+FAST_LIVE_RIVER_BET_SIZES_RAW = os.environ.get("FAST_LIVE_RIVER_BET_SIZES", "")
+FAST_LIVE_RIVER_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_RIVER_RAISE_SIZES", "")
 try:
     FAST_LIVE_ACTIVE_STREET_BET_KEEP = int(os.environ.get("FAST_LIVE_ACTIVE_STREET_BET_KEEP", "2"))
 except ValueError:
@@ -1804,10 +1806,12 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
 
     bet_sizes = _parse_sizing_env(FAST_LIVE_SPOT_BET_SIZES_RAW, [0.33, 0.75])
     raise_sizes = _parse_sizing_env(FAST_LIVE_SPOT_RAISE_SIZES_RAW, [1.0, 2.0])
+    river_bet_sizes = _parse_sizing_env(FAST_LIVE_RIVER_BET_SIZES_RAW, list(bet_sizes))
+    river_raise_sizes = _parse_sizing_env(FAST_LIVE_RIVER_RAISE_SIZES_RAW, list(raise_sizes))
     target_bet_sizing = {
         "flop": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
         "turn": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
-        "river": {"bet_sizes": bet_sizes, "raise_sizes": raise_sizes},
+        "river": {"bet_sizes": river_bet_sizes, "raise_sizes": river_raise_sizes},
     }
     if preserve_donk_tree and isinstance(tuned.get("bet_sizing"), dict):
         old_bet_sizing = tuned.get("bet_sizing")
@@ -1865,6 +1869,8 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         "min_all_in_threshold": FAST_LIVE_SPOT_MIN_ALL_IN_THRESHOLD,
         "bet_sizes": bet_sizes,
         "raise_sizes": raise_sizes,
+        "river_bet_sizes": river_bet_sizes,
+        "river_raise_sizes": river_raise_sizes,
         "changes": changes,
     }
     return tuned, summary
@@ -3191,6 +3197,8 @@ def health() -> Dict[str, Any]:
         "fast_live_spot_force_remove_donk_bets": FAST_LIVE_SPOT_FORCE_REMOVE_DONK_BETS,
         "fast_live_spot_bet_sizes_raw": FAST_LIVE_SPOT_BET_SIZES_RAW,
         "fast_live_spot_raise_sizes_raw": FAST_LIVE_SPOT_RAISE_SIZES_RAW,
+        "fast_live_river_bet_sizes_raw": FAST_LIVE_RIVER_BET_SIZES_RAW,
+        "fast_live_river_raise_sizes_raw": FAST_LIVE_RIVER_RAISE_SIZES_RAW,
         "spot_dynamic_all_in_threshold_enabled": SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED,
         "spot_dynamic_all_in_threshold_min": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN,
         "spot_dynamic_all_in_threshold_max": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX,

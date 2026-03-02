@@ -102,6 +102,9 @@ UI hand export:
 `fast_live` active-node sizing now keeps a small subset (not only one size) on the active street:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
+- baseline-path river tree controls (non-fallback tuning lever):
+  - `FAST_LIVE_RIVER_BET_SIZES` (default empty -> inherits `FAST_LIVE_SPOT_BET_SIZES`)
+  - `FAST_LIVE_RIVER_RAISE_SIZES` (default empty -> inherits `FAST_LIVE_SPOT_RAISE_SIZES`)
 
 `fast_live` failover now exposes multiple sized fallback actions (instead of only min-size), then applies a targeted flop c-bet bias in known disagreement buckets:
 - `FAST_FAILOVER_MAX_SIZED_ACTIONS` (default `3`)
@@ -157,6 +160,7 @@ python scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
 - Stateful sim reports are now `stateful_sim_report.v3` and include:
   - profile-aware timeout metadata (`timeout_sec_default`, `timeout_sec_effective`)
   - aggregated error classes (`error_counts`, `error_counts_by_street`, `hands_with_error`)
+  - fallback split metrics (`fallback_count_by_street`, `fallback_rate_by_street`, `strategy_sources_by_street`)
 - When `--artifact-dir` is provided, stateful sim now writes payload/response artifacts for both successful solves and failed calls (timeout/HTTP errors), so failure forensics are preserved.
 - `run_stateful_sim.py` now supports:
   - `--shark-classic-reference`: constrained Shark-contract reference setup (smaller stack/range for reliable fidelity runs)

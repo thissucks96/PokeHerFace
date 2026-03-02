@@ -490,6 +490,9 @@ def main() -> int:
     total_latency_by_street = {"flop": [], "turn": [], "river": []}
     action_counts_by_street = {"flop": {}, "turn": {}, "river": {}}
     strategy_source_counts = {}
+    strategy_source_by_street = {"flop": {}, "turn": {}, "river": {}}
+    fallback_count_by_street = {"flop": 0, "turn": 0, "river": 0}
+    total_decisions_by_street = {"flop": 0, "turn": 0, "river": 0}
     error_counts = {}
     error_counts_by_street = {"flop": {}, "turn": {}, "river": {}}
     hands_with_error = 0
@@ -724,6 +727,10 @@ def main() -> int:
             action_map, result_block = _extract_action_map_and_result(resp_json)
             strat_source = str(resp_json.get("selected_strategy") or result_block.get("selected_strategy") or "unknown")
             strategy_source_counts[strat_source] = strategy_source_counts.get(strat_source, 0) + 1
+            strategy_source_by_street[street_name][strat_source] = strategy_source_by_street[street_name].get(strat_source, 0) + 1
+            total_decisions_by_street[street_name] = int(total_decisions_by_street.get(street_name, 0)) + 1
+            if strat_source == "fallback_lookup_policy":
+                fallback_count_by_street[street_name] = int(fallback_count_by_street.get(street_name, 0)) + 1
             total_latency_by_street[street_name].append(t_elapsed)
             # Map choice to exact sizes
             chosen_action = "call" if villain_bet > 0 else "check"
@@ -863,6 +870,16 @@ def main() -> int:
         "all_in_count": all_in_count,
         "all_in_distribution": {s: all_in_streets.count(s) for s in set(all_in_streets)},
         "strategy_sources": strategy_source_counts,
+        "strategy_sources_by_street": strategy_source_by_street,
+        "fallback_count_by_street": fallback_count_by_street,
+        "fallback_rate_by_street": {
+            street: (
+                float(fallback_count_by_street.get(street, 0)) / float(total_decisions_by_street.get(street, 1))
+                if int(total_decisions_by_street.get(street, 0)) > 0
+                else 0.0
+            )
+            for street in ("flop", "turn", "river")
+        },
         "avg_latency": {s: (statistics.mean(times) if times else 0.0) for s, times in total_latency_by_street.items()},
         "actions_by_street": action_counts_by_street,
         "error_counts": error_counts,
