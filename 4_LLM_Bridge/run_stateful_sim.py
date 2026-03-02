@@ -829,7 +829,7 @@ def main() -> int:
                 "strategy_source": strat_source
             })
 
-        starting_stack_bb = float(args.starting_stack_bb)
+        starting_stack_bb = float(scenario["starting_stack_bb"])
         if bool(hand_record["folded"]):
             res = "loss"
             win_loss[res] += 1
