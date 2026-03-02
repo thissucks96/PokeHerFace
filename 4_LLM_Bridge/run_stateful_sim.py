@@ -60,6 +60,7 @@ AGGRESSIVE_VILLAIN_POLICY = {
 }
 AGGRESSIVE_LEGAL_ACTIONS = ["fold", "call", "raise_75", "all_in"]
 VILLAIN_MODE_CHOICES = ["scripted_tight", "scripted_aggressive", "engine_random"]
+SHARK_CLASSIC_REFERENCE_VILLAIN_RANGE = "JJ+,AQs+,AKo,KQs"
 
 def _get_card_val(card_str: str) -> tuple[int, str]:
     if len(card_str) == 3 and card_str.startswith("10"):
@@ -254,6 +255,8 @@ def _resolve_profile_timeout(runtime_profile: str, args: argparse.Namespace) -> 
 
 def _classify_error(error_msg: str) -> str:
     text = str(error_msg or "").lower()
+    if "complexity guard" in text or "complexity_guard_skip" in text:
+        return "complexity_guard_skip"
     if "422" in text:
         return "422_validation"
     if "invalid unordered_map" in text or "invalid unordered_map<k, t> key" in text:
@@ -265,6 +268,54 @@ def _classify_error(error_msg: str) -> str:
     if "connection refused" in text or "max retries exceeded" in text:
         return "bridge_unreachable"
     return "other"
+
+
+def _estimate_range_width(range_text: str) -> int:
+    tokens = [segment.strip() for segment in str(range_text or "").split(",")]
+    return len([token for token in tokens if token])
+
+
+def _evaluate_shark_classic_complexity_guard(
+    *,
+    runtime_profile: str,
+    reference_mode: bool,
+    guard_enabled: bool,
+    street_name: str,
+    spot: Dict[str, Any],
+    effective_timeout_sec: int,
+) -> Dict[str, Any]:
+    if str(runtime_profile or "").strip().lower() != "shark_classic":
+        return {"skip": False}
+    if reference_mode or (not guard_enabled):
+        return {"skip": False}
+    if str(street_name or "").strip().lower() != "flop":
+        return {"skip": False}
+
+    stack = int(max(0, int(spot.get("starting_stack", 0))))
+    villain_width = _estimate_range_width(str(spot.get("villain_range", "")))
+    active_node_path = str(spot.get("active_node_path", "")).strip()
+    has_active_path = bool(active_node_path)
+    timeout = int(max(1, int(effective_timeout_sec)))
+
+    high_stack = stack >= 80
+    wide_range = villain_width >= 20
+    limited_budget = timeout <= 180
+
+    if high_stack and wide_range and has_active_path and limited_budget:
+        return {
+            "skip": True,
+            "reason": (
+                "complexity_guard_skip: shark_classic high-complexity flop spot "
+                f"(stack={stack}, villain_range_width={villain_width}, timeout={timeout}, active_node_path=1)"
+            ),
+            "meta": {
+                "stack": stack,
+                "villain_range_width": villain_width,
+                "timeout_sec": timeout,
+                "active_node_path": active_node_path,
+            },
+        }
+    return {"skip": False}
 
 
 def _extract_action_map_and_result(resp_json: Dict[str, Any]) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
@@ -348,6 +399,12 @@ def main() -> int:
     parser.add_argument("--timeout-normal", type=int, default=None, help="Optional override timeout for normal profile")
     parser.add_argument("--timeout-normal-neural", type=int, default=None, help="Optional override timeout for normal_neural profile")
     parser.add_argument("--timeout-shark-classic", type=int, default=None, help="Optional override timeout for shark_classic profile")
+    parser.add_argument("--shark-classic-reference", action="store_true", help="Use constrained shark_classic reference setup (stack/range) for fidelity A/B.")
+    parser.add_argument("--reference-stack-bb", type=int, default=20, help="Reference stack size (bb) when --shark-classic-reference is enabled.")
+    parser.add_argument("--reference-starting-pot-bb", type=int, default=10, help="Reference starting pot size (bb) when --shark-classic-reference is enabled.")
+    parser.add_argument("--reference-iterations", type=int, default=40, help="Reference CFR iterations when --shark-classic-reference is enabled.")
+    parser.add_argument("--reference-thread-count", type=int, default=4, help="Reference thread count when --shark-classic-reference is enabled.")
+    parser.add_argument("--disable-complexity-guard", action="store_true", help="Disable early shark_classic complexity guard skips.")
     parser.add_argument("--starting-stack-bb", type=int, default=100, help="Starting effective stack in big blinds")
     parser.add_argument("--starting-pot-bb", type=int, default=6, help="Starting pot size in big blinds at flop")
     parser.add_argument("--minimum-bet-bb", type=int, default=2, help="Minimum bet size in big blinds")
@@ -411,7 +468,20 @@ def main() -> int:
         "seed": args.seed,
         "timeout_sec_default": int(args.timeout),
         "timeout_sec_effective": int(effective_timeout_sec),
+        "reference_mode": False,
+        "complexity_guard_enabled": not bool(args.disable_complexity_guard),
     }
+
+    if args.runtime_profile == "shark_classic" and bool(args.shark_classic_reference):
+        scenario["starting_stack_bb"] = int(max(10, args.reference_stack_bb))
+        scenario["starting_pot_bb"] = int(max(2, args.reference_starting_pot_bb))
+        scenario["iterations"] = int(max(1, args.reference_iterations))
+        scenario["thread_count"] = int(max(1, args.reference_thread_count))
+        scenario["villain_range"] = SHARK_CLASSIC_REFERENCE_VILLAIN_RANGE
+        scenario["all_in_threshold"] = 0.67
+        scenario["raise_cap"] = 3
+        scenario["remove_donk_bets"] = True
+        scenario["reference_mode"] = True
 
     results = []
     
@@ -572,7 +642,42 @@ def main() -> int:
                 "enable_multi_node_locks": False,
                 "runtime_profile": args.runtime_profile
             }
-            
+            guard = _evaluate_shark_classic_complexity_guard(
+                runtime_profile=args.runtime_profile,
+                reference_mode=bool(scenario.get("reference_mode", False)),
+                guard_enabled=bool(scenario.get("complexity_guard_enabled", True)),
+                street_name=street_name,
+                spot=spot,
+                effective_timeout_sec=effective_timeout_sec,
+            )
+            if bool(guard.get("skip")):
+                error_msg = str(guard.get("reason") or "complexity_guard_skip")
+                error_type = "complexity_guard_skip"
+                error_counts[error_type] = int(error_counts.get(error_type, 0)) + 1
+                street_bucket = error_counts_by_street.get(street_name, {})
+                street_bucket[error_type] = int(street_bucket.get(error_type, 0)) + 1
+                error_counts_by_street[street_name] = street_bucket
+                hands_with_error += 1
+                _artifact_write(
+                    artifact_dir=artifact_dir,
+                    stage=f"stateful_sim_hero_h{h_idx+1}_{street_name}_guarded",
+                    payload=payload,
+                    response={
+                        "status": "guarded_skip",
+                        "error": error_msg,
+                        "error_type": error_type,
+                        "meta": guard.get("meta", {}),
+                    },
+                )
+                hand_record["streets"].append({ # type: ignore
+                    "street": street_name,
+                    "error": error_msg,
+                    "error_type": error_type,
+                    "guard_meta": guard.get("meta", {}),
+                })
+                active = False
+                break
+
             t_start = time.perf_counter()
             resp_json: Dict[str, Any] = {}
             try:
