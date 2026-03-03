@@ -225,6 +225,36 @@ FAST_LIVE_SPOT_BET_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_BET_SIZES", "0.33,
 FAST_LIVE_SPOT_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_SPOT_RAISE_SIZES", "1.0,2.0,2.5,3.0")
 FAST_LIVE_RIVER_BET_SIZES_RAW = os.environ.get("FAST_LIVE_RIVER_BET_SIZES", "")
 FAST_LIVE_RIVER_RAISE_SIZES_RAW = os.environ.get("FAST_LIVE_RIVER_RAISE_SIZES", "")
+FAST_LIVE_FLOP_FORCE_REDUCTION = os.environ.get(
+    "FAST_LIVE_FLOP_FORCE_REDUCTION",
+    "1",
+).strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_LIVE_FLOP_REDUCTION_BET_SIZES_RAW = os.environ.get(
+    "FAST_LIVE_FLOP_REDUCTION_BET_SIZES",
+    "0.5,1.0",
+)
+FAST_LIVE_FLOP_REDUCTION_RAISE_SIZES_RAW = os.environ.get(
+    "FAST_LIVE_FLOP_REDUCTION_RAISE_SIZES",
+    "1.0",
+)
+try:
+    FAST_LIVE_FLOP_MAX_ITERATIONS = int(
+        os.environ.get("FAST_LIVE_FLOP_MAX_ITERATIONS", "2")
+    )
+except ValueError:
+    FAST_LIVE_FLOP_MAX_ITERATIONS = 2
+FAST_LIVE_FLOP_MAX_ITERATIONS = max(1, FAST_LIVE_FLOP_MAX_ITERATIONS)
+try:
+    FAST_LIVE_FLOP_MAX_RAISE_CAP = int(
+        os.environ.get("FAST_LIVE_FLOP_MAX_RAISE_CAP", "3")
+    )
+except ValueError:
+    FAST_LIVE_FLOP_MAX_RAISE_CAP = 3
+FAST_LIVE_FLOP_MAX_RAISE_CAP = max(1, FAST_LIVE_FLOP_MAX_RAISE_CAP)
 FAST_LIVE_ACTIVE_NODE_FLOP_FORCE_REDUCTION = os.environ.get(
     "FAST_LIVE_ACTIVE_NODE_FLOP_FORCE_REDUCTION",
     "1",
@@ -1848,23 +1878,33 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         and active_street == "flop"
         and active_facing_bet > 0.0
     )
+    flop_reduction_applied = (
+        active_street == "flop"
+        and (
+            FAST_LIVE_FLOP_FORCE_REDUCTION
+            or active_node_flop_reduction_applied
+        )
+    )
     preserve_donk_tree = (
         bool(active_node_path)
         and FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE
     )
 
     iterations = _to_float_or_none(tuned.get("iterations"))
+    flop_iterations_cap = int(FAST_LIVE_FLOP_MAX_ITERATIONS)
+    if active_node_flop_reduction_applied:
+        flop_iterations_cap = min(flop_iterations_cap, int(FAST_LIVE_ACTIVE_NODE_FLOP_MAX_ITERATIONS))
     if iterations is not None:
         capped = int(max(1, min(int(iterations), FAST_LIVE_SPOT_MAX_ITERATIONS)))
-        if active_node_flop_reduction_applied:
-            capped = min(capped, FAST_LIVE_ACTIVE_NODE_FLOP_MAX_ITERATIONS)
+        if flop_reduction_applied:
+            capped = min(capped, flop_iterations_cap)
         if capped != int(iterations):
             changes["iterations"] = {"from": int(iterations), "to": capped}
         tuned["iterations"] = capped
     else:
         tuned["iterations"] = max(1, FAST_LIVE_SPOT_MAX_ITERATIONS)
-        if active_node_flop_reduction_applied:
-            tuned["iterations"] = min(tuned["iterations"], FAST_LIVE_ACTIVE_NODE_FLOP_MAX_ITERATIONS)
+        if flop_reduction_applied:
+            tuned["iterations"] = min(tuned["iterations"], flop_iterations_cap)
         changes["iterations"] = {"from": None, "to": tuned["iterations"]}
 
     thread_count = _to_float_or_none(tuned.get("thread_count"))
@@ -1878,17 +1918,20 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         changes["thread_count"] = {"from": None, "to": tuned["thread_count"]}
 
     raise_cap = _to_float_or_none(tuned.get("raise_cap"))
+    flop_raise_cap_limit = int(FAST_LIVE_FLOP_MAX_RAISE_CAP)
+    if active_node_flop_reduction_applied:
+        flop_raise_cap_limit = min(flop_raise_cap_limit, int(FAST_LIVE_ACTIVE_NODE_FLOP_MAX_RAISE_CAP))
     if raise_cap is not None:
         capped_raise = int(max(1, min(int(raise_cap), FAST_LIVE_SPOT_MAX_RAISE_CAP)))
-        if active_node_flop_reduction_applied:
-            capped_raise = min(capped_raise, FAST_LIVE_ACTIVE_NODE_FLOP_MAX_RAISE_CAP)
+        if flop_reduction_applied:
+            capped_raise = min(capped_raise, flop_raise_cap_limit)
         if capped_raise != int(raise_cap):
             changes["raise_cap"] = {"from": int(raise_cap), "to": capped_raise}
         tuned["raise_cap"] = capped_raise
     else:
         tuned["raise_cap"] = max(1, FAST_LIVE_SPOT_MAX_RAISE_CAP)
-        if active_node_flop_reduction_applied:
-            tuned["raise_cap"] = min(tuned["raise_cap"], FAST_LIVE_ACTIVE_NODE_FLOP_MAX_RAISE_CAP)
+        if flop_reduction_applied:
+            tuned["raise_cap"] = min(tuned["raise_cap"], flop_raise_cap_limit)
         changes["raise_cap"] = {"from": None, "to": tuned["raise_cap"]}
 
     raw_threshold = _to_float_or_none(tuned.get("all_in_threshold"))
@@ -1920,6 +1963,25 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
     river_raise_sizes = _parse_sizing_env(FAST_LIVE_RIVER_RAISE_SIZES_RAW, list(raise_sizes))
     flop_bet_sizes = list(bet_sizes)
     flop_raise_sizes = list(raise_sizes)
+    if flop_reduction_applied:
+        flop_bet_sizes = _parse_sizing_env(
+            FAST_LIVE_FLOP_REDUCTION_BET_SIZES_RAW,
+            [0.5, 1.0],
+        )
+        flop_raise_sizes = _parse_sizing_env(
+            FAST_LIVE_FLOP_REDUCTION_RAISE_SIZES_RAW,
+            [1.0],
+        )
+        if flop_bet_sizes != bet_sizes or flop_raise_sizes != raise_sizes:
+            changes["flop_reduction"] = {
+                "applied": True,
+                "street": active_street,
+                "facing_bet": active_facing_bet,
+                "flop_bet_sizes": flop_bet_sizes,
+                "flop_raise_sizes": flop_raise_sizes,
+                "max_iterations": tuned.get("iterations"),
+                "max_raise_cap": tuned.get("raise_cap"),
+            }
     if active_node_flop_reduction_applied:
         flop_bet_sizes = _parse_sizing_env(
             FAST_LIVE_ACTIVE_NODE_FLOP_BET_SIZES_RAW,
@@ -2004,6 +2066,7 @@ def _apply_fast_live_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any],
         "flop_raise_sizes": flop_raise_sizes,
         "river_bet_sizes": river_bet_sizes,
         "river_raise_sizes": river_raise_sizes,
+        "flop_reduction_applied": flop_reduction_applied,
         "active_node_flop_reduction_applied": active_node_flop_reduction_applied,
         "changes": changes,
     }
@@ -3477,6 +3540,11 @@ def health() -> Dict[str, Any]:
         "fast_live_spot_raise_sizes_raw": FAST_LIVE_SPOT_RAISE_SIZES_RAW,
         "fast_live_river_bet_sizes_raw": FAST_LIVE_RIVER_BET_SIZES_RAW,
         "fast_live_river_raise_sizes_raw": FAST_LIVE_RIVER_RAISE_SIZES_RAW,
+        "fast_live_flop_force_reduction": FAST_LIVE_FLOP_FORCE_REDUCTION,
+        "fast_live_flop_reduction_bet_sizes_raw": FAST_LIVE_FLOP_REDUCTION_BET_SIZES_RAW,
+        "fast_live_flop_reduction_raise_sizes_raw": FAST_LIVE_FLOP_REDUCTION_RAISE_SIZES_RAW,
+        "fast_live_flop_max_iterations": FAST_LIVE_FLOP_MAX_ITERATIONS,
+        "fast_live_flop_max_raise_cap": FAST_LIVE_FLOP_MAX_RAISE_CAP,
         "fast_live_active_node_flop_force_reduction": FAST_LIVE_ACTIVE_NODE_FLOP_FORCE_REDUCTION,
         "fast_live_active_node_flop_bet_sizes_raw": FAST_LIVE_ACTIVE_NODE_FLOP_BET_SIZES_RAW,
         "fast_live_active_node_flop_raise_sizes_raw": FAST_LIVE_ACTIVE_NODE_FLOP_RAISE_SIZES_RAW,

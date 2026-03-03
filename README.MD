@@ -104,6 +104,12 @@ UI hand export:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
 - `FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE` (default `0`; keep off for lower flop latency)
+- global flop reduction (applies on all `fast_live` flop spots before active-node overrides):
+  - `FAST_LIVE_FLOP_FORCE_REDUCTION` (default `1`)
+  - `FAST_LIVE_FLOP_REDUCTION_BET_SIZES` (default `0.5,1.0`)
+  - `FAST_LIVE_FLOP_REDUCTION_RAISE_SIZES` (default `1.0`)
+  - `FAST_LIVE_FLOP_MAX_ITERATIONS` (default `2`)
+  - `FAST_LIVE_FLOP_MAX_RAISE_CAP` (default `3`)
 - targeted active-node flop reduction (applies only on flop facing-bet nodes):
   - `FAST_LIVE_ACTIVE_NODE_FLOP_FORCE_REDUCTION` (default `1`)
   - `FAST_LIVE_ACTIVE_NODE_FLOP_BET_SIZES` (default `0.5,1.0`)
