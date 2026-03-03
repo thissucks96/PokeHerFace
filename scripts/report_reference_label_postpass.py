@@ -293,6 +293,12 @@ def main() -> int:
         default=Path("2_Neural_Brain/local_pipeline/reports/reference_label_postpass_report.json"),
         help="Report output path.",
     )
+    parser.add_argument(
+        "--manifest-json",
+        type=Path,
+        default=Path("2_Neural_Brain/local_pipeline/reports/offline_label_manifest.json"),
+        help="Offline labeler manifest used for count sync checks.",
+    )
     parser.add_argument("--integrity-tol", type=float, default=1e-5, help="Tolerance for distribution sum checks.")
     parser.add_argument("--min-bucket-samples", type=int, default=20, help="Minimum attempted samples per bucket.")
     parser.add_argument("--watch-fail-rate", type=float, default=0.02, help="Watchlist threshold.")
@@ -305,10 +311,22 @@ def main() -> int:
     labels_jsonl = args.labels_jsonl.resolve()
     errors_jsonl = args.errors_jsonl.resolve()
     report_json = args.report_json.resolve()
+    manifest_json = args.manifest_json.resolve()
 
     success_ids = _load_row_ids(labels_jsonl)
     error_ids = _load_row_ids(errors_jsonl)
     overlap_ids = success_ids & error_ids
+    manifest_data: dict[str, Any] | None = None
+    manifest_stats: dict[str, Any] = {}
+    if manifest_json.exists():
+        try:
+            payload = json.loads(manifest_json.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                manifest_data = payload
+                if isinstance(payload.get("stats"), dict):
+                    manifest_stats = payload.get("stats", {})
+        except (OSError, json.JSONDecodeError):
+            manifest_data = None
 
     bucket_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "attempted": 0, "succeeded": 0, "failed": 0, "missing": 0})
     total_input_rows = 0
@@ -387,6 +405,25 @@ def main() -> int:
         and integrity_stats.failure_count() == 0
     )
 
+    manifest_mismatch_reasons: list[str] = []
+    if manifest_data is not None:
+        m_total = int(manifest_stats.get("total_input_rows", 0) or 0)
+        m_attempted = int(manifest_stats.get("attempted", 0) or 0)
+        m_succeeded = int(manifest_stats.get("succeeded", 0) or 0)
+        m_failed = int(manifest_stats.get("failed", 0) or 0)
+        if m_total and m_total != total_input_rows:
+            manifest_mismatch_reasons.append(f"manifest_total_mismatch={m_total}!={total_input_rows}")
+        if m_succeeded != len(success_ids):
+            manifest_mismatch_reasons.append(f"manifest_succeeded_mismatch={m_succeeded}!={len(success_ids)}")
+        if m_failed != len(error_ids):
+            manifest_mismatch_reasons.append(f"manifest_failed_mismatch={m_failed}!={len(error_ids)}")
+        if m_attempted != (len(success_ids) + len(error_ids)):
+            manifest_mismatch_reasons.append(
+                f"manifest_attempted_mismatch={m_attempted}!={len(success_ids) + len(error_ids)}"
+            )
+    if manifest_mismatch_reasons:
+        freeze_ready = False
+
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "inputs": {
@@ -404,6 +441,12 @@ def main() -> int:
             "min_bucket_samples": min_samples,
             "watch_fail_rate": float(args.watch_fail_rate),
             "systemic_fail_rate": float(args.systemic_fail_rate),
+        },
+        "manifest_sync": {
+            "manifest_json": str(manifest_json),
+            "manifest_present": manifest_data is not None,
+            "manifest_stats": manifest_stats if manifest_data is not None else {},
+            "mismatch_reasons": manifest_mismatch_reasons,
         },
         "bucket_summary": bucket_summary,
         "bucket_totals": {
@@ -432,6 +475,7 @@ def main() -> int:
                 *([] if len(overlap_ids) == 0 else [f"overlap_rows={len(overlap_ids)}"]),
                 *([] if len(systemic_buckets) == 0 else [f"systemic_buckets={len(systemic_buckets)}"]),
                 *([] if integrity_stats.failure_count() == 0 else [f"integrity_failures={integrity_stats.failure_count()}"]),
+                *manifest_mismatch_reasons,
             ],
         },
     }
