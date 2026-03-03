@@ -58,6 +58,21 @@ python .\scripts\quality_gate_flop_distribution.py --strict
 python .\scripts\build_neural_dataset.py --response-dir 5_Vision_Extraction\out\flop_engine --write
 ```
 
+Offline reference labeling (checkpoint/resume):
+
+```powershell
+python .\scripts\label_reference_offline.py `
+  --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
+  --output-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
+  --error-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
+  --manifest-json .\2_Neural_Brain\local_pipeline\reports\offline_label_manifest.json `
+  --runtime-profile shark_classic `
+  --timeout-sec 180 `
+  --max-retries 2 `
+  --checkpoint-every 25 `
+  --resume
+```
+
 Direct reproducible A/B (same seed):
 
 ```powershell

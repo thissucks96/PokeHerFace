@@ -84,6 +84,27 @@ python .\scripts\train_local_neural.py --train
 python .\scripts\eval_local_neural_shadow.py
 ```
 
+6. Offline reference labeling (checkpoint + resume + retry):
+
+```powershell
+python .\scripts\label_reference_offline.py `
+  --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
+  --output-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
+  --error-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
+  --manifest-json .\2_Neural_Brain\local_pipeline\reports\offline_label_manifest.json `
+  --runtime-profile shark_classic `
+  --timeout-sec 180 `
+  --max-retries 2 `
+  --checkpoint-every 25 `
+  --resume
+```
+
+Resume a stopped run:
+
+```powershell
+python .\scripts\label_reference_offline.py --resume
+```
+
 ## Default Safety Locks
 
 - Dataset template defaults are postflop-only with production profiles (`fast_live`, `normal`).
