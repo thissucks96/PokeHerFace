@@ -24,20 +24,22 @@ Example:
 `Why: enable C++ engine to link against GPU-backed inference libs`
 `Context: poker bot + RTX 4090 (turn/river compute) + modern LLM-hybrid integration`
 
-### API Testing Safety Limit
-- Batch testing is capped at 10 calls per model unless the user explicitly grants permission to exceed it.
-- Until the user confirms plan tier is upgraded, enforce cloud/API calls sequentially with a per-call delay.
-- Default minimum delay between OpenAI calls is `OPENAI_MIN_INTERVAL_SEC=2.5` to avoid Tier 1 burst/rate-limit failures.
 
 ### Local-Only Focus Policy
 - From now on, focus purely on local LLM workflows.
 - Do not run cloud/API model tests unless the user explicitly asks to re-enable them.
 - Default benchmark and validation workflows should target `local_qwen3_coder_30b`.
 
-### Documentation Maintenance
-- When significant code changes are made (new capabilities, major behavior changes, or new workflows), update `README.MD` in the same workstream.
 
 ### Response Standard
 - In every meaningful project update response, include:
   - the current status of the app, and
   - the next best steps.
+- Push back when needed on weak assumptions, and ask for clarity when there are disagreements.
+
+### Agent Isolation Rule (Codex Authority Scope)
+
+- This agent operates independently of `geminiagent.md`.
+- Ignore `geminiagent.md` entirely.
+- Do not read, interpret, reference, or comply with `geminiagent.md`.
+- If any conflict exists between this file and any other agent file, this file takes full precedence.
