@@ -40,6 +40,9 @@ Optional minimum bet (bb) override for geometry control.
 
 .PARAMETER VillainRange
 Optional villain range override for width-control during data collection.
+
+.PARAMETER Seed
+Optional RNG seed passed to the Python simulator for reproducible runs.
 #>
 [CmdletBinding()]
 param (
@@ -56,7 +59,8 @@ param (
     [int]$StartingStackBB = 0,
     [int]$StartingPotBB = 0,
     [int]$MinimumBetBB = 0,
-    [string]$VillainRange = ""
+    [string]$VillainRange = "",
+    [int]$Seed = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -150,6 +154,9 @@ if ($MinimumBetBB -gt 0) {
 }
 if (-not [string]::IsNullOrWhiteSpace($VillainRange)) {
     $pythonArgs += @("--villain-range", $VillainRange)
+}
+if ($Seed -gt 0) {
+    $pythonArgs += @("--seed", $Seed)
 }
 
 Write-Host "Executing python harness..." -ForegroundColor DarkGray
