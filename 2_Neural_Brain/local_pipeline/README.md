@@ -105,6 +105,23 @@ Resume a stopped run:
 python .\scripts\label_reference_offline.py --resume
 ```
 
+7. Post-pass validation (streaming):
+   - normalized bucket fail rates (`failed / attempted`)
+   - integrity checks on `reference.root_actions`:
+     - finite frequencies in `[0,1]`
+     - probability sum tolerance `abs(sum-1.0) < 1e-5`
+     - selected decision action (when present) exists in distribution
+
+```powershell
+python .\scripts\report_reference_label_postpass.py `
+  --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
+  --labels-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
+  --errors-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
+  --report-json .\2_Neural_Brain\local_pipeline\reports\reference_label_postpass_report.json `
+  --integrity-tol 1e-5 `
+  --strict
+```
+
 ## Default Safety Locks
 
 - Dataset template defaults are postflop-only with production profiles (`fast_live`, `normal`).
