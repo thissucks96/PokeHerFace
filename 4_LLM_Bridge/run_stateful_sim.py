@@ -407,6 +407,12 @@ def main() -> int:
     parser.add_argument("--starting-stack-bb", type=int, default=100, help="Starting effective stack in big blinds")
     parser.add_argument("--starting-pot-bb", type=int, default=6, help="Starting pot size in big blinds at flop")
     parser.add_argument("--minimum-bet-bb", type=int, default=2, help="Minimum bet size in big blinds")
+    parser.add_argument(
+        "--villain-range",
+        type=str,
+        default=DEFAULT_VILLAIN_RANGE,
+        help="Villain range expression override for scenario generation.",
+    )
     parser.add_argument("--all-in-threshold", type=float, default=0.55, help="All-in threshold ratio passed to shark")
     parser.add_argument("--iterations", type=int, default=5, help="CFR iterations for each solve")
     parser.add_argument("--thread-count", type=int, default=14, help="Thread count for each solve")
@@ -452,7 +458,7 @@ def main() -> int:
         "villain_seat": "bb",
         "villain_policy": active_policy,
         "legal_actions": active_legal_actions,
-        "villain_range": DEFAULT_VILLAIN_RANGE,
+        "villain_range": str(args.villain_range or DEFAULT_VILLAIN_RANGE),
         "in_position_player": 2 if aggressive_mode else (2 if args.oop else 1),
         "starting_stack_bb": args.starting_stack_bb,
         "starting_pot_bb": args.starting_pot_bb,
