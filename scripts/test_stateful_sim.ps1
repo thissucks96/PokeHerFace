@@ -28,6 +28,18 @@ Explicit villain policy mode: scripted_tight, scripted_aggressive, engine_random
 
 .PARAMETER ArtifactDir
 Optional artifact output directory for payload/response pairs (dataset builder compatible).
+
+.PARAMETER StartingStackBB
+Optional starting effective stack (bb) override for geometry control.
+
+.PARAMETER StartingPotBB
+Optional flop starting pot (bb) override for geometry control.
+
+.PARAMETER MinimumBetBB
+Optional minimum bet (bb) override for geometry control.
+
+.PARAMETER VillainRange
+Optional villain range override for width-control during data collection.
 #>
 [CmdletBinding()]
 param (
@@ -40,7 +52,11 @@ param (
     [switch]$Aggressive,
     [ValidateSet("scripted_tight","scripted_aggressive","engine_random")]
     [string]$VillainMode = "",
-    [string]$ArtifactDir = ""
+    [string]$ArtifactDir = "",
+    [int]$StartingStackBB = 0,
+    [int]$StartingPotBB = 0,
+    [int]$MinimumBetBB = 0,
+    [string]$VillainRange = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -122,6 +138,18 @@ if (-not [string]::IsNullOrWhiteSpace($VillainMode)) {
 }
 if (-not [string]::IsNullOrWhiteSpace($resolvedArtifactDir)) {
     $pythonArgs += @("--artifact-dir", $resolvedArtifactDir)
+}
+if ($StartingStackBB -gt 0) {
+    $pythonArgs += @("--starting-stack-bb", $StartingStackBB)
+}
+if ($StartingPotBB -gt 0) {
+    $pythonArgs += @("--starting-pot-bb", $StartingPotBB)
+}
+if ($MinimumBetBB -gt 0) {
+    $pythonArgs += @("--minimum-bet-bb", $MinimumBetBB)
+}
+if (-not [string]::IsNullOrWhiteSpace($VillainRange)) {
+    $pythonArgs += @("--villain-range", $VillainRange)
 }
 
 Write-Host "Executing python harness..." -ForegroundColor DarkGray
