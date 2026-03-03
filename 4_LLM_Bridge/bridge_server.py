@@ -545,6 +545,48 @@ try:
     SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC = int(os.environ.get("SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC", "180"))
 except ValueError:
     SHARK_CLASSIC_GUARD_MAX_TIMEOUT_SEC = 180
+FAST_LIVE_FLOP_COMPLEXITY_GUARD_ENABLED = os.environ.get(
+    "FAST_LIVE_FLOP_COMPLEXITY_GUARD_ENABLED",
+    "1",
+).strip() not in {
+    "0",
+    "false",
+    "False",
+}
+FAST_LIVE_FLOP_COMPLEXITY_GUARD_ALLOW_ACTIVE_NODE = os.environ.get(
+    "FAST_LIVE_FLOP_COMPLEXITY_GUARD_ALLOW_ACTIVE_NODE",
+    "0",
+).strip() not in {
+    "0",
+    "false",
+    "False",
+}
+try:
+    FAST_LIVE_FLOP_GUARD_MIN_STACK_BB = int(os.environ.get("FAST_LIVE_FLOP_GUARD_MIN_STACK_BB", "80"))
+except ValueError:
+    FAST_LIVE_FLOP_GUARD_MIN_STACK_BB = 80
+try:
+    FAST_LIVE_FLOP_GUARD_MIN_SPR = float(os.environ.get("FAST_LIVE_FLOP_GUARD_MIN_SPR", "10.0"))
+except ValueError:
+    FAST_LIVE_FLOP_GUARD_MIN_SPR = 10.0
+try:
+    FAST_LIVE_FLOP_GUARD_MIN_VILLAIN_RANGE_WIDTH = int(
+        os.environ.get("FAST_LIVE_FLOP_GUARD_MIN_VILLAIN_RANGE_WIDTH", "20")
+    )
+except ValueError:
+    FAST_LIVE_FLOP_GUARD_MIN_VILLAIN_RANGE_WIDTH = 20
+try:
+    FAST_LIVE_FLOP_GUARD_MAX_FACING_RATIO = float(
+        os.environ.get("FAST_LIVE_FLOP_GUARD_MAX_FACING_RATIO", "0.25")
+    )
+except ValueError:
+    FAST_LIVE_FLOP_GUARD_MAX_FACING_RATIO = 0.25
+try:
+    FAST_LIVE_FLOP_GUARD_MAX_BASELINE_TIMEOUT_SEC = int(
+        os.environ.get("FAST_LIVE_FLOP_GUARD_MAX_BASELINE_TIMEOUT_SEC", "10")
+    )
+except ValueError:
+    FAST_LIVE_FLOP_GUARD_MAX_BASELINE_TIMEOUT_SEC = 10
 ENABLE_CLOUD_CANDIDATE_SEARCH = os.environ.get("ENABLE_CLOUD_CANDIDATE_SEARCH", "0").strip() not in {
     "0",
     "false",
@@ -1515,6 +1557,114 @@ def _extract_spot_facing_bet(spot: Dict[str, Any]) -> float:
         active = str(spot.get("active_node_path", "")).strip()
         facing = float(_extract_last_bet_amount_from_active_node_path(active) or 0)
     return max(0.0, facing)
+
+
+def _fast_live_flop_complexity_bucket_id(*, spr: float, facing_ratio: float, villain_range_width: int, active_node: bool) -> str:
+    if spr >= 16.0:
+        spr_bucket = "spr16+"
+    elif spr >= 12.0:
+        spr_bucket = "spr12-16"
+    elif spr >= 10.0:
+        spr_bucket = "spr10-12"
+    else:
+        spr_bucket = "spr<10"
+    if facing_ratio <= 0.0:
+        facing_bucket = "face0"
+    elif facing_ratio <= 0.10:
+        facing_bucket = "face<=0.10"
+    elif facing_ratio <= 0.25:
+        facing_bucket = "face<=0.25"
+    else:
+        facing_bucket = "face>0.25"
+    if villain_range_width >= 40:
+        range_bucket = "vr40+"
+    elif villain_range_width >= 30:
+        range_bucket = "vr30-40"
+    elif villain_range_width >= 20:
+        range_bucket = "vr20-30"
+    else:
+        range_bucket = "vr<20"
+    active_bucket = "active-node" if active_node else "no-active-node"
+    return f"flop|{spr_bucket}|{facing_bucket}|{range_bucket}|{active_bucket}"
+
+
+def _evaluate_fast_live_flop_complexity_guard(
+    *,
+    runtime_profile: str,
+    spot: Dict[str, Any],
+    baseline_timeout_sec: int,
+    street: str,
+) -> Dict[str, Any]:
+    if str(runtime_profile or "").strip().lower() != "fast_live":
+        return {"skip": False}
+    if not FAST_LIVE_FLOP_COMPLEXITY_GUARD_ENABLED:
+        return {"skip": False}
+    if str(street or "").strip().lower() != "flop":
+        return {"skip": False}
+    board = spot.get("board", [])
+    if not isinstance(board, list) or len(board) != 3:
+        return {"skip": False}
+
+    stack = float(_to_float_or_none(spot.get("starting_stack")) or 0.0)
+    if stack <= 0.0:
+        return {"skip": False}
+    starting_pot = float(_to_float_or_none(spot.get("starting_pot")) or 0.0)
+    if starting_pot <= 0.0:
+        return {"skip": False}
+    facing_bet = _extract_spot_facing_bet(spot)
+    effective_pot = max(1.0, starting_pot + max(0.0, facing_bet))
+    spr = float(stack) / float(effective_pot)
+    facing_ratio = float(facing_bet) / float(effective_pot) if facing_bet > 0.0 else 0.0
+    villain_range_width = _estimate_range_width(str(spot.get("villain_range", "")))
+    active_node_path = str(spot.get("active_node_path", "")).strip()
+    has_active_node = bool(active_node_path)
+    timeout = int(max(1, int(baseline_timeout_sec)))
+    bucket_id = _fast_live_flop_complexity_bucket_id(
+        spr=spr,
+        facing_ratio=facing_ratio,
+        villain_range_width=villain_range_width,
+        active_node=has_active_node,
+    )
+
+    if has_active_node and not FAST_LIVE_FLOP_COMPLEXITY_GUARD_ALLOW_ACTIVE_NODE:
+        return {"skip": False, "meta": {"bucket_id": bucket_id, "active_node_path": active_node_path}}
+
+    should_skip = (
+        stack >= float(FAST_LIVE_FLOP_GUARD_MIN_STACK_BB)
+        and spr >= float(FAST_LIVE_FLOP_GUARD_MIN_SPR)
+        and villain_range_width >= int(FAST_LIVE_FLOP_GUARD_MIN_VILLAIN_RANGE_WIDTH)
+        and facing_ratio <= float(FAST_LIVE_FLOP_GUARD_MAX_FACING_RATIO)
+        and timeout <= int(FAST_LIVE_FLOP_GUARD_MAX_BASELINE_TIMEOUT_SEC)
+    )
+    if not should_skip:
+        return {
+            "skip": False,
+            "meta": {
+                "bucket_id": bucket_id,
+                "spr": round(float(spr), 4),
+                "facing_ratio": round(float(facing_ratio), 4),
+                "villain_range_width": int(villain_range_width),
+                "baseline_timeout_sec": timeout,
+            },
+        }
+
+    return {
+        "skip": True,
+        "reason": "fast_live_flop_complexity_guard_skip",
+        "meta": {
+            "bucket_id": bucket_id,
+            "street": "flop",
+            "stack_bb": round(float(stack), 4),
+            "starting_pot": round(float(starting_pot), 4),
+            "facing_bet": round(float(facing_bet), 4),
+            "spr": round(float(spr), 4),
+            "facing_ratio": round(float(facing_ratio), 4),
+            "villain_range_width": int(villain_range_width),
+            "baseline_timeout_sec": timeout,
+            "active_node_path": active_node_path,
+            "runtime_profile": "fast_live",
+        },
+    }
 
 
 def _dynamic_all_in_threshold(spot: Dict[str, Any], base_threshold: float) -> tuple[float, Dict[str, Any]]:
@@ -3254,6 +3404,7 @@ def _build_fast_failover_response(
     total_bridge_time: float,
     baseline_error: str,
     fast_spot_profile_summary: Optional[Dict[str, Any]],
+    fast_live_flop_complexity_guard_meta: Optional[Dict[str, Any]] = None,
     selection_reason: str = "fast_profile_baseline_failed_lookup_fallback",
     multi_node_policy_reason: str = "fast_failover_lookup",
 ) -> Dict[str, Any]:
@@ -3350,6 +3501,21 @@ def _build_fast_failover_response(
         },
         "warnings": [f"fast_failover_applied:{baseline_error}"],
     }
+    fast_live_flop_complexity_guard_applied = bool(
+        runtime_profile == "fast_live"
+        and isinstance(fast_live_flop_complexity_guard_meta, dict)
+        and bool(fast_live_flop_complexity_guard_meta)
+    )
+    fast_live_flop_complexity_guard_bucket_id = None
+    if fast_live_flop_complexity_guard_applied:
+        fast_live_flop_complexity_guard_bucket_id = str(
+            fast_live_flop_complexity_guard_meta.get("bucket_id") or ""
+        ).strip() or None
+        warnings = result_payload.get("warnings")
+        warnings_list = list(warnings) if isinstance(warnings, list) else []
+        if "fast_live_flop_complexity_guard_applied" not in warnings_list:
+            warnings_list.append("fast_live_flop_complexity_guard_applied")
+        result_payload["warnings"] = warnings_list
     if fast_live_flop_cbet75_bias_applied:
         warnings = result_payload.get("warnings")
         warnings_list = list(warnings) if isinstance(warnings, list) else []
@@ -3435,6 +3601,11 @@ def _build_fast_failover_response(
             "multi_node_enabled": False,
             "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": baseline_error,
+            "flop_baseline_timeout_hit": bool(
+                runtime_profile == "fast_live"
+                and _detect_spot_street(request.spot) == "flop"
+                and "timed out" in str(baseline_error or "").lower()
+            ),
             "neural_time_sec": neural_elapsed,
             "neural_error": neural_error,
             "neural_mode": NEURAL_BRAIN_MODE,
@@ -3451,6 +3622,13 @@ def _build_fast_failover_response(
             "fast_live_fallback_select_time_ms": round(float(fast_live_fallback_select_time_ms), 4),
             "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
             "fast_live_fallback_meta": fast_live_fallback_meta,
+            "fast_live_flop_complexity_guard_applied": fast_live_flop_complexity_guard_applied,
+            "fast_live_flop_complexity_guard_bucket_id": fast_live_flop_complexity_guard_bucket_id,
+            "fast_live_flop_complexity_guard_meta": (
+                dict(fast_live_flop_complexity_guard_meta)
+                if FAST_LIVE_TELEMETRY_LEVEL == "full" and isinstance(fast_live_flop_complexity_guard_meta, dict)
+                else None
+            ),
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,
@@ -3550,6 +3728,13 @@ def health() -> Dict[str, Any]:
         "fast_live_active_node_flop_raise_sizes_raw": FAST_LIVE_ACTIVE_NODE_FLOP_RAISE_SIZES_RAW,
         "fast_live_active_node_flop_max_iterations": FAST_LIVE_ACTIVE_NODE_FLOP_MAX_ITERATIONS,
         "fast_live_active_node_flop_max_raise_cap": FAST_LIVE_ACTIVE_NODE_FLOP_MAX_RAISE_CAP,
+        "fast_live_flop_complexity_guard_enabled": FAST_LIVE_FLOP_COMPLEXITY_GUARD_ENABLED,
+        "fast_live_flop_complexity_guard_allow_active_node": FAST_LIVE_FLOP_COMPLEXITY_GUARD_ALLOW_ACTIVE_NODE,
+        "fast_live_flop_guard_min_stack_bb": FAST_LIVE_FLOP_GUARD_MIN_STACK_BB,
+        "fast_live_flop_guard_min_spr": FAST_LIVE_FLOP_GUARD_MIN_SPR,
+        "fast_live_flop_guard_min_villain_range_width": FAST_LIVE_FLOP_GUARD_MIN_VILLAIN_RANGE_WIDTH,
+        "fast_live_flop_guard_max_facing_ratio": FAST_LIVE_FLOP_GUARD_MAX_FACING_RATIO,
+        "fast_live_flop_guard_max_baseline_timeout_sec": FAST_LIVE_FLOP_GUARD_MAX_BASELINE_TIMEOUT_SEC,
         "spot_dynamic_all_in_threshold_enabled": SPOT_DYNAMIC_ALL_IN_THRESHOLD_ENABLED,
         "spot_dynamic_all_in_threshold_min": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MIN,
         "spot_dynamic_all_in_threshold_max": SPOT_DYNAMIC_ALL_IN_THRESHOLD_MAX,
@@ -3712,6 +3897,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                 "meta": guard.get("meta", {}),
             },
         )
+    fast_live_flop_complexity_guard_meta: Optional[Dict[str, Any]] = None
 
     if runtime_profile == "fast" and spot_street == "flop" and FAST_FLOP_LOOKUP_ONLY:
         total_bridge_time = time.perf_counter() - bridge_started
@@ -3752,6 +3938,34 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             fast_spot_profile_summary=fast_spot_profile_summary,
             selection_reason="fast_profile_turn_lookup_only",
             multi_node_policy_reason="fast_turn_lookup_only",
+        )
+    fast_live_guard = _evaluate_fast_live_flop_complexity_guard(
+        runtime_profile=runtime_profile,
+        spot=effective_spot,
+        baseline_timeout_sec=int(stage_budgets.get("baseline_timeout_sec", request.timeout_sec)),
+        street=spot_street,
+    )
+    if bool(fast_live_guard.get("skip")):
+        fast_live_flop_complexity_guard_meta = dict(fast_live_guard.get("meta") or {})
+        total_bridge_time = time.perf_counter() - bridge_started
+        _record_canary_observation(
+            fallback=True,
+            kept=False,
+            latency_sec=total_bridge_time,
+        )
+        return _build_fast_failover_response(
+            request=request,
+            runtime_profile=runtime_profile,
+            stage_budgets=stage_budgets,
+            request_total_budget_sec=request_total_budget_sec,
+            llm_timeout_effective=int(stage_budgets["llm_timeout_sec"]),
+            locked_stage_total_effective=float(stage_budgets["locked_stage_total_sec"]),
+            total_bridge_time=total_bridge_time,
+            baseline_error=str(fast_live_guard.get("reason") or "fast_live_flop_complexity_guard_skip"),
+            fast_spot_profile_summary=fast_spot_profile_summary,
+            fast_live_flop_complexity_guard_meta=fast_live_flop_complexity_guard_meta,
+            selection_reason="fast_live_profile_flop_complexity_guard_skip",
+            multi_node_policy_reason="fast_live_flop_complexity_guard_skip",
         )
     active_node_path = str(request.spot.get("active_node_path", "")).strip()
     active_node_facing_bet = (
@@ -4287,6 +4501,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "multi_node_enabled": multi_node_enabled,
             "multi_node_policy_reason": multi_node_policy_reason,
             "llm_error": llm_error,
+            "flop_baseline_timeout_hit": bool(
+                runtime_profile == "fast_live"
+                and spot_street == "flop"
+                and "timed out" in str(llm_error or "").lower()
+            ),
             "neural_time_sec": neural_elapsed,
             "neural_error": neural_error,
             "neural_mode": NEURAL_BRAIN_MODE,
@@ -4304,6 +4523,21 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "fast_live_fallback_select_time_ms": None,
             "fast_live_fallback_telemetry_level": FAST_LIVE_TELEMETRY_LEVEL,
             "fast_live_fallback_meta": None,
+            "fast_live_flop_complexity_guard_applied": bool(
+                runtime_profile == "fast_live"
+                and isinstance(fast_live_flop_complexity_guard_meta, dict)
+                and bool(fast_live_flop_complexity_guard_meta)
+            ),
+            "fast_live_flop_complexity_guard_bucket_id": (
+                str(fast_live_flop_complexity_guard_meta.get("bucket_id") or "").strip() or None
+                if isinstance(fast_live_flop_complexity_guard_meta, dict)
+                else None
+            ),
+            "fast_live_flop_complexity_guard_meta": (
+                dict(fast_live_flop_complexity_guard_meta)
+                if FAST_LIVE_TELEMETRY_LEVEL == "full" and isinstance(fast_live_flop_complexity_guard_meta, dict)
+                else None
+            ),
             "runtime_profile": runtime_profile,
             "stage_budgets": stage_budgets,
             "fast_spot_profile": fast_spot_profile_summary,

@@ -104,6 +104,14 @@ UI hand export:
 - `FAST_LIVE_ACTIVE_STREET_BET_KEEP` (default `2`)
 - `FAST_LIVE_ACTIVE_STREET_RAISE_KEEP` (default `2`)
 - `FAST_LIVE_PRESERVE_DONK_TREE_ON_ACTIVE_NODE` (default `0`; keep off for lower flop latency)
+- pre-solver flop fast-fail complexity guard (skips only high-SPR/wide-range/high-timeout-risk flop spots):
+  - `FAST_LIVE_FLOP_COMPLEXITY_GUARD_ENABLED` (default `1`)
+  - `FAST_LIVE_FLOP_COMPLEXITY_GUARD_ALLOW_ACTIVE_NODE` (default `0`)
+  - `FAST_LIVE_FLOP_GUARD_MIN_STACK_BB` (default `80`)
+  - `FAST_LIVE_FLOP_GUARD_MIN_SPR` (default `10.0`)
+  - `FAST_LIVE_FLOP_GUARD_MIN_VILLAIN_RANGE_WIDTH` (default `20`)
+  - `FAST_LIVE_FLOP_GUARD_MAX_FACING_RATIO` (default `0.25`)
+  - `FAST_LIVE_FLOP_GUARD_MAX_BASELINE_TIMEOUT_SEC` (default `10`)
 - global flop reduction (applies on all `fast_live` flop spots before active-node overrides):
   - `FAST_LIVE_FLOP_FORCE_REDUCTION` (default `1`)
   - `FAST_LIVE_FLOP_REDUCTION_BET_SIZES` (default `0.5,1.0`)
