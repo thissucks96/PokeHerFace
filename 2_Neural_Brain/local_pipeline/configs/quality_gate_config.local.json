@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "description": "Local quality gate config for neural mixed-geometry collection.",
+  "input": {
+    "artifact_dir": "5_Vision_Extraction/out/flop_engine",
+    "max_files": 0,
+    "runtime_profiles": []
+  },
+  "gates": {
+    "min_guard_hit_ratio": 0.30,
+    "max_guard_hit_ratio": 0.70,
+    "min_total_flops": 200,
+    "min_bucket_samples": 20,
+    "min_qualified_buckets": 4
+  },
+  "output": {
+    "report_json": "2_Neural_Brain/local_pipeline/reports/flop_distribution_quality_gate.json"
+  }
+}

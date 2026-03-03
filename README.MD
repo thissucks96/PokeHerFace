@@ -50,6 +50,14 @@ Stateful synthetic sim:
 .\scripts\test_stateful_sim.ps1 -Hands 50 -RuntimeProfile fast_live -VillainMode scripted_aggressive
 ```
 
+Neural dataset pilot (mixed geometry + quality gate):
+
+```powershell
+.\scripts\run_neural_collection_recipe.ps1 -RecipePreset mixed_geometry_v1 -TotalHands 500 -RuntimeProfile fast_live
+python .\scripts\quality_gate_flop_distribution.py --strict
+python .\scripts\build_neural_dataset.py --response-dir 5_Vision_Extraction\out\flop_engine --write
+```
+
 Direct reproducible A/B (same seed):
 
 ```powershell
@@ -196,6 +204,7 @@ python scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
 - When `--artifact-dir` is provided, stateful sim now writes payload/response artifacts for both successful solves and failed calls (timeout/HTTP errors), so failure forensics are preserved.
 - `run_stateful_sim.py` now supports:
   - `--shark-classic-reference`: constrained Shark-contract reference setup (smaller stack/range for reliable fidelity runs)
+  - `--villain-range`: explicit range-width control for dataset generation recipes
   - early `complexity_guard_skip` labeling for high-complexity non-reference `shark_classic` flop spots (can be disabled with `--disable-complexity-guard`)
 - Bridge now has an optional shark-classic complexity guard for direct `/solve` calls:
   - `SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED=1` (default on)

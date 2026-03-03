@@ -35,11 +35,17 @@ This creates the folder layout and writes starter local configs (if missing):
 
 ## Core Scripts
 
-0. Collect mixed training artifacts with a repeatable villain recipe:
+0. Collect mixed training artifacts with mixed geometry + villain profiles:
 
 ```powershell
 python .\scripts\setup_local_neural_workspace.py
-.\scripts\run_neural_collection_recipe.ps1 -TotalHands 300 -RuntimeProfile fast_live
+.\scripts\run_neural_collection_recipe.ps1 -RecipePreset mixed_geometry_v1 -TotalHands 500 -RuntimeProfile fast_live
+```
+
+Run the pre-training quality gate (guard-hit band + bucket diversity):
+
+```powershell
+python .\scripts\quality_gate_flop_distribution.py --strict
 ```
 
 1. Analyze/build dataset rows (analysis-only by default):
