@@ -410,6 +410,11 @@ except ValueError:
 FAST_LIVE_TELEMETRY_LEVEL = str(os.environ.get("FAST_LIVE_TELEMETRY_LEVEL", "lean")).strip().lower()
 if FAST_LIVE_TELEMETRY_LEVEL not in {"lean", "full"}:
     FAST_LIVE_TELEMETRY_LEVEL = "lean"
+try:
+    FEATURE_EXTRACT_TELEMETRY_WINDOW = int(os.environ.get("FEATURE_EXTRACT_TELEMETRY_WINDOW", "4096"))
+except ValueError:
+    FEATURE_EXTRACT_TELEMETRY_WINDOW = 4096
+FEATURE_EXTRACT_TELEMETRY_WINDOW = max(64, min(50000, FEATURE_EXTRACT_TELEMETRY_WINDOW))
 FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED = os.environ.get(
     "FAST_LIVE_RIVER_SMALL_FACE_OVERRIDE_ENABLED",
     "1",
@@ -697,6 +702,16 @@ _UNRESOLVED_GATE_CACHE: Dict[str, Any] = {
     "exact_ids": set(),
     "coarse_ids": set(),
 }
+_FEATURE_EXTRACT_LOCK = threading.Lock()
+_FEATURE_EXTRACT_RECENT_MS: deque[float] = deque(maxlen=FEATURE_EXTRACT_TELEMETRY_WINDOW)
+_FEATURE_EXTRACT_STATE: Dict[str, Any] = {
+    "total_calls": 0,
+    "valid_calls": 0,
+    "invalid_calls": 0,
+    "last_ms": None,
+    "last_valid": None,
+    "last_error_count": 0,
+}
 
 
 def _percentile(values: list[float], q: float) -> Optional[float]:
@@ -750,6 +765,45 @@ def _canary_status_snapshot() -> Dict[str, Any]:
         "auto_exit_on_trip": CANARY_AUTO_EXIT_ON_TRIP,
         "summary": summary,
         "state": state,
+    }
+
+
+def _record_feature_extract_observation(*, elapsed_ms: float, is_valid: bool, error_count: int) -> None:
+    with _FEATURE_EXTRACT_LOCK:
+        _FEATURE_EXTRACT_RECENT_MS.append(float(max(0.0, elapsed_ms)))
+        _FEATURE_EXTRACT_STATE["total_calls"] = int(_FEATURE_EXTRACT_STATE.get("total_calls", 0)) + 1
+        if is_valid:
+            _FEATURE_EXTRACT_STATE["valid_calls"] = int(_FEATURE_EXTRACT_STATE.get("valid_calls", 0)) + 1
+        else:
+            _FEATURE_EXTRACT_STATE["invalid_calls"] = int(_FEATURE_EXTRACT_STATE.get("invalid_calls", 0)) + 1
+        _FEATURE_EXTRACT_STATE["last_ms"] = float(max(0.0, elapsed_ms))
+        _FEATURE_EXTRACT_STATE["last_valid"] = bool(is_valid)
+        _FEATURE_EXTRACT_STATE["last_error_count"] = int(max(0, error_count))
+
+
+def _feature_extract_stats_snapshot() -> Dict[str, Any]:
+    with _FEATURE_EXTRACT_LOCK:
+        state = dict(_FEATURE_EXTRACT_STATE)
+        recent_ms = list(_FEATURE_EXTRACT_RECENT_MS)
+    total_calls = int(state.get("total_calls", 0))
+    invalid_calls = int(state.get("invalid_calls", 0))
+    invalid_rate = (float(invalid_calls) / float(total_calls)) if total_calls > 0 else 0.0
+    return {
+        "window_size": FEATURE_EXTRACT_TELEMETRY_WINDOW,
+        "recent_samples": len(recent_ms),
+        "p50_ms": _percentile(recent_ms, 0.50),
+        "p95_ms": _percentile(recent_ms, 0.95),
+        "p99_ms": _percentile(recent_ms, 0.99),
+        "max_ms": (max(recent_ms) if recent_ms else None),
+        "state": {
+            "total_calls": total_calls,
+            "valid_calls": int(state.get("valid_calls", 0)),
+            "invalid_calls": invalid_calls,
+            "invalid_rate": invalid_rate,
+            "last_ms": state.get("last_ms"),
+            "last_valid": state.get("last_valid"),
+            "last_error_count": int(state.get("last_error_count", 0)),
+        },
     }
 
 
@@ -2977,16 +3031,56 @@ def _evaluate_neural_unresolved_gate(spot: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _feature_contract_meta_for_spot(spot: Dict[str, Any], runtime_profile: str) -> Dict[str, Any]:
-    source, features = source_features_from_spot(
-        spot=spot,
-        runtime_profile=str(runtime_profile or "").strip().lower(),
-        stage="bridge_live",
+    started = time.perf_counter()
+    meta: Dict[str, Any]
+    source: Dict[str, Any] = {}
+    features: Dict[str, Any] = {}
+    extraction_error: Optional[str] = None
+    try:
+        source, features = source_features_from_spot(
+            spot=spot,
+            runtime_profile=str(runtime_profile or "").strip().lower(),
+            stage="bridge_live",
+        )
+        meta = feature_contract_metadata(
+            source=source,
+            features=features,
+            input_dim=FEATURE_DEFAULT_INPUT_DIM,
+        )
+    except Exception as exc:
+        extraction_error = f"feature_extraction_exception:{type(exc).__name__}"
+        meta = {
+            "schema_version": FEATURE_SCHEMA_VERSION,
+            "contract_hash": FEATURE_CONTRACT_HASH,
+            "input_dim": int(FEATURE_DEFAULT_INPUT_DIM),
+            "feature_key_hash": "",
+            "vector_hash": "",
+            "is_valid_extraction": False,
+            "validation_error_count": 1,
+            "validation_errors": [extraction_error],
+        }
+    elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000.0)
+    validation_errors = meta.get("validation_errors")
+    if not isinstance(validation_errors, list):
+        validation_errors = []
+    if extraction_error and extraction_error not in validation_errors:
+        validation_errors.append(extraction_error)
+    error_count = int(meta.get("validation_error_count") or len(validation_errors))
+    meta["validation_error_count"] = int(max(0, error_count))
+    meta["is_valid_extraction"] = bool(meta.get("is_valid_extraction")) and int(meta["validation_error_count"]) == 0
+    if FAST_LIVE_TELEMETRY_LEVEL == "full":
+        meta["validation_errors"] = list(validation_errors)
+        meta["feature_contract_source"] = source
+        meta["feature_contract_features"] = features
+    else:
+        meta["validation_errors"] = []
+    meta["extract_time_ms"] = round(float(elapsed_ms), 4)
+    _record_feature_extract_observation(
+        elapsed_ms=elapsed_ms,
+        is_valid=bool(meta.get("is_valid_extraction")),
+        error_count=int(meta.get("validation_error_count") or 0),
     )
-    return feature_contract_metadata(
-        source=source,
-        features=features,
-        input_dim=FEATURE_DEFAULT_INPUT_DIM,
-    )
+    return meta
 
 
 def _is_fast_live_flop_cbet75_bias_spot(
@@ -3886,6 +3980,14 @@ def _build_fast_failover_response(
             "feature_input_dim": int(feature_contract_meta.get("input_dim") or FEATURE_DEFAULT_INPUT_DIM),
             "feature_key_hash": str(feature_contract_meta.get("feature_key_hash") or ""),
             "feature_vector_hash": str(feature_contract_meta.get("vector_hash") or ""),
+            "feature_extract_time_ms": float(feature_contract_meta.get("extract_time_ms") or 0.0),
+            "feature_is_valid_extraction": bool(feature_contract_meta.get("is_valid_extraction")),
+            "feature_validation_error_count": int(feature_contract_meta.get("validation_error_count") or 0),
+            "feature_validation_errors": (
+                list(feature_contract_meta.get("validation_errors") or [])
+                if FAST_LIVE_TELEMETRY_LEVEL == "full"
+                else []
+            ),
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": fast_live_flop_cbet_mix_applied,
@@ -3920,6 +4022,7 @@ def _build_fast_failover_response(
 @app.get("/health")
 def health() -> Dict[str, Any]:
     shark_cli = _resolve_shark_cli()
+    feature_extract_stats = _feature_extract_stats_snapshot()
     tesseract_path = ""
     tesseract_ok = False
     try:
@@ -3949,6 +4052,8 @@ def health() -> Dict[str, Any]:
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "feature_contract_hash": FEATURE_CONTRACT_HASH,
         "feature_default_input_dim": FEATURE_DEFAULT_INPUT_DIM,
+        "feature_extract_telemetry_window": FEATURE_EXTRACT_TELEMETRY_WINDOW,
+        "feature_extract_stats": feature_extract_stats,
         "neural_brain_adapter_path": str(NEURAL_BRAIN_ADAPTER_PATH),
         "neural_brain_timeout_sec": NEURAL_BRAIN_TIMEOUT_SEC,
         "neural_brain_cfr_iters": NEURAL_BRAIN_CFR_ITERS,
@@ -4825,6 +4930,14 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "feature_input_dim": int(feature_contract_meta.get("input_dim") or FEATURE_DEFAULT_INPUT_DIM),
             "feature_key_hash": str(feature_contract_meta.get("feature_key_hash") or ""),
             "feature_vector_hash": str(feature_contract_meta.get("vector_hash") or ""),
+            "feature_extract_time_ms": float(feature_contract_meta.get("extract_time_ms") or 0.0),
+            "feature_is_valid_extraction": bool(feature_contract_meta.get("is_valid_extraction")),
+            "feature_validation_error_count": int(feature_contract_meta.get("validation_error_count") or 0),
+            "feature_validation_errors": (
+                list(feature_contract_meta.get("validation_errors") or [])
+                if FAST_LIVE_TELEMETRY_LEVEL == "full"
+                else []
+            ),
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": False,

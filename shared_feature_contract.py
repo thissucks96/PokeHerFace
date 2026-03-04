@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Dict, List, Tuple
 
 
@@ -110,6 +111,8 @@ FEATURE_CONTRACT_HASH = hashlib.sha256(
     json.dumps(FEATURE_CONTRACT_SPEC, sort_keys=True, separators=(",", ":")).encode("utf-8")
 ).hexdigest()
 
+_CARD_TOKEN_RE = re.compile(r"^(10|[2-9TJQKA])[CDHS]$", re.IGNORECASE)
+
 
 def _normalize_source(source: Dict[str, Any]) -> Dict[str, Any]:
     out = {
@@ -117,6 +120,10 @@ def _normalize_source(source: Dict[str, Any]) -> Dict[str, Any]:
         "street": str(source.get("street") or "").strip().lower(),
     }
     return out
+
+
+def _is_valid_card_token(token: str) -> bool:
+    return bool(_CARD_TOKEN_RE.match(str(token or "").strip().upper()))
 
 
 def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
@@ -156,6 +163,62 @@ def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dic
         "hero_is_small_blind": bool(features.get("hero_is_small_blind", True)),
         "hero_cards": hero_tokens,
         "street": street,
+    }
+
+
+def validate_feature_inputs(source: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate normalized contract inputs and return explicit extraction status."""
+    source_n = _normalize_source(source)
+    features_n = _normalize_features(features, source_n)
+    errors: List[str] = []
+
+    board = features_n.get("board") if isinstance(features_n.get("board"), list) else []
+    board_len = len(board)
+    if board_len not in {0, 3, 4, 5}:
+        errors.append(f"board_card_count_invalid:{board_len}")
+    for card in board:
+        if not _is_valid_card_token(str(card)):
+            errors.append(f"board_card_invalid:{card}")
+
+    hero_cards = features_n.get("hero_cards") if isinstance(features_n.get("hero_cards"), list) else []
+    if len(hero_cards) not in {0, 2}:
+        errors.append(f"hero_card_count_invalid:{len(hero_cards)}")
+    for card in hero_cards:
+        if not _is_valid_card_token(str(card)):
+            errors.append(f"hero_card_invalid:{card}")
+
+    expected_street = detect_street(board)
+    declared_street = str(source_n.get("street") or "").strip().lower()
+    if declared_street and expected_street != "unknown" and declared_street != expected_street:
+        errors.append(f"street_board_mismatch:{declared_street}->{expected_street}")
+
+    non_negative_fields = [
+        "starting_stack",
+        "starting_pot",
+        "minimum_bet",
+        "current_pot",
+        "hero_chips",
+        "villain_chips",
+        "facing_bet",
+        "hero_street_commit",
+        "villain_street_commit",
+    ]
+    for name in non_negative_fields:
+        value = _safe_float(features_n.get(name), 0.0)
+        if value < 0.0:
+            errors.append(f"negative_value:{name}={value}")
+
+    if _safe_float(features_n.get("minimum_bet"), 0.0) <= 0.0:
+        errors.append("minimum_bet_nonpositive")
+    if _safe_float(features_n.get("all_in_threshold"), 0.0) <= 0.0:
+        errors.append("all_in_threshold_nonpositive")
+
+    return {
+        "is_valid_extraction": len(errors) == 0,
+        "error_count": len(errors),
+        "errors": errors,
+        "source": source_n,
+        "features": features_n,
     }
 
 
@@ -238,12 +301,18 @@ def feature_vector_hash(source: Dict[str, Any], features: Dict[str, Any], input_
 
 
 def feature_contract_metadata(source: Dict[str, Any], features: Dict[str, Any], input_dim: int) -> Dict[str, Any]:
+    validation = validate_feature_inputs(source, features)
+    source_n = validation["source"]
+    features_n = validation["features"]
     return {
         "schema_version": FEATURE_SCHEMA_VERSION,
         "contract_hash": FEATURE_CONTRACT_HASH,
         "input_dim": int(max(16, int(input_dim))),
-        "feature_key_hash": feature_key_hash(source=source, features=features),
-        "vector_hash": feature_vector_hash(source=source, features=features, input_dim=input_dim),
+        "feature_key_hash": feature_key_hash(source=source_n, features=features_n),
+        "vector_hash": feature_vector_hash(source=source_n, features=features_n, input_dim=input_dim),
+        "is_valid_extraction": bool(validation["is_valid_extraction"]),
+        "validation_error_count": int(validation["error_count"]),
+        "validation_errors": list(validation["errors"]),
     }
 
 
