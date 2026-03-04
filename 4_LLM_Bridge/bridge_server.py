@@ -629,6 +629,17 @@ NEURAL_BRAIN_ENABLED = os.environ.get("NEURAL_BRAIN_ENABLED", "0").strip() not i
 NEURAL_BRAIN_MODE = str(os.environ.get("NEURAL_BRAIN_MODE", "shadow")).strip().lower()
 if NEURAL_BRAIN_MODE not in {"shadow", "prefer", "prefer_on_fast_failover"}:
     NEURAL_BRAIN_MODE = "shadow"
+NEURAL_UNRESOLVED_GATE_ENABLED = os.environ.get("NEURAL_UNRESOLVED_GATE_ENABLED", "0").strip() not in {
+    "0",
+    "false",
+    "False",
+}
+NEURAL_UNRESOLVED_GATE_JSON = Path(
+    os.environ.get(
+        "NEURAL_UNRESOLVED_GATE_JSON",
+        str(ROOT / "2_Neural_Brain" / "local_pipeline" / "reports" / "unresolved_gate_ids.json"),
+    )
+).expanduser()
 NEURAL_BRAIN_ADAPTER_PATH = Path(
     os.environ.get("NEURAL_BRAIN_ADAPTER_PATH", str(ROOT / "4_LLM_Bridge" / "neural_brain_adapter.py"))
 ).expanduser()
@@ -659,6 +670,12 @@ _CANARY_STATE: Dict[str, Any] = {
     "trip_value": None,
     "trip_threshold": None,
     "trip_at_unix": None,
+}
+_UNRESOLVED_GATE_LOCK = threading.Lock()
+_UNRESOLVED_GATE_CACHE: Dict[str, Any] = {
+    "path": "",
+    "mtime_ns": None,
+    "ids": set(),
 }
 
 
@@ -2746,6 +2763,112 @@ def _classify_flop_board_bucket(spot: Dict[str, Any]) -> str:
     return f"{suit_class}|{conn_class}"
 
 
+def _normalize_board_card_token(token: Any) -> str:
+    card = str(token or "").strip()
+    if len(card) < 2:
+        return ""
+    if card[:2] == "10":
+        rank_token = "T"
+        suit_token = card[2:3].lower()
+    else:
+        rank_token = card[:1].upper()
+        suit_token = card[-1:].lower()
+    if rank_token not in _RANK_VALUE_MAP:
+        return ""
+    if suit_token not in {"s", "h", "d", "c"}:
+        return ""
+    return f"{rank_token}{suit_token}"
+
+
+def _build_neural_unresolved_gate_id(spot: Dict[str, Any]) -> str:
+    street = _detect_spot_street(spot)
+    board = spot.get("board")
+    board_tokens = [_normalize_board_card_token(card) for card in (board if isinstance(board, list) else [])]
+    board_tokens = [token for token in board_tokens if token]
+    board_class = _classify_flop_board_bucket(spot) if street == "flop" else _classify_postflop_board_bucket(spot)
+    board_key = "-".join(board_tokens[:5]) if board_tokens else "none"
+
+    stack = int(max(0.0, round(float(_to_float_or_none(spot.get("starting_stack")) or 0.0))))
+    pot = int(max(0.0, round(float(_to_float_or_none(spot.get("starting_pot")) or 0.0))))
+    min_bet = int(max(1.0, round(float(_to_float_or_none(spot.get("minimum_bet")) or 1.0))))
+    facing = int(max(0.0, round(float(_to_float_or_none(spot.get("facing_bet")) or 0.0))))
+    in_pos = 1 if _hero_is_in_position(spot) else 0
+    villain_range_width = _estimate_range_width(str(spot.get("villain_range", "")))
+    return (
+        f"{street}|stack:{stack}|pot:{pot}|minbet:{min_bet}|facing:{facing}|"
+        f"vrw:{villain_range_width}|pos:{in_pos}|board:{board_class}|cards:{board_key}"
+    )
+
+
+def _load_unresolved_gate_ids() -> set[str]:
+    if not NEURAL_UNRESOLVED_GATE_ENABLED:
+        return set()
+    path = NEURAL_UNRESOLVED_GATE_JSON.resolve()
+    path_key = str(path)
+    mtime_ns: Optional[int]
+    if not path.exists():
+        with _UNRESOLVED_GATE_LOCK:
+            _UNRESOLVED_GATE_CACHE["path"] = path_key
+            _UNRESOLVED_GATE_CACHE["mtime_ns"] = None
+            _UNRESOLVED_GATE_CACHE["ids"] = set()
+        return set()
+    try:
+        mtime_ns = int(path.stat().st_mtime_ns)
+    except OSError:
+        return set()
+    with _UNRESOLVED_GATE_LOCK:
+        if (
+            _UNRESOLVED_GATE_CACHE.get("path") == path_key
+            and _UNRESOLVED_GATE_CACHE.get("mtime_ns") == mtime_ns
+            and isinstance(_UNRESOLVED_GATE_CACHE.get("ids"), set)
+        ):
+            return set(_UNRESOLVED_GATE_CACHE.get("ids") or set())
+
+    ids: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            items = payload.get("unresolved_gate_ids")
+            if isinstance(items, list):
+                for item in items:
+                    token = str(item or "").strip()
+                    if token:
+                        ids.add(token)
+        elif isinstance(payload, list):
+            for item in payload:
+                token = str(item or "").strip()
+                if token:
+                    ids.add(token)
+    except (OSError, json.JSONDecodeError):
+        ids = set()
+
+    with _UNRESOLVED_GATE_LOCK:
+        _UNRESOLVED_GATE_CACHE["path"] = path_key
+        _UNRESOLVED_GATE_CACHE["mtime_ns"] = mtime_ns
+        _UNRESOLVED_GATE_CACHE["ids"] = set(ids)
+    return ids
+
+
+def _evaluate_neural_unresolved_gate(spot: Dict[str, Any]) -> Dict[str, Any]:
+    gate_id = _build_neural_unresolved_gate_id(spot)
+    if not NEURAL_UNRESOLVED_GATE_ENABLED:
+        return {
+            "enabled": False,
+            "hit": False,
+            "gate_id": gate_id,
+            "source": str(NEURAL_UNRESOLVED_GATE_JSON),
+        }
+    gate_ids = _load_unresolved_gate_ids()
+    hit = gate_id in gate_ids
+    return {
+        "enabled": True,
+        "hit": hit,
+        "gate_id": gate_id,
+        "source": str(NEURAL_UNRESOLVED_GATE_JSON),
+        "gate_count": len(gate_ids),
+    }
+
+
 def _is_fast_live_flop_cbet75_bias_spot(
     spot: Dict[str, Any],
     *,
@@ -3453,16 +3576,21 @@ def _build_fast_failover_response(
         and str(chosen_action or "").strip().lower().startswith("bet:")
     )
     allowed_actions_before_neural = list(allowed_actions)
+    unresolved_neural_gate = _evaluate_neural_unresolved_gate(request.spot)
     neural_attempted = False
     neural_timeout_effective = 0
-    neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
-        spot=request.spot,
-        allowed_actions=allowed_actions,
-        timeout_sec=NEURAL_BRAIN_TIMEOUT_SEC,
-    )
-    if NEURAL_BRAIN_ENABLED:
-        neural_attempted = True
-        neural_timeout_effective = int(max(1, NEURAL_BRAIN_TIMEOUT_SEC))
+    neural_payload = None
+    if bool(unresolved_neural_gate.get("hit")):
+        neural_error = "unresolved_spot_gate_skip"
+    else:
+        neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
+            spot=request.spot,
+            allowed_actions=allowed_actions,
+            timeout_sec=NEURAL_BRAIN_TIMEOUT_SEC,
+        )
+        if NEURAL_BRAIN_ENABLED:
+            neural_attempted = True
+            neural_timeout_effective = int(max(1, NEURAL_BRAIN_TIMEOUT_SEC))
     if isinstance(neural_payload, dict):
         neural_root_actions = neural_payload.get("root_actions")
         neural_allowed = _normalize_action_summary_tokens(neural_root_actions)
@@ -3533,6 +3661,12 @@ def _build_fast_failover_response(
         warnings_list = list(warnings) if isinstance(warnings, list) else []
         if "fast_live_river_small_face_override_applied" not in warnings_list:
             warnings_list.append("fast_live_river_small_face_override_applied")
+        result_payload["warnings"] = warnings_list
+    if bool(unresolved_neural_gate.get("hit")):
+        warnings = result_payload.get("warnings")
+        warnings_list = list(warnings) if isinstance(warnings, list) else []
+        if "neural_unresolved_gate_skip" not in warnings_list:
+            warnings_list.append("neural_unresolved_gate_skip")
         result_payload["warnings"] = warnings_list
     result_payload, allowed_actions, risk_gate = _apply_equity_risk_gate(
         spot=request.spot,
@@ -3611,6 +3745,10 @@ def _build_fast_failover_response(
             "neural_mode": NEURAL_BRAIN_MODE,
             "neural_applied": neural_applied,
             "neural_shadow": neural_shadow,
+            "neural_unresolved_gate_enabled": bool(unresolved_neural_gate.get("enabled")),
+            "neural_unresolved_gate_hit": bool(unresolved_neural_gate.get("hit")),
+            "neural_unresolved_gate_id": str(unresolved_neural_gate.get("gate_id") or "").strip() or None,
+            "neural_unresolved_gate_source": str(unresolved_neural_gate.get("source") or "").strip() or None,
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": fast_live_flop_cbet_mix_applied,
@@ -3668,6 +3806,8 @@ def health() -> Dict[str, Any]:
         "runtime_profile_default": RUNTIME_PROFILE_DEFAULT,
         "neural_brain_enabled": NEURAL_BRAIN_ENABLED,
         "neural_brain_mode": NEURAL_BRAIN_MODE,
+        "neural_unresolved_gate_enabled": NEURAL_UNRESOLVED_GATE_ENABLED,
+        "neural_unresolved_gate_json": str(NEURAL_UNRESOLVED_GATE_JSON),
         "neural_brain_adapter_path": str(NEURAL_BRAIN_ADAPTER_PATH),
         "neural_brain_timeout_sec": NEURAL_BRAIN_TIMEOUT_SEC,
         "neural_brain_cfr_iters": NEURAL_BRAIN_CFR_ITERS,
@@ -4379,35 +4519,46 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     neural_applied = False
     neural_timeout_effective = 0
     neural_attempted = False
+    unresolved_neural_gate = _evaluate_neural_unresolved_gate(request.spot)
     allowed_actions_before_neural = list(allowed_root_actions)
     if NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE in {"shadow", "prefer"}:
-        neural_budget_remaining = max(0.0, request_deadline - time.perf_counter())
-        if neural_budget_remaining >= 1.0:
-            neural_attempted = True
-            neural_timeout_effective = int(max(1, min(NEURAL_BRAIN_TIMEOUT_SEC, int(math.ceil(neural_budget_remaining)))))
-            neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
-                spot=request.spot,
-                allowed_actions=allowed_root_actions,
-                timeout_sec=neural_timeout_effective,
-            )
-            if isinstance(neural_payload, dict):
-                neural_allowed = _normalize_action_summary_tokens(neural_payload.get("root_actions", []))
-                neural_meta = neural_payload.get("meta") if isinstance(neural_payload.get("meta"), dict) else {}
-                neural_surrogate = bool(neural_meta.get("surrogate", False))
-                if NEURAL_BRAIN_MODE == "prefer" and not neural_surrogate:
-                    result = _apply_neural_overlay_to_result(result, neural_payload)
-                    selected_strategy = "neural_brain"
-                    selection_reason = "neural_brain_preferred"
-                    node_lock_kept = False
-                    if neural_allowed:
-                        allowed_root_actions = neural_allowed
-                    neural_applied = True
-                elif NEURAL_BRAIN_MODE == "prefer" and neural_surrogate:
-                    neural_error = "surrogate_shadow_only"
+        if bool(unresolved_neural_gate.get("hit")):
+            neural_error = "unresolved_spot_gate_skip"
         else:
-            neural_error = "global_budget_exhausted_before_neural_stage"
+            neural_budget_remaining = max(0.0, request_deadline - time.perf_counter())
+            if neural_budget_remaining >= 1.0:
+                neural_attempted = True
+                neural_timeout_effective = int(max(1, min(NEURAL_BRAIN_TIMEOUT_SEC, int(math.ceil(neural_budget_remaining)))))
+                neural_payload, neural_error, neural_elapsed = _run_neural_brain_adapter(
+                    spot=request.spot,
+                    allowed_actions=allowed_root_actions,
+                    timeout_sec=neural_timeout_effective,
+                )
+                if isinstance(neural_payload, dict):
+                    neural_allowed = _normalize_action_summary_tokens(neural_payload.get("root_actions", []))
+                    neural_meta = neural_payload.get("meta") if isinstance(neural_payload.get("meta"), dict) else {}
+                    neural_surrogate = bool(neural_meta.get("surrogate", False))
+                    if NEURAL_BRAIN_MODE == "prefer" and not neural_surrogate:
+                        result = _apply_neural_overlay_to_result(result, neural_payload)
+                        selected_strategy = "neural_brain"
+                        selection_reason = "neural_brain_preferred"
+                        node_lock_kept = False
+                        if neural_allowed:
+                            allowed_root_actions = neural_allowed
+                        neural_applied = True
+                    elif NEURAL_BRAIN_MODE == "prefer" and neural_surrogate:
+                        neural_error = "surrogate_shadow_only"
+            else:
+                neural_error = "global_budget_exhausted_before_neural_stage"
     elif NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE == "prefer_on_fast_failover":
         neural_error = "skipped_non_failover_neural_stage"
+
+    if bool(unresolved_neural_gate.get("hit")):
+        warnings = result.get("warnings")
+        warnings_list = list(warnings) if isinstance(warnings, list) else []
+        if "neural_unresolved_gate_skip" not in warnings_list:
+            warnings_list.append("neural_unresolved_gate_skip")
+        result["warnings"] = warnings_list
 
     result, allowed_root_actions, risk_gate = _apply_equity_risk_gate(
         spot=request.spot,
@@ -4512,6 +4663,10 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "neural_applied": neural_applied,
             "neural_timeout_sec": neural_timeout_effective,
             "neural_shadow": neural_shadow,
+            "neural_unresolved_gate_enabled": bool(unresolved_neural_gate.get("enabled")),
+            "neural_unresolved_gate_hit": bool(unresolved_neural_gate.get("hit")),
+            "neural_unresolved_gate_id": str(unresolved_neural_gate.get("gate_id") or "").strip() or None,
+            "neural_unresolved_gate_source": str(unresolved_neural_gate.get("source") or "").strip() or None,
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": False,

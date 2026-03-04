@@ -73,6 +73,28 @@ python .\scripts\label_reference_offline.py `
   --resume
 ```
 
+Post-pass unresolved gate export (for deterministic neural OOD blocking):
+
+```powershell
+python .\scripts\report_reference_label_postpass.py `
+  --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
+  --labels-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
+  --errors-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
+  --manifest-json .\2_Neural_Brain\local_pipeline\reports\offline_label_manifest.json `
+  --report-json .\2_Neural_Brain\local_pipeline\reports\reference_label_postpass_report.json `
+  --unresolved-gate-json .\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json `
+  --strict
+```
+
+Bridge runtime deterministic unresolved gate (local-only, no cloud dependency):
+
+```powershell
+$env:NEURAL_BRAIN_ENABLED = "1"
+$env:NEURAL_BRAIN_MODE = "shadow"
+$env:NEURAL_UNRESOLVED_GATE_ENABLED = "1"
+$env:NEURAL_UNRESOLVED_GATE_JSON = "A:\PokeHerFace\Version1\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json"
+```
+
 Direct reproducible A/B (same seed):
 
 ```powershell

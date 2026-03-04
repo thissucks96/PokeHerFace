@@ -117,10 +117,25 @@ python .\scripts\report_reference_label_postpass.py `
   --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
   --labels-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
   --errors-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
+  --manifest-json .\2_Neural_Brain\local_pipeline\reports\offline_label_manifest.json `
   --report-json .\2_Neural_Brain\local_pipeline\reports\reference_label_postpass_report.json `
+  --unresolved-gate-json .\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json `
   --integrity-tol 1e-5 `
   --strict
 ```
+
+8. Runtime unresolved gate (deterministic skip of unresolved geometries for neural calls):
+
+```powershell
+$env:NEURAL_BRAIN_ENABLED = "1"
+$env:NEURAL_BRAIN_MODE = "shadow"
+$env:NEURAL_UNRESOLVED_GATE_ENABLED = "1"
+$env:NEURAL_UNRESOLVED_GATE_JSON = "A:\PokeHerFace\Version1\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json"
+```
+
+Notes:
+- This is a deterministic gate keyed by geometry bucket ID, not confidence.
+- If a spot is unresolved, bridge logs/metrics expose `neural_unresolved_gate_hit=true` and skips neural inference for that spot.
 
 ## Default Safety Locks
 

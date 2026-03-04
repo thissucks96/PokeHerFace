@@ -144,6 +144,138 @@ def _bucket_id(row: dict[str, Any]) -> str:
     return f"{street}|{pot_bucket}|{face_bucket}|{spr_bucket}"
 
 
+_RANK_VALUE_MAP = {
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "T": 10,
+    "J": 11,
+    "Q": 12,
+    "K": 13,
+    "A": 14,
+}
+
+
+def _extract_rank_suit(token: str) -> tuple[int | None, str]:
+    card = str(token or "").strip()
+    if len(card) < 2:
+        return None, ""
+    if card[:2] == "10":
+        rank_token = "T"
+        suit_token = card[2:3].lower()
+    else:
+        rank_token = card[:1].upper()
+        suit_token = card[-1:].lower()
+    return _RANK_VALUE_MAP.get(rank_token), suit_token if suit_token in {"s", "h", "d", "c"} else ""
+
+
+def _classify_flop_board_bucket(board: Any) -> str:
+    if not isinstance(board, list):
+        return "unknown"
+    cards = [str(card or "").strip() for card in board[:3] if str(card or "").strip()]
+    if len(cards) < 3:
+        return "unknown"
+    ranks: list[int] = []
+    suits: list[str] = []
+    for card in cards:
+        rank_val, suit_val = _extract_rank_suit(card)
+        if rank_val is None:
+            continue
+        ranks.append(rank_val)
+        suits.append(suit_val)
+    if len(ranks) < 3:
+        return "unknown"
+    unique_suits = len(set(suits))
+    if unique_suits == 3:
+        suit_class = "rainbow"
+    elif unique_suits == 2:
+        suit_class = "two-tone"
+    elif unique_suits == 1:
+        suit_class = "monotone"
+    else:
+        suit_class = "unknown"
+    unique_ranks = sorted(set(ranks))
+    connected = len(unique_ranks) >= 2 and (max(unique_ranks) - min(unique_ranks) <= 4)
+    conn_class = "connected" if connected else "disconnected"
+    return f"{suit_class}|{conn_class}"
+
+
+def _classify_postflop_board_bucket(board: Any) -> str:
+    if not isinstance(board, list) or not board:
+        return "unknown"
+    ranks: list[int] = []
+    suits: list[str] = []
+    for card in board[:5]:
+        rank_val, suit_val = _extract_rank_suit(str(card or "").strip())
+        if rank_val is None:
+            continue
+        ranks.append(rank_val)
+        suits.append(suit_val)
+    if len(ranks) < 3:
+        return "unknown"
+    unique_suits = len(set(suits))
+    if unique_suits >= 3:
+        suit_class = "rainbow"
+    elif unique_suits == 2:
+        suit_class = "two-tone"
+    elif unique_suits == 1:
+        suit_class = "monotone"
+    else:
+        suit_class = "unknown"
+    paired = len(set(ranks)) < len(ranks)
+    unique_ranks = sorted(set(ranks))
+    connected = len(unique_ranks) >= 2 and (max(unique_ranks) - min(unique_ranks) <= (len(unique_ranks) + 1))
+    return f"{suit_class}|{'paired' if paired else 'unpaired'}|{'connected' if connected else 'disconnected'}"
+
+
+def _normalize_card(token: Any) -> str:
+    raw = str(token or "").strip()
+    if len(raw) < 2:
+        return ""
+    if raw[:2] == "10":
+        rank = "T"
+        suit = raw[2:3].lower()
+    else:
+        rank = raw[:1].upper()
+        suit = raw[-1:].lower()
+    if rank not in _RANK_VALUE_MAP:
+        return ""
+    if suit not in {"s", "h", "d", "c"}:
+        return ""
+    return f"{rank}{suit}"
+
+
+def _unresolved_gate_id_from_row(row: dict[str, Any]) -> str:
+    source = row.get("source") if isinstance(row.get("source"), dict) else {}
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    street = str(source.get("street") or _street_from_board(features.get("board")) or "unknown").strip().lower()
+    board = features.get("board")
+    board_tokens = [_normalize_card(card) for card in (board if isinstance(board, list) else [])]
+    board_tokens = [token for token in board_tokens if token]
+    board_class = (
+        _classify_flop_board_bucket(board_tokens)
+        if street == "flop"
+        else _classify_postflop_board_bucket(board_tokens)
+    )
+    board_key = "-".join(board_tokens[:5]) if board_tokens else "none"
+
+    stack = int(max(0.0, round(_safe_float(features.get("starting_stack"), 0.0))))
+    pot = int(max(0.0, round(_safe_float(features.get("starting_pot"), 0.0))))
+    min_bet = int(max(1.0, round(_safe_float(features.get("minimum_bet"), 1.0))))
+    facing = int(max(0.0, round(_safe_float(features.get("facing_bet"), 0.0))))
+    in_pos = int(max(0.0, round(_safe_float(features.get("in_position_player"), 0.0))))
+    villain_range_width = len([t.strip() for t in str(features.get("villain_range", "")).split(",") if t.strip()])
+    return (
+        f"{street}|stack:{stack}|pot:{pot}|minbet:{min_bet}|facing:{facing}|"
+        f"vrw:{villain_range_width}|pos:{in_pos}|board:{board_class}|cards:{board_key}"
+    )
+
+
 def _load_row_ids(path: Path) -> set[str]:
     out: set[str] = set()
     if not path.exists():
@@ -304,6 +436,12 @@ def main() -> int:
     parser.add_argument("--watch-fail-rate", type=float, default=0.02, help="Watchlist threshold.")
     parser.add_argument("--systemic-fail-rate", type=float, default=0.10, help="Systemic failure threshold.")
     parser.add_argument("--max-example-errors", type=int, default=30, help="Max integrity examples captured.")
+    parser.add_argument(
+        "--unresolved-gate-json",
+        type=Path,
+        default=Path("2_Neural_Brain/local_pipeline/reports/unresolved_gate_ids.json"),
+        help="Export path for unresolved gate IDs derived from failed rows.",
+    )
     parser.add_argument("--strict", action="store_true", help="Exit non-zero when report is not freeze-ready.")
     args = parser.parse_args()
 
@@ -312,6 +450,7 @@ def main() -> int:
     errors_jsonl = args.errors_jsonl.resolve()
     report_json = args.report_json.resolve()
     manifest_json = args.manifest_json.resolve()
+    unresolved_gate_json = args.unresolved_gate_json.resolve()
 
     success_ids = _load_row_ids(labels_jsonl)
     error_ids = _load_row_ids(errors_jsonl)
@@ -478,6 +617,50 @@ def main() -> int:
                 *manifest_mismatch_reasons,
             ],
         },
+    }
+
+    unresolved_counter: dict[str, int] = {}
+    if input_jsonl.exists() and error_ids:
+        with input_jsonl.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                row_id = str(row.get("row_id") or "").strip()
+                if not row_id or row_id not in error_ids:
+                    continue
+                gate_id = _unresolved_gate_id_from_row(row)
+                if gate_id:
+                    unresolved_counter[gate_id] = int(unresolved_counter.get(gate_id, 0)) + 1
+
+    unresolved_payload = {
+        "schema_version": 1,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_report": str(report_json),
+        "inputs": {
+            "input_jsonl": str(input_jsonl),
+            "labels_jsonl": str(labels_jsonl),
+            "errors_jsonl": str(errors_jsonl),
+            "error_row_count": len(error_ids),
+        },
+        "unresolved_gate_ids": sorted(unresolved_counter.keys()),
+        "counts_by_gate_id": dict(sorted(unresolved_counter.items(), key=lambda kv: kv[1], reverse=True)),
+    }
+    unresolved_gate_json.parent.mkdir(parents=True, exist_ok=True)
+    unresolved_gate_json.write_text(json.dumps(unresolved_payload, indent=2), encoding="utf-8")
+    report["unresolved_export"] = {
+        "path": str(unresolved_gate_json),
+        "gate_id_count": len(unresolved_counter),
+        "top_gate_ids": [
+            {"gate_id": gate_id, "count": count}
+            for gate_id, count in list(sorted(unresolved_counter.items(), key=lambda kv: kv[1], reverse=True))[:10]
+        ],
     }
 
     report_json.parent.mkdir(parents=True, exist_ok=True)
