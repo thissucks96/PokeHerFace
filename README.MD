@@ -58,6 +58,14 @@ python .\scripts\quality_gate_flop_distribution.py --strict
 python .\scripts\build_neural_dataset.py --response-dir 5_Vision_Extraction\out\flop_engine --write
 ```
 
+Feature-contract parity check (offline rows vs live-spot encoding):
+
+```powershell
+python .\scripts\test_feature_contract_parity.py `
+  --input-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_teacher_rows.jsonl `
+  --strict
+```
+
 Offline reference labeling (checkpoint/resume):
 
 ```powershell

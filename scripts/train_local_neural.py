@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared_feature_contract import (
+    FEATURE_CONTRACT_HASH,
+    FEATURE_SCHEMA_VERSION,
+    feature_contract_metadata,
+    feature_vector,
+)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -52,24 +64,6 @@ def _normalize_action(raw: Any) -> str:
     return token
 
 
-def _hash_bucket(text: str, bucket_count: int) -> int:
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    return int(digest[:8], 16) % bucket_count
-
-
-def _street_to_float(street: str) -> float:
-    value = str(street or "").strip().lower()
-    if value == "preflop":
-        return 0.0
-    if value == "flop":
-        return 1.0
-    if value == "turn":
-        return 2.0
-    if value == "river":
-        return 3.0
-    return -1.0
-
-
 class TeacherRowsDataset(Dataset):
     def __init__(
         self,
@@ -80,6 +74,9 @@ class TeacherRowsDataset(Dataset):
     ) -> None:
         self.samples: list[tuple[torch.Tensor, int]] = []
         self.split_tokens: list[str] = []
+        self.contract_total_rows = 0
+        self.contract_matching_rows = 0
+        self.contract_mismatch_rows = 0
         for row in rows:
             target = row.get("target") if isinstance(row.get("target"), dict) else {}
             features = row.get("features") if isinstance(row.get("features"), dict) else {}
@@ -102,7 +99,22 @@ class TeacherRowsDataset(Dataset):
             if action not in action_to_index:
                 continue
 
-            x = self._vectorize(source=source, features=features, input_dim=input_dim)
+            self.contract_total_rows += 1
+            expected_contract = feature_contract_metadata(
+                source=source,
+                features=features,
+                input_dim=input_dim,
+            )
+            row_contract = row.get("feature_contract") if isinstance(row.get("feature_contract"), dict) else {}
+            if row_contract:
+                schema_ok = str(row_contract.get("schema_version") or "") == FEATURE_SCHEMA_VERSION
+                contract_ok = str(row_contract.get("contract_hash") or "") == FEATURE_CONTRACT_HASH
+                key_ok = str(row_contract.get("feature_key_hash") or "") == str(expected_contract.get("feature_key_hash") or "")
+                if schema_ok and contract_ok and key_ok:
+                    self.contract_matching_rows += 1
+                else:
+                    self.contract_mismatch_rows += 1
+            x = torch.tensor(feature_vector(source=source, features=features, input_dim=input_dim), dtype=torch.float32)
             y = action_to_index[action]
             self.samples.append((x, y))
             split_token = str(row.get(split_key_field) or row.get("split_key") or row.get("row_id") or "").strip()
@@ -115,55 +127,6 @@ class TeacherRowsDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
         return self.samples[idx]
-
-    @staticmethod
-    def _vectorize(source: dict[str, Any], features: dict[str, Any], input_dim: int) -> torch.Tensor:
-        vec = torch.zeros(input_dim, dtype=torch.float32)
-        # numeric channels at fixed prefixes
-        numeric = [
-            _safe_float(features.get("starting_stack"), 0.0),
-            _safe_float(features.get("starting_pot"), 0.0),
-            _safe_float(features.get("minimum_bet"), 0.0),
-            _safe_float(features.get("all_in_threshold"), 0.67),
-            _safe_float(features.get("iterations"), 0.0),
-            _safe_float(features.get("min_exploitability"), -1.0),
-            _safe_float(features.get("thread_count"), 0.0),
-            _safe_float(features.get("raise_cap"), 0.0),
-            _safe_float(features.get("facing_bet"), 0.0),
-            _safe_float(features.get("hero_street_commit"), 0.0),
-            _safe_float(features.get("villain_street_commit"), 0.0),
-            _safe_float(features.get("current_pot"), 0.0),
-            _safe_float(features.get("hero_chips"), 0.0),
-            _safe_float(features.get("villain_chips"), 0.0),
-            1.0 if bool(features.get("hero_is_small_blind", True)) else 0.0,
-            1.0 if bool(features.get("remove_donk_bets", True)) else 0.0,
-            1.0 if bool(features.get("compress_strategy", True)) else 0.0,
-            _street_to_float(source.get("street", "")),
-        ]
-        for i, value in enumerate(numeric):
-            if i >= input_dim:
-                break
-            vec[i] = float(value)
-
-        # hashed categorical tail
-        cat_values = [
-            f"hr:{features.get('hero_range', '')}",
-            f"vr:{features.get('villain_range', '')}",
-            f"bd:{','.join(features.get('board', []) if isinstance(features.get('board'), list) else [])}",
-            f"an:{features.get('active_node_path', '')}",
-            f"rp:{source.get('runtime_profile', '')}",
-            f"stg:{source.get('stage', '')}",
-            f"street:{source.get('street', '')}",
-            f"hero_cards:{','.join(features.get('hero_cards', []) if isinstance(features.get('hero_cards'), list) else [])}",
-            f"bs:{json.dumps(features.get('bet_sizing', {}), sort_keys=True)}",
-        ]
-        tail_start = min(len(numeric), max(0, input_dim // 4))
-        tail_buckets = max(1, input_dim - tail_start)
-        for token in cat_values:
-            idx = tail_start + _hash_bucket(token, tail_buckets)
-            vec[idx] += 1.0
-        return vec
-
 
 class PolicyMLP(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float, output_dim: int) -> None:
@@ -293,6 +256,11 @@ def main() -> int:
         "rows_total": len(rows),
         "action_space": action_space,
         "mode": "train" if args.train else "validate_only",
+        "feature_contract_expected": {
+            "schema_version": FEATURE_SCHEMA_VERSION,
+            "contract_hash": FEATURE_CONTRACT_HASH,
+            "input_dim": input_dim,
+        },
     }
 
     if not rows:
@@ -336,6 +304,9 @@ def main() -> int:
             "ok": True,
             "ready_for_training": True,
             "rows_mapped": len(dataset_full),
+            "feature_contract_rows_checked": int(dataset_full.contract_total_rows),
+            "feature_contract_rows_matching": int(dataset_full.contract_matching_rows),
+            "feature_contract_rows_mismatching": int(dataset_full.contract_mismatch_rows),
             "train_rows": len(train_set),
             "val_rows": len(val_set) if val_set else 0,
             "split_method": split_method,
@@ -407,6 +378,8 @@ def main() -> int:
             "model_state_dict": model.state_dict(),
             "action_space": action_space,
             "input_dim": input_dim,
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "feature_contract_hash": FEATURE_CONTRACT_HASH,
             "history": history,
         },
         ckpt_path,

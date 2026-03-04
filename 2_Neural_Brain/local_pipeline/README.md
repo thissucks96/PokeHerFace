@@ -84,6 +84,16 @@ python .\scripts\train_local_neural.py --train
 python .\scripts\eval_local_neural_shadow.py
 ```
 
+5b. Verify feature-contract parity before scaling data:
+
+```powershell
+python .\scripts\test_feature_contract_parity.py `
+  --input-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_teacher_rows.jsonl `
+  --strict
+```
+
+This ensures offline rows and live-spot encoding use the same deterministic feature map/hash.
+
 6. Offline reference labeling (checkpoint + resume + retry):
 
 ```powershell

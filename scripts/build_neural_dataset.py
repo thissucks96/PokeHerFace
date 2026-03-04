@@ -10,10 +10,22 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared_feature_contract import (
+    FEATURE_CONTRACT_HASH,
+    FEATURE_DEFAULT_INPUT_DIM,
+    FEATURE_SCHEMA_VERSION,
+    feature_contract_metadata,
+)
 
 
 DEFAULT_CONFIG = {
@@ -264,6 +276,11 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
         "selected_amount": chosen_amount,
         "distribution": _extract_target_distribution(result),
     }
+    contract = feature_contract_metadata(
+        source=source,
+        features=features,
+        input_dim=FEATURE_DEFAULT_INPUT_DIM,
+    )
     split_key = _row_split_key(source=source, features=features, target=target)
     return {
         "schema_version": 1,
@@ -272,6 +289,7 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
         "source": source,
         "features": features,
         "target": target,
+        "feature_contract": contract,
     }
 
 
@@ -354,6 +372,11 @@ def build_rows(
     summary = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "response_dir": str(response_dir.resolve()),
+        "feature_contract": {
+            "schema_version": FEATURE_SCHEMA_VERSION,
+            "contract_hash": FEATURE_CONTRACT_HASH,
+            "default_input_dim": FEATURE_DEFAULT_INPUT_DIM,
+        },
         "scanned_response_files": scanned,
         "matched_payload_response_pairs": matched_pairs,
         "rows_ready": len(rows),

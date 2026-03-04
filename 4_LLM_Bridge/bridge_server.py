@@ -26,6 +26,17 @@ from llm_client import get_llm_intuition, get_llm_intuition_candidates
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from shared_feature_contract import (  # noqa: E402
+    FEATURE_CONTRACT_HASH,
+    FEATURE_DEFAULT_INPUT_DIM,
+    FEATURE_SCHEMA_VERSION,
+    feature_contract_metadata,
+    source_features_from_spot,
+)
+
 DEFAULT_SHARK_CLI = ROOT / "1_Engine_Core" / "build_ninja_vcpkg_rel" / "shark_cli.exe"
 VISION_ROOT = ROOT / "5_Vision_Extraction"
 VISION_INCOMING_DIR = VISION_ROOT / "incoming"
@@ -2965,6 +2976,19 @@ def _evaluate_neural_unresolved_gate(spot: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _feature_contract_meta_for_spot(spot: Dict[str, Any], runtime_profile: str) -> Dict[str, Any]:
+    source, features = source_features_from_spot(
+        spot=spot,
+        runtime_profile=str(runtime_profile or "").strip().lower(),
+        stage="bridge_live",
+    )
+    return feature_contract_metadata(
+        source=source,
+        features=features,
+        input_dim=FEATURE_DEFAULT_INPUT_DIM,
+    )
+
+
 def _is_fast_live_flop_cbet75_bias_spot(
     spot: Dict[str, Any],
     *,
@@ -3673,6 +3697,7 @@ def _build_fast_failover_response(
     )
     allowed_actions_before_neural = list(allowed_actions)
     unresolved_neural_gate = _evaluate_neural_unresolved_gate(request.spot)
+    feature_contract_meta = _feature_contract_meta_for_spot(request.spot, runtime_profile)
     neural_attempted = False
     neural_timeout_effective = 0
     neural_payload = None
@@ -3856,6 +3881,11 @@ def _build_fast_failover_response(
             "neural_unresolved_exact_gate_count": int(unresolved_neural_gate.get("exact_gate_count") or 0),
             "neural_unresolved_coarse_gate_count": int(unresolved_neural_gate.get("coarse_gate_count") or 0),
             "neural_unresolved_gate_source": str(unresolved_neural_gate.get("source") or "").strip() or None,
+            "feature_schema_version": str(feature_contract_meta.get("schema_version") or FEATURE_SCHEMA_VERSION),
+            "feature_contract_hash": str(feature_contract_meta.get("contract_hash") or FEATURE_CONTRACT_HASH),
+            "feature_input_dim": int(feature_contract_meta.get("input_dim") or FEATURE_DEFAULT_INPUT_DIM),
+            "feature_key_hash": str(feature_contract_meta.get("feature_key_hash") or ""),
+            "feature_vector_hash": str(feature_contract_meta.get("vector_hash") or ""),
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": fast_live_flop_cbet_mix_applied,
@@ -3916,6 +3946,9 @@ def health() -> Dict[str, Any]:
         "neural_unresolved_gate_enabled": NEURAL_UNRESOLVED_GATE_ENABLED,
         "neural_unresolved_coarse_gate_enabled": NEURAL_UNRESOLVED_COARSE_GATE_ENABLED,
         "neural_unresolved_gate_json": str(NEURAL_UNRESOLVED_GATE_JSON),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "feature_contract_hash": FEATURE_CONTRACT_HASH,
+        "feature_default_input_dim": FEATURE_DEFAULT_INPUT_DIM,
         "neural_brain_adapter_path": str(NEURAL_BRAIN_ADAPTER_PATH),
         "neural_brain_timeout_sec": NEURAL_BRAIN_TIMEOUT_SEC,
         "neural_brain_cfr_iters": NEURAL_BRAIN_CFR_ITERS,
@@ -4628,6 +4661,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     neural_timeout_effective = 0
     neural_attempted = False
     unresolved_neural_gate = _evaluate_neural_unresolved_gate(request.spot)
+    feature_contract_meta = _feature_contract_meta_for_spot(request.spot, runtime_profile)
     allowed_actions_before_neural = list(allowed_root_actions)
     if NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE in {"shadow", "prefer"}:
         if bool(unresolved_neural_gate.get("hit")):
@@ -4786,6 +4820,11 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "neural_unresolved_exact_gate_count": int(unresolved_neural_gate.get("exact_gate_count") or 0),
             "neural_unresolved_coarse_gate_count": int(unresolved_neural_gate.get("coarse_gate_count") or 0),
             "neural_unresolved_gate_source": str(unresolved_neural_gate.get("source") or "").strip() or None,
+            "feature_schema_version": str(feature_contract_meta.get("schema_version") or FEATURE_SCHEMA_VERSION),
+            "feature_contract_hash": str(feature_contract_meta.get("contract_hash") or FEATURE_CONTRACT_HASH),
+            "feature_input_dim": int(feature_contract_meta.get("input_dim") or FEATURE_DEFAULT_INPUT_DIM),
+            "feature_key_hash": str(feature_contract_meta.get("feature_key_hash") or ""),
+            "feature_vector_hash": str(feature_contract_meta.get("vector_hash") or ""),
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
             "fast_live_flop_cbet_mix_applied": False,

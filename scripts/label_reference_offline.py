@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,12 @@ from typing import Any
 
 import requests
 from requests import RequestException
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared_feature_contract import FEATURE_DEFAULT_INPUT_DIM, feature_contract_metadata
 
 try:
     import psutil  # type: ignore
@@ -315,10 +322,20 @@ def main() -> int:
                     "split_key": str(row.get("split_key") or ""),
                     "labeled_at_utc": _utc_now(),
                     "runtime_profile": str(args.runtime_profile),
+                    "feature_contract": (
+                        row.get("feature_contract")
+                        if isinstance(row.get("feature_contract"), dict)
+                        else feature_contract_metadata(
+                            source=(row.get("source") if isinstance(row.get("source"), dict) else {}),
+                            features=(row.get("features") if isinstance(row.get("features"), dict) else {}),
+                            input_dim=FEATURE_DEFAULT_INPUT_DIM,
+                        )
+                    ),
                     "source_row": {
                         "source": row.get("source"),
                         "features": row.get("features"),
                         "target": row.get("target"),
+                        "feature_contract": row.get("feature_contract"),
                     },
                     "reference": {
                         "selected_strategy": response_json.get("selected_strategy"),
