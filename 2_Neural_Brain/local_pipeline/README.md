@@ -105,6 +105,14 @@ Resume a stopped run:
 python .\scripts\label_reference_offline.py --resume
 ```
 
+Watchdog guard for stalled runs (stale-write SLA + safe tail repair + relaunch):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\watch_offline_labeler_guard.ps1 `
+  -ProcessId 45068 `
+  -StaleMinutes 10
+```
+
 7. Post-pass validation (streaming):
    - normalized bucket fail rates (`failed / attempted`)
    - integrity checks on `reference.root_actions`:

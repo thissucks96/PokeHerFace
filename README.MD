@@ -73,6 +73,14 @@ python .\scripts\label_reference_offline.py `
   --resume
 ```
 
+Offline labeler watchdog (10-minute stale-write SLA + safe JSONL tail repair + resume relaunch):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\watch_offline_labeler_guard.ps1 `
+  -ProcessId 45068 `
+  -StaleMinutes 10
+```
+
 Post-pass unresolved gate export (for deterministic neural OOD blocking):
 
 ```powershell
