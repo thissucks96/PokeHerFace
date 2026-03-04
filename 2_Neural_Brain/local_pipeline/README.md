@@ -113,6 +113,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\watch_offline_labeler_guard.p
   -StaleMinutes 10
 ```
 
+Note: the watchdog enforces an adaptive floor from `--timeout-sec` and `--max-retries` so long rows are not killed prematurely.
+
 7. Post-pass validation (streaming):
    - normalized bucket fail rates (`failed / attempted`)
    - integrity checks on `reference.root_actions`:

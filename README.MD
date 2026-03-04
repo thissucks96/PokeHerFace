@@ -81,6 +81,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\watch_offline_labeler_guard.p
   -StaleMinutes 10
 ```
 
+Note: the guard auto-applies a minimum quiet window derived from labeler `--timeout-sec` and `--max-retries` to avoid false restarts during legitimate long rows.
+
 Post-pass unresolved gate export (for deterministic neural OOD blocking):
 
 ```powershell

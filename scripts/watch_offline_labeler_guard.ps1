@@ -116,6 +116,38 @@ function Split-ExecutableAndArgs {
     return @($exe, $args)
 }
 
+function Get-ArgValueFromCommandLine {
+    param(
+        [string]$CommandLine,
+        [string]$Name,
+        [double]$DefaultValue
+    )
+    $pattern = "(?:^|\s)--" + [Regex]::Escape($Name) + "\s+([^\s`"]+)"
+    $m = [Regex]::Match([string]$CommandLine, $pattern)
+    if (-not $m.Success) {
+        return $DefaultValue
+    }
+    $raw = [string]$m.Groups[1].Value
+    $out = 0.0
+    if ([double]::TryParse($raw, [ref]$out)) {
+        return $out
+    }
+    return $DefaultValue
+}
+
+function Get-MinExpectedQuietMinutes {
+    param([string]$LabelerCommandLine)
+    $timeoutSec = Get-ArgValueFromCommandLine -CommandLine $LabelerCommandLine -Name "timeout-sec" -DefaultValue 180.0
+    $maxRetries = Get-ArgValueFromCommandLine -CommandLine $LabelerCommandLine -Name "max-retries" -DefaultValue 2.0
+    $retryDelay = Get-ArgValueFromCommandLine -CommandLine $LabelerCommandLine -Name "retry-delay-sec" -DefaultValue 2.0
+    if ($timeoutSec -lt 1) { $timeoutSec = 1.0 }
+    if ($maxRetries -lt 0) { $maxRetries = 0.0 }
+    if ($retryDelay -lt 0) { $retryDelay = 0.0 }
+    $attempts = [Math]::Floor($maxRetries) + 1.0
+    $quietSeconds = ($attempts * ($timeoutSec + 10.0)) + ([Math]::Floor($maxRetries) * $retryDelay)
+    return [Math]::Ceiling(($quietSeconds / 60.0) + 1.0)
+}
+
 function Stop-LabelerAndSolver {
     param([int]$Pid)
     try {
@@ -153,21 +185,26 @@ function Invoke-GuardPass {
     $ageMin = [double]::PositiveInfinity
     if ($null -ne $latestWrite) {
         $ageMin = ($now - $latestWrite).TotalMinutes
-        $stale = $ageMin -ge [double]$StaleMinutes
+        $minExpectedQuietMinutes = Get-MinExpectedQuietMinutes -LabelerCommandLine $cmd
+        $effectiveThreshold = [Math]::Max([double]$StaleMinutes, [double]$minExpectedQuietMinutes)
+        $stale = $ageMin -ge $effectiveThreshold
+    } else {
+        $minExpectedQuietMinutes = Get-MinExpectedQuietMinutes -LabelerCommandLine $cmd
+        $effectiveThreshold = [Math]::Max([double]$StaleMinutes, [double]$minExpectedQuietMinutes)
     }
     if ($ForceRestart) {
         $stale = $true
     }
 
     if (-not $stale) {
-        Write-Host ("Labeler healthy: last write {0} ({1:N1} min ago), threshold={2} min." -f $latestWrite, $ageMin, $StaleMinutes)
+        Write-Host ("Labeler healthy: last write {0} ({1:N1} min ago), threshold={2} min (configured={3}, computed_floor={4})." -f $latestWrite, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes)
         return
     }
 
     if ($null -eq $latestWrite) {
         Write-Host "Stale trigger: no output files found yet."
     } else {
-        Write-Host ("Stale trigger: last write {0} ({1:N1} min ago), threshold={2} min." -f $latestWrite, $ageMin, $StaleMinutes)
+        Write-Host ("Stale trigger: last write {0} ({1:N1} min ago), threshold={2} min (configured={3}, computed_floor={4})." -f $latestWrite, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes)
     }
 
     Stop-LabelerAndSolver -Pid $labelerPid
