@@ -130,12 +130,14 @@ python .\scripts\report_reference_label_postpass.py `
 $env:NEURAL_BRAIN_ENABLED = "1"
 $env:NEURAL_BRAIN_MODE = "shadow"
 $env:NEURAL_UNRESOLVED_GATE_ENABLED = "1"
+$env:NEURAL_UNRESOLVED_COARSE_GATE_ENABLED = "0"   # optional tier-2 adjacency gate
 $env:NEURAL_UNRESOLVED_GATE_JSON = "A:\PokeHerFace\Version1\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json"
 ```
 
 Notes:
 - This is a deterministic gate keyed by geometry bucket ID, not confidence.
 - If a spot is unresolved, bridge logs/metrics expose `neural_unresolved_gate_hit=true` and skips neural inference for that spot.
+- Export now includes both `unresolved_gate_ids` (exact) and `unresolved_coarse_gate_ids` (texture/SPR/facing buckets).
 
 ## Default Safety Locks
 

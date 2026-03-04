@@ -92,6 +92,7 @@ Bridge runtime deterministic unresolved gate (local-only, no cloud dependency):
 $env:NEURAL_BRAIN_ENABLED = "1"
 $env:NEURAL_BRAIN_MODE = "shadow"
 $env:NEURAL_UNRESOLVED_GATE_ENABLED = "1"
+$env:NEURAL_UNRESOLVED_COARSE_GATE_ENABLED = "0"   # optional tier-2 adjacency gate
 $env:NEURAL_UNRESOLVED_GATE_JSON = "A:\PokeHerFace\Version1\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json"
 ```
 

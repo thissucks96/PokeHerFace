@@ -144,6 +144,48 @@ def _bucket_id(row: dict[str, Any]) -> str:
     return f"{street}|{pot_bucket}|{face_bucket}|{spr_bucket}"
 
 
+def _bucket_facing_ratio(facing_bet: float, pot: float) -> str:
+    if pot <= 1e-9:
+        ratio = 0.0 if facing_bet <= 0 else 9.0
+    else:
+        ratio = facing_bet / pot
+    if ratio <= 1e-12:
+        return "none"
+    if ratio <= 0.33:
+        return "small"
+    if ratio <= 1.0:
+        return "medium"
+    return "large"
+
+
+def _bucket_spr(stack: float, pot: float) -> str:
+    spr = stack / max(pot, 1e-9)
+    if spr < 4.0:
+        return "lt4"
+    if spr < 8.0:
+        return "4_8"
+    if spr < 16.0:
+        return "8_16"
+    return "16p"
+
+
+def _bucket_stack_bb(stack: float, min_bet: float) -> str:
+    stack_bb = stack / max(min_bet, 1e-9)
+    if stack_bb < 60.0:
+        return "lt60"
+    if stack_bb < 120.0:
+        return "60_120"
+    return "120p"
+
+
+def _bucket_range_width(width: int) -> str:
+    if width <= 20:
+        return "narrow"
+    if width <= 40:
+        return "medium"
+    return "wide"
+
+
 _RANK_VALUE_MAP = {
     "2": 2,
     "3": 3,
@@ -278,6 +320,36 @@ def _unresolved_gate_id_from_row(row: dict[str, Any]) -> str:
     return (
         f"{street}|stack:{stack}|pot:{pot}|minbet:{min_bet}|facing:{facing}|"
         f"vrw:{villain_range_width}|pos:{in_pos}|board:{board_class}|cards:{board_key}"
+    )
+
+
+def _unresolved_coarse_gate_id_from_row(row: dict[str, Any]) -> str:
+    source = row.get("source") if isinstance(row.get("source"), dict) else {}
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    street = str(source.get("street") or _street_from_board(features.get("board")) or "unknown").strip().lower()
+    board = features.get("board")
+    board_tokens = [_normalize_card(card) for card in (board if isinstance(board, list) else [])]
+    board_tokens = [token for token in board_tokens if token]
+    board_class = (
+        _classify_flop_board_bucket(board_tokens)
+        if street == "flop"
+        else _classify_postflop_board_bucket(board_tokens)
+    )
+
+    stack = float(max(0.0, _safe_float(features.get("starting_stack"), 0.0)))
+    pot = float(max(0.0, _safe_float(features.get("starting_pot"), 0.0)))
+    min_bet = float(max(1.0, _safe_float(features.get("minimum_bet"), 1.0)))
+    facing = float(max(0.0, _safe_float(features.get("facing_bet"), 0.0)))
+    try:
+        in_position_player = int(round(_safe_float(features.get("in_position_player"), 0.0)))
+    except (TypeError, ValueError):
+        in_position_player = 0
+    in_pos = 1 if in_position_player == 1 else 0
+    villain_range_width = len([t.strip() for t in str(features.get("villain_range", "")).split(",") if t.strip()])
+    return (
+        f"{street}|stackbb:{_bucket_stack_bb(stack, min_bet)}|spr:{_bucket_spr(stack, pot)}|"
+        f"facing:{_bucket_facing_ratio(facing, pot)}|vrw:{_bucket_range_width(villain_range_width)}|"
+        f"pos:{in_pos}|board:{board_class}"
     )
 
 
@@ -625,6 +697,7 @@ def main() -> int:
     }
 
     unresolved_counter: dict[str, int] = {}
+    unresolved_coarse_counter: dict[str, int] = {}
     if input_jsonl.exists() and error_ids:
         with input_jsonl.open("r", encoding="utf-8") as f:
             for line in f:
@@ -643,6 +716,11 @@ def main() -> int:
                 gate_id = _unresolved_gate_id_from_row(row)
                 if gate_id:
                     unresolved_counter[gate_id] = int(unresolved_counter.get(gate_id, 0)) + 1
+                coarse_gate_id = _unresolved_coarse_gate_id_from_row(row)
+                if coarse_gate_id:
+                    unresolved_coarse_counter[coarse_gate_id] = int(
+                        unresolved_coarse_counter.get(coarse_gate_id, 0)
+                    ) + 1
 
     unresolved_payload = {
         "schema_version": 1,
@@ -655,16 +733,27 @@ def main() -> int:
             "error_row_count": len(error_ids),
         },
         "unresolved_gate_ids": sorted(unresolved_counter.keys()),
+        "unresolved_coarse_gate_ids": sorted(unresolved_coarse_counter.keys()),
         "counts_by_gate_id": dict(sorted(unresolved_counter.items(), key=lambda kv: kv[1], reverse=True)),
+        "counts_by_coarse_gate_id": dict(
+            sorted(unresolved_coarse_counter.items(), key=lambda kv: kv[1], reverse=True)
+        ),
     }
     unresolved_gate_json.parent.mkdir(parents=True, exist_ok=True)
     unresolved_gate_json.write_text(json.dumps(unresolved_payload, indent=2), encoding="utf-8")
     report["unresolved_export"] = {
         "path": str(unresolved_gate_json),
         "gate_id_count": len(unresolved_counter),
+        "coarse_gate_id_count": len(unresolved_coarse_counter),
         "top_gate_ids": [
             {"gate_id": gate_id, "count": count}
             for gate_id, count in list(sorted(unresolved_counter.items(), key=lambda kv: kv[1], reverse=True))[:10]
+        ],
+        "top_coarse_gate_ids": [
+            {"gate_id": gate_id, "count": count}
+            for gate_id, count in list(
+                sorted(unresolved_coarse_counter.items(), key=lambda kv: kv[1], reverse=True)
+            )[:10]
         ],
     }
 

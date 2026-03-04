@@ -634,6 +634,14 @@ NEURAL_UNRESOLVED_GATE_ENABLED = os.environ.get("NEURAL_UNRESOLVED_GATE_ENABLED"
     "false",
     "False",
 }
+NEURAL_UNRESOLVED_COARSE_GATE_ENABLED = os.environ.get(
+    "NEURAL_UNRESOLVED_COARSE_GATE_ENABLED",
+    "0",
+).strip() not in {
+    "0",
+    "false",
+    "False",
+}
 NEURAL_UNRESOLVED_GATE_JSON = Path(
     os.environ.get(
         "NEURAL_UNRESOLVED_GATE_JSON",
@@ -675,7 +683,8 @@ _UNRESOLVED_GATE_LOCK = threading.Lock()
 _UNRESOLVED_GATE_CACHE: Dict[str, Any] = {
     "path": "",
     "mtime_ns": None,
-    "ids": set(),
+    "exact_ids": set(),
+    "coarse_ids": set(),
 }
 
 
@@ -2780,6 +2789,48 @@ def _normalize_board_card_token(token: Any) -> str:
     return f"{rank_token}{suit_token}"
 
 
+def _bucket_facing_ratio(facing_bet: float, pot: float) -> str:
+    if pot <= 1e-9:
+        ratio = 0.0 if facing_bet <= 0 else 9.0
+    else:
+        ratio = facing_bet / pot
+    if ratio <= 1e-12:
+        return "none"
+    if ratio <= 0.33:
+        return "small"
+    if ratio <= 1.0:
+        return "medium"
+    return "large"
+
+
+def _bucket_spr(stack: float, pot: float) -> str:
+    spr = stack / max(pot, 1e-9)
+    if spr < 4.0:
+        return "lt4"
+    if spr < 8.0:
+        return "4_8"
+    if spr < 16.0:
+        return "8_16"
+    return "16p"
+
+
+def _bucket_stack_bb(stack: float, min_bet: float) -> str:
+    stack_bb = stack / max(min_bet, 1e-9)
+    if stack_bb < 60.0:
+        return "lt60"
+    if stack_bb < 120.0:
+        return "60_120"
+    return "120p"
+
+
+def _bucket_range_width(width: int) -> str:
+    if width <= 20:
+        return "narrow"
+    if width <= 40:
+        return "medium"
+    return "wide"
+
+
 def _build_neural_unresolved_gate_id(spot: Dict[str, Any]) -> str:
     street = _detect_spot_street(spot)
     board = spot.get("board")
@@ -2800,9 +2851,25 @@ def _build_neural_unresolved_gate_id(spot: Dict[str, Any]) -> str:
     )
 
 
-def _load_unresolved_gate_ids() -> set[str]:
-    if not NEURAL_UNRESOLVED_GATE_ENABLED:
-        return set()
+def _build_neural_unresolved_coarse_gate_id(spot: Dict[str, Any]) -> str:
+    street = _detect_spot_street(spot)
+    board_class = _classify_flop_board_bucket(spot) if street == "flop" else _classify_postflop_board_bucket(spot)
+    stack = float(max(0.0, _to_float_or_none(spot.get("starting_stack")) or 0.0))
+    pot = float(max(0.0, _to_float_or_none(spot.get("starting_pot")) or 0.0))
+    min_bet = float(max(1.0, _to_float_or_none(spot.get("minimum_bet")) or 1.0))
+    facing = float(max(0.0, _to_float_or_none(spot.get("facing_bet")) or 0.0))
+    in_pos = 1 if _hero_is_in_position(spot) else 0
+    villain_range_width = _estimate_range_width(str(spot.get("villain_range", "")))
+    return (
+        f"{street}|stackbb:{_bucket_stack_bb(stack, min_bet)}|spr:{_bucket_spr(stack, pot)}|"
+        f"facing:{_bucket_facing_ratio(facing, pot)}|vrw:{_bucket_range_width(villain_range_width)}|"
+        f"pos:{in_pos}|board:{board_class}"
+    )
+
+
+def _load_unresolved_gate_sets() -> Dict[str, set[str]]:
+    if not NEURAL_UNRESOLVED_GATE_ENABLED and not NEURAL_UNRESOLVED_COARSE_GATE_ENABLED:
+        return {"exact_ids": set(), "coarse_ids": set()}
     path = NEURAL_UNRESOLVED_GATE_JSON.resolve()
     path_key = str(path)
     mtime_ns: Optional[int]
@@ -2810,21 +2877,27 @@ def _load_unresolved_gate_ids() -> set[str]:
         with _UNRESOLVED_GATE_LOCK:
             _UNRESOLVED_GATE_CACHE["path"] = path_key
             _UNRESOLVED_GATE_CACHE["mtime_ns"] = None
-            _UNRESOLVED_GATE_CACHE["ids"] = set()
-        return set()
+            _UNRESOLVED_GATE_CACHE["exact_ids"] = set()
+            _UNRESOLVED_GATE_CACHE["coarse_ids"] = set()
+        return {"exact_ids": set(), "coarse_ids": set()}
     try:
         mtime_ns = int(path.stat().st_mtime_ns)
     except OSError:
-        return set()
+        return {"exact_ids": set(), "coarse_ids": set()}
     with _UNRESOLVED_GATE_LOCK:
         if (
             _UNRESOLVED_GATE_CACHE.get("path") == path_key
             and _UNRESOLVED_GATE_CACHE.get("mtime_ns") == mtime_ns
-            and isinstance(_UNRESOLVED_GATE_CACHE.get("ids"), set)
+            and isinstance(_UNRESOLVED_GATE_CACHE.get("exact_ids"), set)
+            and isinstance(_UNRESOLVED_GATE_CACHE.get("coarse_ids"), set)
         ):
-            return set(_UNRESOLVED_GATE_CACHE.get("ids") or set())
+            return {
+                "exact_ids": set(_UNRESOLVED_GATE_CACHE.get("exact_ids") or set()),
+                "coarse_ids": set(_UNRESOLVED_GATE_CACHE.get("coarse_ids") or set()),
+            }
 
-    ids: set[str] = set()
+    exact_ids: set[str] = set()
+    coarse_ids: set[str] = set()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
@@ -2833,39 +2906,62 @@ def _load_unresolved_gate_ids() -> set[str]:
                 for item in items:
                     token = str(item or "").strip()
                     if token:
-                        ids.add(token)
+                        exact_ids.add(token)
+            coarse_items = payload.get("unresolved_coarse_gate_ids")
+            if isinstance(coarse_items, list):
+                for item in coarse_items:
+                    token = str(item or "").strip()
+                    if token:
+                        coarse_ids.add(token)
         elif isinstance(payload, list):
             for item in payload:
                 token = str(item or "").strip()
                 if token:
-                    ids.add(token)
+                    exact_ids.add(token)
     except (OSError, json.JSONDecodeError):
-        ids = set()
+        exact_ids = set()
+        coarse_ids = set()
 
     with _UNRESOLVED_GATE_LOCK:
         _UNRESOLVED_GATE_CACHE["path"] = path_key
         _UNRESOLVED_GATE_CACHE["mtime_ns"] = mtime_ns
-        _UNRESOLVED_GATE_CACHE["ids"] = set(ids)
-    return ids
+        _UNRESOLVED_GATE_CACHE["exact_ids"] = set(exact_ids)
+        _UNRESOLVED_GATE_CACHE["coarse_ids"] = set(coarse_ids)
+    return {"exact_ids": exact_ids, "coarse_ids": coarse_ids}
 
 
 def _evaluate_neural_unresolved_gate(spot: Dict[str, Any]) -> Dict[str, Any]:
     gate_id = _build_neural_unresolved_gate_id(spot)
-    if not NEURAL_UNRESOLVED_GATE_ENABLED:
+    coarse_gate_id = _build_neural_unresolved_coarse_gate_id(spot)
+    if not NEURAL_UNRESOLVED_GATE_ENABLED and not NEURAL_UNRESOLVED_COARSE_GATE_ENABLED:
         return {
             "enabled": False,
             "hit": False,
             "gate_id": gate_id,
+            "coarse_gate_id": coarse_gate_id,
+            "match_type": "",
             "source": str(NEURAL_UNRESOLVED_GATE_JSON),
         }
-    gate_ids = _load_unresolved_gate_ids()
-    hit = gate_id in gate_ids
+    gate_sets = _load_unresolved_gate_sets()
+    exact_ids = gate_sets.get("exact_ids") or set()
+    coarse_ids = gate_sets.get("coarse_ids") or set()
+    exact_hit = bool(NEURAL_UNRESOLVED_GATE_ENABLED and gate_id in exact_ids)
+    coarse_hit = bool(NEURAL_UNRESOLVED_COARSE_GATE_ENABLED and coarse_gate_id in coarse_ids)
+    hit = bool(exact_hit or coarse_hit)
+    match_type = "exact" if exact_hit else ("coarse" if coarse_hit else "")
     return {
         "enabled": True,
         "hit": hit,
         "gate_id": gate_id,
+        "coarse_gate_id": coarse_gate_id,
+        "match_type": match_type,
+        "exact_enabled": bool(NEURAL_UNRESOLVED_GATE_ENABLED),
+        "coarse_enabled": bool(NEURAL_UNRESOLVED_COARSE_GATE_ENABLED),
+        "exact_hit": exact_hit,
+        "coarse_hit": coarse_hit,
         "source": str(NEURAL_UNRESOLVED_GATE_JSON),
-        "gate_count": len(gate_ids),
+        "exact_gate_count": len(exact_ids),
+        "coarse_gate_count": len(coarse_ids),
     }
 
 
@@ -3667,6 +3763,9 @@ def _build_fast_failover_response(
         warnings_list = list(warnings) if isinstance(warnings, list) else []
         if "neural_unresolved_gate_skip" not in warnings_list:
             warnings_list.append("neural_unresolved_gate_skip")
+        if str(unresolved_neural_gate.get("match_type") or "").strip().lower() == "coarse":
+            if "neural_unresolved_coarse_gate_skip" not in warnings_list:
+                warnings_list.append("neural_unresolved_coarse_gate_skip")
         result_payload["warnings"] = warnings_list
     result_payload, allowed_actions, risk_gate = _apply_equity_risk_gate(
         spot=request.spot,
@@ -3748,6 +3847,14 @@ def _build_fast_failover_response(
             "neural_unresolved_gate_enabled": bool(unresolved_neural_gate.get("enabled")),
             "neural_unresolved_gate_hit": bool(unresolved_neural_gate.get("hit")),
             "neural_unresolved_gate_id": str(unresolved_neural_gate.get("gate_id") or "").strip() or None,
+            "neural_unresolved_coarse_gate_id": str(unresolved_neural_gate.get("coarse_gate_id") or "").strip() or None,
+            "neural_unresolved_gate_match_type": str(unresolved_neural_gate.get("match_type") or "").strip() or None,
+            "neural_unresolved_exact_gate_enabled": bool(unresolved_neural_gate.get("exact_enabled")),
+            "neural_unresolved_coarse_gate_enabled": bool(unresolved_neural_gate.get("coarse_enabled")),
+            "neural_unresolved_exact_gate_hit": bool(unresolved_neural_gate.get("exact_hit")),
+            "neural_unresolved_coarse_gate_hit": bool(unresolved_neural_gate.get("coarse_hit")),
+            "neural_unresolved_exact_gate_count": int(unresolved_neural_gate.get("exact_gate_count") or 0),
+            "neural_unresolved_coarse_gate_count": int(unresolved_neural_gate.get("coarse_gate_count") or 0),
             "neural_unresolved_gate_source": str(unresolved_neural_gate.get("source") or "").strip() or None,
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
@@ -3807,6 +3914,7 @@ def health() -> Dict[str, Any]:
         "neural_brain_enabled": NEURAL_BRAIN_ENABLED,
         "neural_brain_mode": NEURAL_BRAIN_MODE,
         "neural_unresolved_gate_enabled": NEURAL_UNRESOLVED_GATE_ENABLED,
+        "neural_unresolved_coarse_gate_enabled": NEURAL_UNRESOLVED_COARSE_GATE_ENABLED,
         "neural_unresolved_gate_json": str(NEURAL_UNRESOLVED_GATE_JSON),
         "neural_brain_adapter_path": str(NEURAL_BRAIN_ADAPTER_PATH),
         "neural_brain_timeout_sec": NEURAL_BRAIN_TIMEOUT_SEC,
@@ -4558,6 +4666,9 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         warnings_list = list(warnings) if isinstance(warnings, list) else []
         if "neural_unresolved_gate_skip" not in warnings_list:
             warnings_list.append("neural_unresolved_gate_skip")
+        if str(unresolved_neural_gate.get("match_type") or "").strip().lower() == "coarse":
+            if "neural_unresolved_coarse_gate_skip" not in warnings_list:
+                warnings_list.append("neural_unresolved_coarse_gate_skip")
         result["warnings"] = warnings_list
 
     result, allowed_root_actions, risk_gate = _apply_equity_risk_gate(
@@ -4666,6 +4777,14 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
             "neural_unresolved_gate_enabled": bool(unresolved_neural_gate.get("enabled")),
             "neural_unresolved_gate_hit": bool(unresolved_neural_gate.get("hit")),
             "neural_unresolved_gate_id": str(unresolved_neural_gate.get("gate_id") or "").strip() or None,
+            "neural_unresolved_coarse_gate_id": str(unresolved_neural_gate.get("coarse_gate_id") or "").strip() or None,
+            "neural_unresolved_gate_match_type": str(unresolved_neural_gate.get("match_type") or "").strip() or None,
+            "neural_unresolved_exact_gate_enabled": bool(unresolved_neural_gate.get("exact_enabled")),
+            "neural_unresolved_coarse_gate_enabled": bool(unresolved_neural_gate.get("coarse_enabled")),
+            "neural_unresolved_exact_gate_hit": bool(unresolved_neural_gate.get("exact_hit")),
+            "neural_unresolved_coarse_gate_hit": bool(unresolved_neural_gate.get("coarse_hit")),
+            "neural_unresolved_exact_gate_count": int(unresolved_neural_gate.get("exact_gate_count") or 0),
+            "neural_unresolved_coarse_gate_count": int(unresolved_neural_gate.get("coarse_gate_count") or 0),
             "neural_unresolved_gate_source": str(unresolved_neural_gate.get("source") or "").strip() or None,
             "risk_gate": risk_gate,
             "fast_live_flop_cbet75_bias_applied": fast_live_flop_cbet75_bias_applied,
