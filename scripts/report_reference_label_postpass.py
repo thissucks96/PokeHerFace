@@ -268,7 +268,12 @@ def _unresolved_gate_id_from_row(row: dict[str, Any]) -> str:
     pot = int(max(0.0, round(_safe_float(features.get("starting_pot"), 0.0))))
     min_bet = int(max(1.0, round(_safe_float(features.get("minimum_bet"), 1.0))))
     facing = int(max(0.0, round(_safe_float(features.get("facing_bet"), 0.0))))
-    in_pos = int(max(0.0, round(_safe_float(features.get("in_position_player"), 0.0))))
+    # Bridge contract: hero is player 1, so treat in-position as a strict (player == 1) boolean.
+    try:
+        in_position_player = int(round(_safe_float(features.get("in_position_player"), 0.0)))
+    except (TypeError, ValueError):
+        in_position_player = 0
+    in_pos = 1 if in_position_player == 1 else 0
     villain_range_width = len([t.strip() for t in str(features.get("villain_range", "")).split(",") if t.strip()])
     return (
         f"{street}|stack:{stack}|pot:{pot}|minbet:{min_bet}|facing:{facing}|"
