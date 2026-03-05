@@ -172,3 +172,24 @@ Notes:
 3. Run shadow evaluation against live solver decisions.
 4. Define promotion gates (agreement + latency + disagreement review).
 5. Enable controlled prefer mode only after gates pass.
+
+## Evaluation Contract (Lock Before Training)
+
+Promotion criteria are documented in:
+
+- `2_Neural_Brain/local_pipeline/NEURAL_EVAL_CONTRACT.md`
+
+This contract explicitly gates on:
+- `freeze_ready` + manifest sync + integrity
+- latency SLA targets (p50/p95/p99)
+- EV target (`bb/100 delta` vs fast_live baseline)
+- holdout air-gap (no train/holdout overlap)
+
+Air-gap check command:
+
+```powershell
+python .\scripts\check_neural_data_airgap.py `
+  --train-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.train.jsonl `
+  --holdout-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.holdout.jsonl `
+  --strict
+```
