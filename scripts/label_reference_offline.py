@@ -64,7 +64,12 @@ def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _load_done_row_ids(path: Path) -> set[str]:
+def _row_id_for_index(row: dict[str, Any], index: int) -> str:
+    row_id = str(row.get("row_id") or "").strip()
+    return row_id if row_id else f"row_{index}"
+
+
+def _load_row_ids(path: Path) -> set[str]:
     done: set[str] = set()
     if not path.exists():
         return done
@@ -82,6 +87,40 @@ def _load_done_row_ids(path: Path) -> set[str]:
                 if row_id:
                     done.add(row_id)
     return done
+
+
+def _reconcile_resume_state(
+    rows: list[dict[str, Any]],
+    output_jsonl: Path,
+    error_jsonl: Path,
+) -> dict[str, Any]:
+    valid_row_ids = {_row_id_for_index(row, index) for index, row in enumerate(rows)}
+    success_ids_all = _load_row_ids(output_jsonl)
+    error_ids_all = _load_row_ids(error_jsonl)
+    success_ids = success_ids_all & valid_row_ids
+    error_ids = error_ids_all & valid_row_ids
+    done_row_ids = success_ids | error_ids
+    overlap_row_ids = success_ids & error_ids
+
+    first_missing_index = len(rows)
+    first_missing_row_id = ""
+    for index, row in enumerate(rows):
+        row_id = _row_id_for_index(row, index)
+        if row_id not in done_row_ids:
+            first_missing_index = index
+            first_missing_row_id = row_id
+            break
+
+    return {
+        "success_ids": success_ids,
+        "error_ids": error_ids,
+        "done_row_ids": done_row_ids,
+        "overlap_row_ids": overlap_row_ids,
+        "first_missing_index": int(first_missing_index),
+        "first_missing_row_id": first_missing_row_id,
+        "ignored_success_ids": len(success_ids_all - valid_row_ids),
+        "ignored_error_ids": len(error_ids_all - valid_row_ids),
+    }
 
 
 def _load_manifest(path: Path) -> dict[str, Any] | None:
@@ -200,9 +239,21 @@ def main() -> int:
         raise SystemExit("input dataset has zero rows")
 
     done_row_ids: set[str] = set()
+    success_row_ids: set[str] = set()
+    error_row_ids: set[str] = set()
+    overlap_row_ids: set[str] = set()
+    resume_state: dict[str, Any] | None = None
     manifest = _load_manifest(manifest_json) if args.resume else None
     if args.resume:
-        done_row_ids = _load_done_row_ids(output_jsonl)
+        resume_state = _reconcile_resume_state(
+            rows=rows,
+            output_jsonl=output_jsonl,
+            error_jsonl=error_jsonl,
+        )
+        success_row_ids = set(resume_state["success_ids"])
+        error_row_ids = set(resume_state["error_ids"])
+        overlap_row_ids = set(resume_state["overlap_row_ids"])
+        done_row_ids = set(resume_state["done_row_ids"])
 
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
     error_jsonl.parent.mkdir(parents=True, exist_ok=True)
@@ -224,13 +275,36 @@ def main() -> int:
         "stopped_reason": "",
     }
 
-    if manifest:
-        prior = manifest.get("stats") if isinstance(manifest.get("stats"), dict) else {}
-        stats["attempted"] = _safe_int(prior.get("attempted"), stats["attempted"])
-        stats["succeeded"] = _safe_int(prior.get("succeeded"), stats["succeeded"])
-        stats["failed"] = _safe_int(prior.get("failed"), stats["failed"])
-        stats["skipped_existing"] = _safe_int(prior.get("skipped_existing"), stats["skipped_existing"])
-        stats["next_index"] = max(_safe_int(prior.get("next_index"), stats["next_index"]), stats["next_index"])
+    resume_meta = {
+        "enabled": bool(args.resume),
+        "source_of_truth": "outputs_jsonl" if args.resume else "runtime_only",
+        "manifest_present": manifest is not None,
+        "ignored_manifest_cursor": None,
+        "ignored_manifest_stats": {},
+        "reconciled": {},
+    }
+
+    if args.resume and resume_state is not None:
+        prior = manifest.get("stats") if isinstance((manifest or {}).get("stats"), dict) else {}
+        reconciled_cursor = int(resume_state["first_missing_index"])
+        stats["attempted"] = len(success_row_ids) + len(error_row_ids)
+        stats["succeeded"] = len(success_row_ids)
+        stats["failed"] = len(error_row_ids)
+        stats["skipped_existing"] = min(reconciled_cursor, len(done_row_ids))
+        stats["processed_rows"] = min(reconciled_cursor, total_input_rows)
+        stats["next_index"] = reconciled_cursor
+        resume_meta["ignored_manifest_cursor"] = prior.get("next_index")
+        resume_meta["ignored_manifest_stats"] = prior
+        resume_meta["reconciled"] = {
+            "labels_unique": len(success_row_ids),
+            "errors_unique": len(error_row_ids),
+            "done_unique": len(done_row_ids),
+            "overlap_unique": len(overlap_row_ids),
+            "first_missing_index": reconciled_cursor,
+            "first_missing_row_id": str(resume_state["first_missing_row_id"] or ""),
+            "ignored_success_ids_not_in_input": int(resume_state["ignored_success_ids"]),
+            "ignored_error_ids_not_in_input": int(resume_state["ignored_error_ids"]),
+        }
 
     cursor = int(stats["next_index"])
     max_rows = max(0, int(args.max_rows))
@@ -350,6 +424,7 @@ def main() -> int:
                 out_f.write(json.dumps(out_row) + "\n")
                 out_f.flush()
                 done_row_ids.add(row_id)
+                success_row_ids.add(row_id)
                 stats["succeeded"] += 1
                 stats["consecutive_failures"] = 0
             else:
@@ -362,6 +437,8 @@ def main() -> int:
                 }
                 err_f.write(json.dumps(failure) + "\n")
                 err_f.flush()
+                done_row_ids.add(row_id)
+                error_row_ids.add(row_id)
                 stats["failed"] += 1
                 stats["consecutive_failures"] += 1
                 if len(failure_samples) < 200:
@@ -395,6 +472,7 @@ def main() -> int:
                     "runtime_profile": str(args.runtime_profile),
                     "timeout_sec": int(args.timeout_sec),
                     "stats": stats,
+                    "resume_reconciliation": resume_meta,
                     "failure_samples": failure_samples,
                 }
                 _write_manifest(manifest_json, manifest_payload)
@@ -413,6 +491,7 @@ def main() -> int:
             "runtime_profile": str(args.runtime_profile),
             "timeout_sec": int(args.timeout_sec),
             "stats": stats,
+            "resume_reconciliation": resume_meta,
             "failure_samples": failure_samples,
         }
         _write_manifest(manifest_json, manifest_payload)
