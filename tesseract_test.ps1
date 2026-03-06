@@ -7416,6 +7416,11 @@ function New-AdviceOverlayForm {
     offsetX = 0
     offsetY = 0
   }
+  $persistLocation = {
+    if ($null -eq $overlay -or $overlay.IsDisposed) { return }
+    $script:savedAdviceOverlayLocation = New-Object System.Drawing.Point([int]$overlay.Left, [int]$overlay.Top)
+    Save-RoiState
+  }.GetNewClosure()
 
   $titleLabel = New-Object System.Windows.Forms.Label
   $titleLabel.Text = "No actionable advice yet."
@@ -7456,8 +7461,7 @@ function New-AdviceOverlayForm {
     param($sender, $e)
     $state = $overlay.Tag
     $state.down = $false
-    $script:savedAdviceOverlayLocation = New-Object System.Drawing.Point([int]$overlay.Left, [int]$overlay.Top)
-    Save-RoiState
+    & $persistLocation
   }.GetNewClosure()
 
   foreach ($ctl in @($overlay, $titleLabel, $valueLabel)) {
@@ -7465,6 +7469,9 @@ function New-AdviceOverlayForm {
     $ctl.Add_MouseMove($dragHandlerMove)
     $ctl.Add_MouseUp($dragHandlerUp)
   }
+  $overlay.Add_LocationChanged($persistLocation)
+  $overlay.Add_Shown($persistLocation)
+  $overlay.Add_FormClosed($persistLocation)
 
   $script:adviceOverlayTitleLabel = $titleLabel
   $script:adviceOverlayValueLabel = $valueLabel
@@ -7511,6 +7518,11 @@ function New-TableStateOverlayForm {
     offsetX = 0
     offsetY = 0
   }
+  $persistLocation = {
+    if ($null -eq $overlay -or $overlay.IsDisposed) { return }
+    $script:savedStateOverlayLocation = New-Object System.Drawing.Point([int]$overlay.Left, [int]$overlay.Top)
+    Save-RoiState
+  }.GetNewClosure()
   $overlay.ContextMenuStrip = New-TableStateOverlayContextMenu
 
   $titleLabel = New-Object System.Windows.Forms.Label
@@ -7590,8 +7602,7 @@ function New-TableStateOverlayForm {
     param($sender, $e)
     $state = $overlay.Tag
     $state.down = $false
-    $script:savedStateOverlayLocation = New-Object System.Drawing.Point([int]$overlay.Left, [int]$overlay.Top)
-    Save-RoiState
+    & $persistLocation
   }.GetNewClosure()
 
   foreach ($ctl in @($overlay, $titleLabel, $potLabel, $chipsLabel, $villainChipsLabel, $positionLabel, $statusLabel, $villainLabel)) {
@@ -7600,6 +7611,9 @@ function New-TableStateOverlayForm {
     $ctl.Add_MouseMove($dragHandlerMove)
     $ctl.Add_MouseUp($dragHandlerUp)
   }
+  $overlay.Add_LocationChanged($persistLocation)
+  $overlay.Add_Shown($persistLocation)
+  $overlay.Add_FormClosed($persistLocation)
 
   $script:stateOverlayPotLabel = $potLabel
   $script:stateOverlayChipsLabel = $chipsLabel
