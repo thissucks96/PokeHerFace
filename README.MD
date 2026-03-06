@@ -167,6 +167,10 @@ UI hand export:
 - Use `Copy Hand Snapshot` (right panel) or right-click `Table State` overlay -> `Copy Hand Snapshot`.
 - Snapshot includes current state (cards/board/pot/commits/status/advice) plus current hand log lines.
 
+Manual vs 1v1 dataset capture:
+- Manual play against the built-in 1v1 engine now writes structured session data to `5_Vision_Extraction\out\manual_training\manual_vs_1v1_<session>.jsonl`.
+- Records include hand starts, engine results, hero actions, villain actions, and hand outcomes so the session can be converted into future neural training data without scraping human-readable logs.
+
 ## Runtime Profiles
 
 - `fast_live`: production candidate (bounded latency + stronger spot tuning)
