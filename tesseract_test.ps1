@@ -1926,7 +1926,7 @@ function Test-IsHeroTurn {
     return $false
   }
   if ([int]$script:activeVillainCount -le 0) {
-    return $true
+    return $false
   }
   return (-not (Test-IsVillainTurn))
 }
@@ -9303,9 +9303,22 @@ function Queue-EngineSolveForBoard {
       $bridgeSolveEndpoint,
       $requestJson,
       $responsePath,
-      [int]([Math]::Max(60, $effectiveSolverTimeoutSec + 30))
+      [int]([Math]::Max(60, $effectiveSolverTimeoutSec + 30)),
+      [string]$effectiveRuntimeProfile
     ) -ScriptBlock {
-      param($endpoint, $requestJsonText, $responsePathValue, $timeoutSecValue)
+      param($endpoint, $requestJsonText, $responsePathValue, $timeoutSecValue, $runtimeProfileValue)
+      function Convert-NumberListToCsv {
+        param([object]$Values)
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($item in @($Values)) {
+          $v = 0.0
+          if ([double]::TryParse([string]$item, [ref]$v)) {
+            [void]$parts.Add(([Math]::Round([double]$v, 4).ToString([System.Globalization.CultureInfo]::InvariantCulture)))
+          }
+        }
+        if ($parts.Count -le 0) { return "" }
+        return [string]::Join(",", @($parts.ToArray()))
+      }
       $started = Get-Date
       try {
         $resp = Invoke-RestMethod -Uri ([string]$endpoint) -Method Post -ContentType "application/json" -Body ([string]$requestJsonText) -TimeoutSec ([int]$timeoutSecValue)
