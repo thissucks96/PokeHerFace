@@ -19,6 +19,11 @@ Heads-up poker engine workspace:
 
 ## Developer Handoff
 
+Read these first before significant implementation work:
+- `AGENT.MD`
+- `HANDOFF_NEW_DEVELOPER.md`
+- `History.MD` (shared memory across chats, if populated)
+
 Full transfer-of-ownership reference:
 - `HANDOFF_NEW_DEVELOPER.md`
 
@@ -40,6 +45,12 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 .\scripts\setup_windows.ps1
 ```
 
+Use the repo venv Python for local scripts unless there is a clear reason not to:
+
+```powershell
+.\.venv\Scripts\python.exe
+```
+
 Run preflight:
 
 ```powershell
@@ -59,14 +70,14 @@ Neural dataset pilot (mixed geometry + quality gate):
 
 ```powershell
 .\scripts\run_neural_collection_recipe.ps1 -RecipePreset mixed_geometry_v1 -TotalHands 500 -RuntimeProfile fast_live
-python .\scripts\quality_gate_flop_distribution.py --strict
-python .\scripts\build_neural_dataset.py --response-dir 5_Vision_Extraction\out\flop_engine --write
+.\.venv\Scripts\python.exe .\scripts\quality_gate_flop_distribution.py --strict
+.\.venv\Scripts\python.exe .\scripts\build_neural_dataset.py --response-dir 5_Vision_Extraction\out\flop_engine --write
 ```
 
 Feature-contract parity check (offline rows vs live-spot encoding):
 
 ```powershell
-python .\scripts\test_feature_contract_parity.py `
+.\.venv\Scripts\python.exe .\scripts\test_feature_contract_parity.py `
   --input-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_teacher_rows.jsonl `
   --strict
 ```
@@ -74,7 +85,7 @@ python .\scripts\test_feature_contract_parity.py `
 Offline reference labeling (checkpoint/resume):
 
 ```powershell
-python .\scripts\label_reference_offline.py `
+.\.venv\Scripts\python.exe .\scripts\label_reference_offline.py `
   --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
   --output-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
   --error-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
@@ -99,7 +110,7 @@ Note: the guard auto-applies a minimum quiet window derived from labeler `--time
 Post-pass unresolved gate export (for deterministic neural OOD blocking):
 
 ```powershell
-python .\scripts\report_reference_label_postpass.py `
+.\.venv\Scripts\python.exe .\scripts\report_reference_label_postpass.py `
   --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
   --labels-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
   --errors-jsonl .\2_Neural_Brain\local_pipeline\reports\offline_label_errors.jsonl `
@@ -122,9 +133,9 @@ $env:NEURAL_UNRESOLVED_GATE_JSON = "A:\PokeHerFace\Version1\2_Neural_Brain\local
 Direct reproducible A/B (same seed):
 
 ```powershell
-python 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile fast_live --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_fast_live_seed4090.json
-python 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile shark_classic --timeout-shark-classic 180 --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_shark_classic_seed4090.json
-python 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile shark_classic --shark-classic-reference --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_shark_classic_reference_seed4090.json
+.\.venv\Scripts\python.exe 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile fast_live --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_fast_live_seed4090.json
+.\.venv\Scripts\python.exe 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile shark_classic --timeout-shark-classic 180 --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_shark_classic_seed4090.json
+.\.venv\Scripts\python.exe 4_LLM_Bridge\run_stateful_sim.py --hands 25 --runtime-profile shark_classic --shark-classic-reference --seed 4090 --output 4_LLM_Bridge\examples\synthetic_hands\ab_shark_classic_reference_seed4090.json
 ```
 
 Fast-live tuning sweep (tracks latency deltas vs baseline):
@@ -246,6 +257,7 @@ Bridge supports:
 - `prefer_on_fast_failover`
 
 Use shadow first for validation; promote only after agreement/latency gates are met.
+Do not treat neural prefer-mode as ready until dataset freeze and evaluation gates pass cleanly.
 
 ## Important Notes
 
@@ -255,7 +267,7 @@ Use shadow first for validation; promote only after agreement/latency gates are 
 - Contract regression check (bridge online):
 
 ```powershell
-python scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
+.\.venv\Scripts\python.exe scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
 ```
 
 - Stateful sim reports are now `stateful_sim_report.v3` and include:
@@ -275,7 +287,7 @@ python scripts\test_profile_contract.py --endpoint http://127.0.0.1:8000/solve
 
 ## Next Best Steps
 
-1. Continue tuning `fast_live` for better non-root postflop decisions.
-2. Run side-by-side `fast_live` vs `normal` with fair timeout budgets for quality comparison.
-3. Expand neural shadow evaluation and promote selectively where safe.
-4. Revisit GPU offload for solver hot loops after CPU/routing refinement plateaus.
+1. Complete the offline reference corpus until strict post-pass can report a true `freeze_ready=true` state with clean manifest sync.
+2. Re-run strict post-pass and unresolved-gate export after meaningful label/reference checkpoints.
+3. Point train/eval to frozen reference labels and run baseline local eval only after freeze gates pass.
+4. Keep neural in shadow or other non-authoritative modes until freeze and eval gates are satisfied; continue `fast_live` tuning separately.
