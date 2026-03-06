@@ -17,6 +17,11 @@ Heads-up poker engine workspace:
 - Live payloads now set dynamic `in_position_player` and always include `active_node_path`.
 - Active-node facing-bet requests now canonicalize bet amount to nearest legal tree size.
 
+## Developer Handoff
+
+Full transfer-of-ownership reference:
+- `HANDOFF_NEW_DEVELOPER.md`
+
 ## Project Layout
 
 - `1_Engine_Core/` C++ solver (`shark_cli.exe`, GUI sources)
