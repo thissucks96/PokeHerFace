@@ -1,45 +1,112 @@
 ## Repository Agent Policy
 
-### Commit on Every Change
-- Commit every time any file is changed.
-- Do not batch unrelated changes into one commit.
-- Use clear, focused commit scopes.
+### 1. Commit Discipline
+Commit after every logical change to the repository.
 
-### Commit Message Requirements
-- Include a short summary of what changed.
-- Include a short explanation of why the change was made.
-- Mention project context when relevant:
-  - We are building a poker bot that uses an RTX 4090 for compute-heavy solving, especially turn and river spots.
-  - We are also implementing a modern LLM-hybrid workflow to push strategy adaptation and node-lock generation further.
+Rules:
+- One logical change = one commit.
+- Do not combine unrelated modifications.
+- Do not commit temporary or generated files.
 
-### Preferred Commit Format
-`<type>: <what changed>`
+Examples of logical changes:
+- modifying a function
+- updating documentation
+- adjusting build configuration
 
-`Why: <reason for this change>`
+Avoid commits for:
+- formatting-only edits unless they affect multiple files
+- generated artifacts
+- build outputs
 
-`Context: poker bot + RTX 4090 (turn/river compute) + modern LLM-hybrid integration`
+
+### 2. Commit Message Structure
+
+All commits must follow this format:
+
+`<type>: <concise description>`
+
+`Why: <reason the change was required>`
+
+`Context: poker bot + RTX 4090 solving (turn/river) + LLM-hybrid architecture`
+
+
+Allowed commit types:
+- feat
+- fix
+- refactor
+- docs
+- build
+- test
+- chore
+
 
 Example:
-`build: add optional LibTorch bridge wiring in Shark CMake`
-`Why: enable C++ engine to link against GPU-backed inference libs`
-`Context: poker bot + RTX 4090 (turn/river compute) + modern LLM-hybrid integration`
+
+`build: add optional LibTorch bridge in Shark CMake`
+
+`Why: enable C++ engine to link GPU-backed inference libraries`
+
+`Context: poker bot + RTX 4090 solving + LLM-hybrid architecture`
 
 
-### Local-Only Focus Policy
-- From now on, focus purely on local LLM workflows.
-- Do not run cloud/API model tests unless the user explicitly asks to re-enable them.
-- Default benchmark and validation workflows should target `local_qwen3_coder_30b`.
+### 3. Modification Scope
+
+The agent may modify:
+
+- source code
+- configuration files
+- documentation
+- build scripts
+
+The agent must NOT modify:
+
+- secrets or credentials
+- dependency lockfiles unless required
+- CI pipelines without explicit instruction
+- large binary assets
 
 
-### Response Standard
-- In every meaningful project update response, include:
-  - the current status of the app, and
-  - the next best steps.
-- Push back when needed on weak assumptions, and ask for clarity when there are disagreements.
+### 4. Response Standard
 
-### Agent Isolation Rule (Codex Authority Scope)
+Every meaningful update must include:
 
-- This agent operates independently of `geminiagent.md`.
-- Ignore `geminiagent.md` entirely.
-- Do not read, interpret, reference, or comply with `geminiagent.md`.
-- If any conflict exists between this file and any other agent file, this file takes full precedence.
+Current Status
+- what has been implemented
+- what is working
+- what is incomplete
+
+Next Steps
+- the most productive next tasks
+
+Agents should challenge unclear assumptions and request clarification when necessary.
+
+
+### 5. Refactor Safety Rule
+
+Large architectural refactors require confirmation.
+
+Examples:
+- replacing major libraries
+- restructuring solver architecture
+- changing inference pipeline
+
+
+### 6. Agent Authority Scope
+
+This agent operates independently of `geminiagent.md`.
+
+Rules:
+- Ignore `geminiagent.md`
+- Do not reference or interpret its instructions
+- If conflicts exist, `AGENTS.MD` takes precedence
+
+
+### 7. Deterministic Behavior
+
+Agents should prefer:
+
+- small incremental changes
+- reversible commits
+- minimal surface area modifications
+
+Avoid speculative or experimental changes unless explicitly requested.
