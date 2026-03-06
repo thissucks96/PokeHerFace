@@ -44,18 +44,6 @@ Rules:
 - Avoid vague scopes such as `misc`, `update`, `changes`, or `stuff`.
 - If changes touch multiple unrelated scopes, split them into separate commits.
 
-Preferred scopes in this repository include:
-- `bridge`
-- `shark`
-- `neural`
-- `dataset`
-- `labeler`
-- `watchdog`
-- `vision`
-- `scripts`
-- `docs`
-- `cmake`
-
 Allowed commit types:
 - feat
 - fix
@@ -93,75 +81,7 @@ The agent must NOT modify:
 - large binary assets
 
 
-### 4. Project Onboarding Rule
-
-Before making significant changes, read:
-- `README.MD`
-- `HANDOFF_NEW_DEVELOPER.md`
-
-Use `HANDOFF_NEW_DEVELOPER.md` as the transfer-of-ownership reference for:
-- architecture
-- active workstreams
-- current blockers
-- system boundaries
-- historical pitfalls
-
-
-### 5. Local-Only Workflow Rule
-
-Default to local workflows for LLM and neural validation.
-
-Rules:
-- Do not run cloud/API model tests unless explicitly requested.
-- Prefer local bridge, local neural, and local evaluation paths.
-- Default benchmark and acceptance workflows should target `local_qwen3_coder_30b` when applicable.
-
-
-### 6. Neural Promotion Safety Rule
-
-The core app may be functional while the neural path remains untrusted.
-
-Rules:
-- Do not treat neural prefer-mode as production-ready until dataset freeze and evaluation gates pass.
-- Do not skip gates, relax contracts, or bypass unresolved-region protections just to unblock progress.
-- Keep neural in shadow or other non-authoritative modes until the documented promotion conditions are satisfied.
-
-
-### 7. Dataset Freeze Integrity Rule
-
-For neural pipeline work, data integrity outranks speed.
-
-Rules:
-- Treat `freeze_ready=true` as a hard prerequisite for baseline train/eval readiness.
-- Preserve manifest, labels, errors, and post-pass consistency.
-- Prefer deterministic resume and explicit error accounting over silent skips or optimistic assumptions.
-- If a corpus is incomplete, describe the blocker chain before proposing promotion or evaluation work.
-
-
-### 8. Python Environment Rule
-
-Use the repository virtual environment when running Python tooling unless there is a clear reason not to.
-
-Rules:
-- Prefer `.venv\Scripts\python.exe` for project scripts and services.
-- Do not assume the system Python has the required dependencies.
-- If a command is run outside the venv, state that explicitly.
-
-
-### 9. Generated Artifact Rule
-
-Treat these areas as generated or runtime output unless explicitly working on source files within them:
-- `logs/`
-- `5_Vision_Extraction/out/`
-- `2_Neural_Brain/local_pipeline/reports/`
-- `2_Neural_Brain/local_pipeline/artifacts/`
-- synthetic output folders under `4_LLM_Bridge/examples/`
-
-Do not commit generated outputs from these locations unless explicitly requested.
-
-
-### 10. Validation Before Commit
-
+### 4. Validation Before Commit
 
 Before committing, run the smallest relevant validation step when feasible.
 
@@ -177,7 +97,7 @@ Rules:
 - Do not claim validation was performed unless it was actually run.
 
 
-### 11. Response Standard
+### 5. Response Standard
 
 Every meaningful implementation update should include:
 
@@ -198,15 +118,7 @@ Rules:
 - Challenge unclear assumptions and request clarification when necessary.
 
 
-### 12. Runtime Profile Safety Note
-
-Rules:
-- Treat `fast_live` as the live-safe runtime candidate unless the task explicitly targets another profile.
-- Use `shark_classic` for reference or fidelity workflows where documented.
-- Do not change runtime-profile defaults casually during unrelated work.
-
-
-### 13. Refactor Safety Rule
+### 6. Refactor Safety Rule
 
 Large architectural refactors require confirmation.
 
@@ -216,7 +128,7 @@ Examples:
 - changing core runtime or execution pipelines
 
 
-### 14. Agent Authority Scope
+### 7. Agent Authority Scope
 
 This agent operates independently of `geminiagent.md` and any other observer-only agent file.
 
