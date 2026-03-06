@@ -46,7 +46,7 @@ The repository is focused on completing the offline reference corpus to achieve 
 - Strict post-pass is still failing for:
   - `missing_rows=4309`
   - `systemic_buckets=1`
-  - manifest/output mismatches
+- Manifest/output mismatches have been reconciled from output truth and are no longer part of the active strict-failure reasons.
 - The remaining quality hotspot is still concentrated in the flop bucket:
   - `flop|p_lt10|f_0|spr_16p`
   - `attempted = 104`
@@ -68,6 +68,6 @@ The repository is focused on completing the offline reference corpus to achieve 
   - `errors_unique = 19`
 
 ### Recommended Next Checks
-1. Reconcile or rebuild the manifest so post-pass reflects output truth instead of stale manifest counters.
-2. Decide whether the systemic `flop|p_lt10|f_0|spr_16p` timeout bucket should be accepted as explicit failure coverage or attacked with a different reference-runtime strategy.
+1. Decide whether the systemic `flop|p_lt10|f_0|spr_16p` timeout bucket should be accepted as explicit failure coverage or attacked with a different reference-runtime strategy.
+2. When needed, run `scripts\reconcile_offline_label_manifest.py` before strict post-pass so manifest stats match output truth after interrupted labeler runs.
 3. Investigate the downstream train/eval workflow to ensure the default target in `scripts/train_local_neural.py` is re-wired to point to the newly frozen reference corpus instead of the deprecated `solver_teacher_rows.jsonl` file.
