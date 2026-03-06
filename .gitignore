@@ -34,6 +34,7 @@ __pycache__/
 
 # Logs
 *.log
+logs/
 
 # Local third-party binaries
 libs/libtorch/
@@ -95,6 +96,8 @@ libs/*.zip
 4_LLM_Bridge/examples/**/profile_input_manifest*.json
 4_LLM_Bridge/examples/synthetic_hands/timing_report*.json
 4_LLM_Bridge/examples/synthetic_hands/stateful_sim_report*.json
+4_LLM_Bridge/examples/synthetic_hands/ab_*.json
+4_LLM_Bridge/examples/synthetic_hands/artifacts_*/
 4_LLM_Bridge/examples/synthetic_hands/fast_live_tuning/
 4_LLM_Bridge/examples/synthetic_hands/recipes/
 
