@@ -304,6 +304,9 @@ $uiLogRoot = Join-Path $PSScriptRoot "5_Vision_Extraction\out\ui_session_logs"
 $uiLogTextPath = Join-Path $uiLogRoot ("session_{0}.log" -f $uiSessionId)
 $uiLogJsonlPath = Join-Path $uiLogRoot ("session_{0}.jsonl" -f $uiSessionId)
 $uiLogLatestPath = Join-Path $uiLogRoot "latest_session.json"
+$manualTrainingRoot = Join-Path $PSScriptRoot "5_Vision_Extraction\out\manual_training"
+$manualTrainingJsonlPath = Join-Path $manualTrainingRoot ("manual_vs_1v1_{0}.jsonl" -f $uiSessionId)
+$manualTrainingLatestPath = Join-Path $manualTrainingRoot "latest_manual_vs_1v1.json"
 $pauseOnNormalExit = $false
 if ($env:UI_PAUSE_ON_EXIT -and ([string]$env:UI_PAUSE_ON_EXIT).Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")) {
   $pauseOnNormalExit = $true
@@ -407,6 +410,7 @@ $currentHandLogStartIndex = 0
 $uiLogEntryBuffer = New-Object System.Collections.Generic.List[object]
 $heroIsSmallBlind = $true
 $lastHandSummaryText = ""
+$manualTrainingEventIndex = 0
 $showVillainCards = $false
 $villainMode = "Scripted"
 $villainStyle = "Tight"
@@ -2993,6 +2997,12 @@ function Resolve-ShowdownAndAwardPot {
       villain_narrative = $villainNarrative
       current_hero_chips = [int]$script:currentHeroChips
       current_villain_chips = [int]$script:currentVillainChips
+    }
+    Write-ManualTrainingRecord -RecordType "hand_outcome" -Actor "system" -Extra @{
+      winner = "split"
+      reason = "showdown_split"
+      hero_narrative = [string]$heroNarrative
+      villain_narrative = [string]$villainNarrative
     }
   }
   return $true
@@ -5798,6 +5808,176 @@ function Copy-CurrentHandSnapshotToClipboard {
   }
 }
 
+function Get-AdviceWeightedRowsSnapshot {
+  $rows = @()
+  foreach ($row in @($script:lastAdviceWeightedRows)) {
+    if ($null -eq $row) { continue }
+    $action = ""
+    $token = ""
+    $frequency = 0.0
+    $amount = $null
+    if ($row -is [System.Collections.IDictionary]) {
+      if ($row.Contains("action") -and $null -ne $row["action"]) { $action = [string]$row["action"] }
+      if ($row.Contains("token") -and $null -ne $row["token"]) { $token = [string]$row["token"] }
+      if ($row.Contains("frequency") -and $null -ne $row["frequency"]) { try { $frequency = [double]$row["frequency"] } catch { $frequency = 0.0 } }
+      elseif ($row.Contains("avg_frequency") -and $null -ne $row["avg_frequency"]) { try { $frequency = [double]$row["avg_frequency"] } catch { $frequency = 0.0 } }
+      if ($row.Contains("amount") -and $null -ne $row["amount"] -and [string]$row["amount"] -ne "") { $amount = $row["amount"] }
+    }
+    else {
+      if ($row.PSObject.Properties.Name -contains "action" -and $null -ne $row.action) { $action = [string]$row.action }
+      if ($row.PSObject.Properties.Name -contains "token" -and $null -ne $row.token) { $token = [string]$row.token }
+      if ($row.PSObject.Properties.Name -contains "frequency" -and $null -ne $row.frequency) { try { $frequency = [double]$row.frequency } catch { $frequency = 0.0 } }
+      elseif ($row.PSObject.Properties.Name -contains "avg_frequency" -and $null -ne $row.avg_frequency) { try { $frequency = [double]$row.avg_frequency } catch { $frequency = 0.0 } }
+      if ($row.PSObject.Properties.Name -contains "amount" -and $null -ne $row.amount -and [string]$row.amount -ne "") { $amount = $row.amount }
+    }
+    if ([string]::IsNullOrWhiteSpace($action) -and [string]::IsNullOrWhiteSpace($token)) {
+      continue
+    }
+    $entry = [ordered]@{
+      action = [string]$action
+      token = [string]$token
+      frequency = [double]$frequency
+    }
+    if ($null -ne $amount) {
+      $entry["amount"] = [int]$amount
+    }
+    $rows += [pscustomobject]$entry
+  }
+  return @($rows)
+}
+
+function Try-BuildManualTrainingSpotSnapshot {
+  param(
+    [string]$Label = "manual_training"
+  )
+  try {
+    $heroTokens = @()
+    foreach ($slot in @("hero1", "hero2")) {
+      $token = Normalize-CardToken -Text ([string]$script:heroCards[$slot])
+      if (-not (Test-CardTokenStrict -Token $token)) {
+        return $null
+      }
+      $heroTokens += $token
+    }
+    $boardTokens = @()
+    foreach ($card in @($script:lastBoardTokens)) {
+      $token = Normalize-CardToken -Text ([string]$card)
+      if (-not $token) { continue }
+      if (-not (Test-CardTokenStrict -Token $token)) {
+        return $null
+      }
+      $boardTokens += $token
+    }
+    if ($boardTokens.Count -gt 0 -and $boardTokens.Count -lt 3) {
+      return $null
+    }
+    return (Build-EngineSpotPayload -BoardCards @($boardTokens) -Label $Label -HeroCards @($heroTokens))
+  }
+  catch {
+    return $null
+  }
+}
+
+function Write-ManualTrainingRecord {
+  param(
+    [Parameter(Mandatory = $true)][string]$RecordType,
+    [string]$Actor = "",
+    [string]$ActionToken = "",
+    [int]$ActionAmount = 0,
+    [hashtable]$Extra = $null
+  )
+
+  try {
+    if (-not (Test-Path $manualTrainingRoot)) {
+      New-Item -Path $manualTrainingRoot -ItemType Directory -Force | Out-Null
+    }
+    $script:manualTrainingEventIndex = [int]$script:manualTrainingEventIndex + 1
+    $heroRole = if ([bool]$script:heroIsSmallBlind) { "SB / BTN" } else { "BB" }
+    $villainRole = if ([bool]$script:heroIsSmallBlind) { "BB" } else { "SB / BTN" }
+    $state = Get-CurrentGameStateSnapshot
+    $heroCardsNow = @()
+    foreach ($slot in @("hero1", "hero2")) {
+      $heroCardsNow += [string]$script:heroCards[$slot]
+    }
+    $villainCardsNow = @()
+    foreach ($slot in @("villain1", "villain2")) {
+      $villainCardsNow += [string]$script:villainCards[$slot]
+    }
+    $boardCardsNow = @()
+    foreach ($card in @($script:lastBoardTokens)) {
+      $boardCardsNow += [string]$card
+    }
+    $burnCardsNow = @()
+    foreach ($card in @($script:currentBurnPile)) {
+      $burnCardsNow += [string]$card
+    }
+    $spotSnapshot = Try-BuildManualTrainingSpotSnapshot -Label $RecordType
+    $record = [ordered]@{
+      schema_version = 1
+      capture = "manual_vs_1v1"
+      session_id = [string]$uiSessionId
+      event_index = [int]$script:manualTrainingEventIndex
+      hand_index = [int]$script:handCounter
+      record_type = [string]$RecordType
+      ts_utc = [DateTime]::UtcNow.ToString("o")
+      runtime_profile = [string]$engineRuntimeProfile
+      street = [string](Get-CurrentStreetName)
+      actor = [string]$Actor
+      hero_role = [string]$heroRole
+      villain_role = [string]$villainRole
+      villain_mode = [string]$script:villainMode
+      villain_style = [string]$script:villainStyle
+      state = $state
+      cards = [ordered]@{
+        hero = @($heroCardsNow)
+        villain = @($villainCardsNow)
+        board = @($boardCardsNow)
+        burn = @($burnCardsNow)
+      }
+      legal_actions = [ordered]@{
+        hero = @((Get-HeroLegalActionTokens) | ForEach-Object { [string]$_ })
+        villain = @((Get-VillainLegalActionTokens) | ForEach-Object { [string]$_ })
+      }
+      advice = [ordered]@{
+        primary = [string]$script:advicePrimary
+        secondary = [string]$script:adviceSecondary
+        weighted_actions = @(Get-AdviceWeightedRowsSnapshot)
+        engine_last_result_summary = [string]$script:engineLastResultSummary
+        engine_last_completed_state_hash = [string]$script:engineLastCompletedStateHash
+        engine_last_completed_logical_key = [string]$script:engineLastCompletedLogicalKey
+      }
+      ui_logs = [ordered]@{
+        text = [string]$uiLogTextPath
+        jsonl = [string]$uiLogJsonlPath
+      }
+    }
+    if ($spotSnapshot) {
+      $record["spot"] = $spotSnapshot
+    }
+    if ([string]::IsNullOrWhiteSpace($ActionToken) -eq $false) {
+      $action = [ordered]@{
+        token = [string]$ActionToken
+      }
+      if ([int]$ActionAmount -gt 0) {
+        $action["amount"] = [int]$ActionAmount
+      }
+      $record["action"] = $action
+    }
+    if ($null -ne $Extra) {
+      $record["extra"] = $Extra
+    }
+    $json = ($record | ConvertTo-Json -Depth 12 -Compress)
+    Add-Content -Path $manualTrainingJsonlPath -Value $json -Encoding UTF8
+    $latest = [ordered]@{
+      session_id = [string]$uiSessionId
+      training_jsonl_path = [string]$manualTrainingJsonlPath
+      updated_utc = [DateTime]::UtcNow.ToString("o")
+    }
+    Set-Content -Path $manualTrainingLatestPath -Value ($latest | ConvertTo-Json -Depth 5) -Encoding UTF8
+  }
+  catch {}
+}
+
 function Initialize-SessionLogs {
   try {
     if (-not (Test-Path $uiLogRoot)) {
@@ -5805,6 +5985,10 @@ function Initialize-SessionLogs {
     }
     Set-Content -Path $uiLogTextPath -Value ("# Poker Vision UI Session {0} ({1})" -f $uiSessionId, [DateTime]::UtcNow.ToString("o")) -Encoding UTF8
     Set-Content -Path $uiLogJsonlPath -Value "" -Encoding UTF8
+    if (-not (Test-Path $manualTrainingRoot)) {
+      New-Item -Path $manualTrainingRoot -ItemType Directory -Force | Out-Null
+    }
+    Set-Content -Path $manualTrainingJsonlPath -Value "" -Encoding UTF8
   }
   catch {}
 }
@@ -6594,6 +6778,12 @@ function Award-PotToWinner {
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
   }
+  Write-ManualTrainingRecord -RecordType "hand_outcome" -Actor "system" -Extra @{
+    winner = [string]$Winner
+    amount = [int]$award
+    reason = [string]$Reason
+    outcome_summary = [string]$summaryText
+  }
 }
 
 function Invoke-VillainActionSelection {
@@ -6610,6 +6800,7 @@ function Invoke-VillainActionSelection {
     Write-Log "Villain action ignored: hand already resolved."
     return
   }
+  $preVillainLegalTokens = @((Get-VillainLegalActionTokens) | ForEach-Object { [string]$_ })
 
   $committedAmount = 0
   $stakes = Get-StakeSettings
@@ -6700,6 +6891,11 @@ function Invoke-VillainActionSelection {
     hero_commit = $heroCommitNow
     villain_commit = $villainCommitNow
     hero_to_call = $heroToCallNow
+  }
+  Write-ManualTrainingRecord -RecordType "villain_action" -Actor "villain" -ActionToken $normalizedAction -ActionAmount ([int]$committedAmount) -Extra @{
+    auto_mode = [bool]$AutoMode
+    pre_legal_actions = @($preVillainLegalTokens)
+    state_capture = "post_action"
   }
 
   # Preflop safeguard: when villain acts and it immediately becomes hero's turn,
@@ -6794,6 +6990,7 @@ function Invoke-ManualActionSelection {
     Write-Log "Manual action ignored: hand already resolved."
     return
   }
+  $preHeroLegalTokens = @($legalTokens | ForEach-Object { [string]$_ })
 
   $committedAmount = 0
   if ($normalizedAction -eq "ALL IN") {
@@ -6879,6 +7076,10 @@ function Invoke-ManualActionSelection {
     current_pot = [int]$script:currentPotAmount
     current_hero_chips = [int]$script:currentHeroChips
     current_villain_chips = [int]$script:currentVillainChips
+  }
+  Write-ManualTrainingRecord -RecordType "hero_action" -Actor "hero" -ActionToken $normalizedAction -ActionAmount ([int]$committedAmount) -Extra @{
+    pre_legal_actions = @($preHeroLegalTokens)
+    state_capture = "post_action"
   }
   Maybe-RefreshAdviceAfterActionStateChange -StageLabel "manual_action"
 }
@@ -9973,6 +10174,9 @@ function Start-NewHandPreserveChips {
     hero_is_small_blind = [bool]$script:heroIsSmallBlind
     first_to_act_preflop = $firstToActPreflop
   }
+  Write-ManualTrainingRecord -RecordType "hand_start" -Actor "system" -Extra @{
+    first_to_act_preflop = [string]$firstToActPreflop
+  }
   Try-AutoSendHeroCardsToEngine
   if ((Get-CurrentStreetName) -eq "preflop" -and (Test-IsHeroTurn) -and (Get-HeroCardsReady) -and (-not [bool]$script:adviceHasAction)) {
     $null = Ensure-PreflopHeroAdvice
@@ -10330,6 +10534,31 @@ function Poll-EngineJobs {
         override_applied = $overrideAppliedValue
         sizing_used = [string]$result.sizing_used
         fallback_reason = [string]$result.fallback_reason
+      }
+      Write-ManualTrainingRecord -RecordType "engine_result" -Actor "engine" -ActionToken ([string]$script:adviceActionPrimary) -Extra @{
+        stage = [string]$completedStage
+        selected_strategy = [string]$result.selected_strategy
+        exploitability = $result.exploitability
+        node_lock_kept = $result.node_lock_kept
+        elapsed_sec = [double]$result.elapsed_sec
+        profile_used = [string]$profileUsedValue
+        configured_runtime_profile = [string]$metaRuntimeProfile
+        effective_runtime_profile = [string]$metaEffectiveRuntimeProfile
+        override_applied = [bool]$overrideAppliedValue
+        sizing_used = [string]$result.sizing_used
+        fallback_reason = [string]$result.fallback_reason
+        neural_attempted = [bool]$result.neural_attempted
+        neural_applied = [bool]$result.neural_applied
+        neural_agrees_with_selected = $result.neural_agrees_with_selected
+        neural_choice = [string]$result.neural_choice
+        neural_selected_action = [string]$result.neural_selected_action
+        neural_error = [string]$result.neural_error
+        neural_elapsed_sec = [double]$result.neural_elapsed_sec
+        response_path = if ($result.response_path) { [string]$result.response_path } else { "" }
+        payload_path = if ($meta.ContainsKey("payload_path")) { [string]$meta.payload_path } else { "" }
+        state_version = [int]$metaStateVersion
+        state_hash = [string]$metaStateHash
+        logical_key = if ($meta.ContainsKey("logical_key")) { [string]$meta.logical_key } else { "" }
       }
       if ([bool]$result.neural_attempted -or $result.neural_error) {
         $agreeText = "n/a"
