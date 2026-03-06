@@ -10286,19 +10286,26 @@ function Poll-EngineJobs {
           Write-Log ("Auto villain turn error at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim())
         }
       }
+      $metaStateVersion = if ($meta.ContainsKey("state_version")) { [int]$meta.state_version } else { 0 }
+      $metaStateHash = if ($meta.ContainsKey("state_hash")) { [string]$meta.state_hash } else { "" }
+      $metaRuntimeProfile = if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }
+      $metaEffectiveRuntimeProfile = if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }
+      $profileUsedValue = if ($result.profile_used) { [string]$result.profile_used } else { [string]$metaEffectiveRuntimeProfile }
+      $overrideAppliedValue = [bool]($metaRuntimeProfile -ne $metaEffectiveRuntimeProfile)
+
       Write-Log ("Engine response: strategy={0}, exploitability={1}, kept={2}, time={3:N2}s" -f
         $result.selected_strategy,
         $result.exploitability,
         $result.node_lock_kept,
         [double]$result.elapsed_sec) -Type "engine_job_completed" -Data @{
         job_id = [int]$jobId
-        state_version = if ($meta.ContainsKey("state_version")) { [int]$meta.state_version } else { 0 }
-        state_hash = if ($meta.ContainsKey("state_hash")) { [string]$meta.state_hash } else { "" }
+        state_version = $metaStateVersion
+        state_hash = $metaStateHash
         strategy = [string]$result.selected_strategy
-        runtime_profile = if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }
-        effective_runtime_profile = if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }
-        profile_used = if ($result.profile_used) { [string]$result.profile_used } else { if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile } }
-        override_applied = [bool]((if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }) -ne (if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }))
+        runtime_profile = $metaRuntimeProfile
+        effective_runtime_profile = $metaEffectiveRuntimeProfile
+        profile_used = $profileUsedValue
+        override_applied = $overrideAppliedValue
         sizing_used = [string]$result.sizing_used
         fallback_reason = [string]$result.fallback_reason
         exploitability = $result.exploitability
@@ -10313,14 +10320,14 @@ function Poll-EngineJobs {
         neural_elapsed_sec = [double]$result.neural_elapsed_sec
       }
       Write-Log ("Engine telemetry: profile_used={0}, override_applied={1}, sizing={2}, fallback_reason={3}" -f `
-        $(if ($result.profile_used) { [string]$result.profile_used } else { if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile } }), `
-        [bool]((if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }) -ne (if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile })), `
+        $profileUsedValue, `
+        $overrideAppliedValue, `
         [string]$result.sizing_used, `
         [string]$result.fallback_reason) -Type "engine_telemetry" -Data @{
         job_id = [int]$jobId
         stage = $completedStage
-        profile_used = if ($result.profile_used) { [string]$result.profile_used } else { if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile } }
-        override_applied = [bool]((if ($meta.ContainsKey("runtime_profile")) { [string]$meta.runtime_profile } else { [string]$engineRuntimeProfile }) -ne (if ($meta.ContainsKey("effective_runtime_profile")) { [string]$meta.effective_runtime_profile } else { [string]$engineRuntimeProfile }))
+        profile_used = $profileUsedValue
+        override_applied = $overrideAppliedValue
         sizing_used = [string]$result.sizing_used
         fallback_reason = [string]$result.fallback_reason
       }
