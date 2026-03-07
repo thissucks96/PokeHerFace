@@ -52,6 +52,17 @@ function Get-ExistingProcess {
     return @($procs)
 }
 
+function Get-WatchdogTargetProcessId {
+    param(
+        [string]$CommandLine
+    )
+    $match = [regex]::Match([string]$CommandLine, '(?:^|\s)-ProcessId\s+(\d+)')
+    if ($match.Success) {
+        return [int]$match.Groups[1].Value
+    }
+    return 0
+}
+
 function Stop-ExistingProcessSet {
     param(
         [string]$Pattern,
@@ -150,9 +161,25 @@ if ($existingLabeler.Count -gt 0) {
 }
 
 $existingWatchdog = @(Get-ExistingProcess -Pattern "watch_offline_labeler_guard\.ps1.*$([Regex]::Escape($manifestPath))")
+$reuseWatchdog = $false
 if ($existingWatchdog.Count -gt 0) {
-    Write-Host "Broad-tail watchdog already running as PID $($existingWatchdog[0].ProcessId)"
-} else {
+    $watchdogTargetPid = Get-WatchdogTargetProcessId -CommandLine ([string]$existingWatchdog[0].CommandLine)
+    if ($watchdogTargetPid -eq $labelerPid) {
+        $reuseWatchdog = $true
+        Write-Host "Broad-tail watchdog already running as PID $($existingWatchdog[0].ProcessId)"
+    } else {
+        foreach ($watchdogProc in $existingWatchdog) {
+            try {
+                Stop-Process -Id ([int]$watchdogProc.ProcessId) -Force -ErrorAction Stop
+                Write-Host "Stopped stale broad-tail watchdog PID $($watchdogProc.ProcessId) (target was PID $watchdogTargetPid)"
+            } catch {
+                Write-Host "Failed to stop stale broad-tail watchdog PID $($watchdogProc.ProcessId): $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+if (-not $reuseWatchdog) {
     Write-Host "Starting broad-tail watchdog..."
     $watchdog = Start-Process -FilePath "pwsh" -ArgumentList @(
         "-ExecutionPolicy", "Bypass",
