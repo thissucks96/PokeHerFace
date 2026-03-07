@@ -101,6 +101,29 @@ def _detect_street(board: Any) -> str:
     return f"partial_{size}"
 
 
+def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> int | None:
+    path_value = str(active_node_path or "").strip().lower()
+    if not path_value:
+        return None
+    for segment in reversed(path_value.split("/")):
+        token = segment.strip()
+        if ":bet:" not in token and ":raise:" not in token:
+            continue
+        try:
+            return int(float(token.rsplit(":", 1)[1]))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_effective_facing_bet(meta: dict[str, Any], effective_spot: dict[str, Any]) -> int:
+    facing = _safe_int(meta.get("facing_bet"), 0)
+    if facing > 0:
+        return facing
+    active = str(effective_spot.get("active_node_path") or "").strip()
+    return _safe_int(_extract_last_bet_amount_from_active_node_path(active), 0)
+
+
 def _iter_response_paths(response_dir: Path, max_files: int) -> list[Path]:
     paths = sorted(response_dir.glob("*_response_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if max_files > 0:
@@ -261,7 +284,7 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
         "raise_cap": _safe_int(effective_spot.get("raise_cap"), 0),
         "compress_strategy": bool(effective_spot.get("compress_strategy", True)),
         "bet_sizing": effective_spot.get("bet_sizing") if isinstance(effective_spot.get("bet_sizing"), dict) else {},
-        "facing_bet": _safe_int(meta.get("facing_bet"), 0),
+        "facing_bet": _extract_effective_facing_bet(meta, effective_spot),
         "hero_street_commit": _safe_int(meta.get("hero_street_commit"), 0),
         "villain_street_commit": _safe_int(meta.get("villain_street_commit"), 0),
         "current_pot": _safe_int(meta.get("current_pot", effective_spot.get("starting_pot")), 0),
