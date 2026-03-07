@@ -279,6 +279,55 @@ def _collect_class_metrics(
     }
 
 
+def _dataset_targets(dataset: Dataset[Any]) -> list[int]:
+    if isinstance(dataset, torch.utils.data.Subset):
+        base = dataset.dataset
+        indices = list(dataset.indices)
+        if hasattr(base, "samples"):
+            return [int(base.samples[i][1]) for i in indices]
+    if hasattr(dataset, "samples"):
+        return [int(sample[1]) for sample in dataset.samples]
+    targets: list[int] = []
+    for i in range(len(dataset)):
+        _, y = dataset[i]
+        targets.append(int(y))
+    return targets
+
+
+def _build_class_weights(
+    targets: list[int],
+    num_classes: int,
+    mode: str,
+    cap: float,
+) -> list[float] | None:
+    normalized_mode = str(mode or "none").strip().lower()
+    if normalized_mode in {"", "none", "off", "disabled"}:
+        return None
+    if normalized_mode != "inverse_frequency":
+        raise ValueError(f"unsupported_class_weighting:{mode}")
+
+    counts = [0 for _ in range(num_classes)]
+    for target in targets:
+        if 0 <= target < num_classes:
+            counts[target] += 1
+
+    positive_counts = [count for count in counts if count > 0]
+    if not positive_counts:
+        return None
+
+    max_count = max(positive_counts)
+    weights: list[float] = []
+    for count in counts:
+        if count <= 0:
+            weights.append(0.0)
+            continue
+        weight = max_count / float(count)
+        if cap > 0:
+            weight = min(weight, cap)
+        weights.append(weight)
+    return weights
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train local neural policy from frozen reference-label rows.")
     parser.add_argument(
@@ -298,6 +347,11 @@ def main() -> int:
         type=Path,
         default=None,
         help="Optional holdout JSONL for explicit evaluation. Defaults to config data.holdout_jsonl when present.",
+    )
+    parser.add_argument(
+        "--class-weighting",
+        default=None,
+        help="Class weighting mode for scalar CE training. Supported: none, inverse_frequency.",
     )
     parser.add_argument("--train", action="store_true", help="Run training. Default is validation-only.")
     args = parser.parse_args()
@@ -393,6 +447,19 @@ def main() -> int:
     batch_size = max(8, _safe_int(train_cfg.get("batch_size"), 512))
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False) if val_set else None
+    class_weighting_mode = str(
+        args.class_weighting
+        or train_cfg.get("class_weighting")
+        or "none"
+    ).strip().lower()
+    class_weight_cap = max(0.0, _safe_float(train_cfg.get("class_weight_cap"), 50.0))
+    train_targets = _dataset_targets(train_set)
+    class_weights = _build_class_weights(
+        targets=train_targets,
+        num_classes=len(action_space),
+        mode=class_weighting_mode,
+        cap=class_weight_cap,
+    )
 
     summary.update(
         {
@@ -410,6 +477,9 @@ def main() -> int:
             "split_method": effective_split_method,
             "split_key_field": split_key_field,
             "split_seed": split_seed,
+            "class_weighting": class_weighting_mode,
+            "class_weight_cap": class_weight_cap,
+            "class_weights": class_weights or [],
         }
     )
 
@@ -430,7 +500,12 @@ def main() -> int:
         lr=max(1e-6, _safe_float(train_cfg.get("learning_rate"), 3e-4)),
         weight_decay=max(0.0, _safe_float(train_cfg.get("weight_decay"), 1e-5)),
     )
-    criterion = nn.CrossEntropyLoss()
+    class_weight_tensor = (
+        torch.tensor(class_weights, dtype=torch.float32, device=device)
+        if class_weights
+        else None
+    )
+    criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
     epochs = max(1, _safe_int(train_cfg.get("epochs"), 30))
     clip_norm = max(0.0, _safe_float(train_cfg.get("gradient_clip_norm"), 1.0))
 
