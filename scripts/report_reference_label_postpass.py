@@ -374,6 +374,21 @@ def _load_row_ids(path: Path) -> set[str]:
     return out
 
 
+def _load_text_tokens(path: Path) -> set[str]:
+    out: set[str] = set()
+    if not path.exists():
+        return out
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                token = str(line or "").strip()
+                if token:
+                    out.add(token)
+    except OSError:
+        return set()
+    return out
+
+
 def _integrity_check(
     labels_jsonl: Path,
     tol: float,
@@ -519,6 +534,19 @@ def main() -> int:
         default=Path("2_Neural_Brain/local_pipeline/reports/unresolved_gate_ids.json"),
         help="Export path for unresolved gate IDs derived from failed rows.",
     )
+    parser.add_argument(
+        "--accepted-unresolved-ids-txt",
+        action="append",
+        type=Path,
+        default=[],
+        help="Text file containing exact unresolved row_ids that are treated as documented hard OOD instead of blocking freeze.",
+    )
+    parser.add_argument(
+        "--accepted-systemic-bucket-id",
+        action="append",
+        default=[],
+        help="Bucket id treated as a documented hard-OOD systemic boundary instead of a blocking systemic bucket.",
+    )
     parser.add_argument("--strict", action="store_true", help="Exit non-zero when report is not freeze-ready.")
     args = parser.parse_args()
 
@@ -528,10 +556,17 @@ def main() -> int:
     report_json = args.report_json.resolve()
     manifest_json = args.manifest_json.resolve()
     unresolved_gate_json = args.unresolved_gate_json.resolve()
+    accepted_unresolved_id_files = [path.resolve() for path in args.accepted_unresolved_ids_txt]
+    accepted_systemic_bucket_ids = {
+        str(token or "").strip() for token in args.accepted_systemic_bucket_id if str(token or "").strip()
+    }
 
     success_ids = _load_row_ids(labels_jsonl)
     error_ids = _load_row_ids(errors_jsonl)
     overlap_ids = success_ids & error_ids
+    accepted_missing_ids: set[str] = set()
+    for path in accepted_unresolved_id_files:
+        accepted_missing_ids |= _load_text_tokens(path)
     manifest_data: dict[str, Any] | None = None
     manifest_stats: dict[str, Any] = {}
     if manifest_json.exists():
@@ -544,9 +579,20 @@ def main() -> int:
         except (OSError, json.JSONDecodeError):
             manifest_data = None
 
-    bucket_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "attempted": 0, "succeeded": 0, "failed": 0, "missing": 0})
+    bucket_counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {
+            "total": 0,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "missing": 0,
+            "accepted_ood_missing": 0,
+        }
+    )
     total_input_rows = 0
     missing_rows = 0
+    accepted_ood_missing_rows = 0
+    accepted_ood_row_ids: set[str] = set()
 
     if input_jsonl.exists():
         with input_jsonl.open("r", encoding="utf-8") as f:
@@ -573,12 +619,17 @@ def main() -> int:
                 elif row_id in error_ids:
                     stats["attempted"] += 1
                     stats["failed"] += 1
+                elif row_id in accepted_missing_ids or bucket in accepted_systemic_bucket_ids:
+                    stats["accepted_ood_missing"] += 1
+                    accepted_ood_missing_rows += 1
+                    accepted_ood_row_ids.add(row_id)
                 else:
                     stats["missing"] += 1
                     missing_rows += 1
 
     bucket_summary: list[dict[str, Any]] = []
     systemic_buckets: list[str] = []
+    accepted_systemic_buckets: list[str] = []
     watch_buckets: list[str] = []
     min_samples = max(1, int(args.min_bucket_samples))
     for bucket, stats in sorted(bucket_counts.items(), key=lambda kv: kv[1]["attempted"], reverse=True):
@@ -588,8 +639,12 @@ def main() -> int:
         severity = "ignore_low_n"
         if attempted >= min_samples:
             if fail_rate >= float(args.systemic_fail_rate):
-                severity = "systemic"
-                systemic_buckets.append(bucket)
+                if bucket in accepted_systemic_bucket_ids:
+                    severity = "accepted_ood_systemic"
+                    accepted_systemic_buckets.append(bucket)
+                else:
+                    severity = "systemic"
+                    systemic_buckets.append(bucket)
             elif fail_rate >= float(args.watch_fail_rate):
                 severity = "watch"
                 watch_buckets.append(bucket)
@@ -602,6 +657,7 @@ def main() -> int:
             "succeeded": stats["succeeded"],
             "failed": failed,
             "missing": stats["missing"],
+            "accepted_ood_missing": stats["accepted_ood_missing"],
             "fail_rate_attempted": round(fail_rate, 6),
             "severity": severity,
         }
@@ -651,12 +707,19 @@ def main() -> int:
             "error_rows_unique": len(error_ids),
             "overlap_rows": len(overlap_ids),
             "missing_rows": missing_rows,
+            "accepted_ood_missing_rows": accepted_ood_missing_rows,
         },
         "thresholds": {
             "integrity_tol": float(args.integrity_tol),
             "min_bucket_samples": min_samples,
             "watch_fail_rate": float(args.watch_fail_rate),
             "systemic_fail_rate": float(args.systemic_fail_rate),
+        },
+        "accepted_ood": {
+            "row_id_files": [str(path) for path in accepted_unresolved_id_files],
+            "accepted_missing_row_count": accepted_ood_missing_rows,
+            "systemic_bucket_ids": sorted(accepted_systemic_bucket_ids),
+            "accepted_systemic_bucket_count": len(accepted_systemic_buckets),
         },
         "manifest_sync": {
             "manifest_json": str(manifest_json),
@@ -668,6 +731,7 @@ def main() -> int:
         "bucket_totals": {
             "bucket_count": len(bucket_summary),
             "systemic_bucket_count": len(systemic_buckets),
+            "accepted_systemic_bucket_count": len(accepted_systemic_buckets),
             "watch_bucket_count": len(watch_buckets),
         },
         "integrity": {
@@ -698,7 +762,8 @@ def main() -> int:
 
     unresolved_counter: dict[str, int] = {}
     unresolved_coarse_counter: dict[str, int] = {}
-    if input_jsonl.exists() and error_ids:
+    unresolved_seed_ids = error_ids | accepted_ood_row_ids
+    if input_jsonl.exists() and unresolved_seed_ids:
         with input_jsonl.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -711,7 +776,7 @@ def main() -> int:
                 if not isinstance(row, dict):
                     continue
                 row_id = str(row.get("row_id") or "").strip()
-                if not row_id or row_id not in error_ids:
+                if not row_id or row_id not in unresolved_seed_ids:
                     continue
                 gate_id = _unresolved_gate_id_from_row(row)
                 if gate_id:
@@ -731,6 +796,7 @@ def main() -> int:
             "labels_jsonl": str(labels_jsonl),
             "errors_jsonl": str(errors_jsonl),
             "error_row_count": len(error_ids),
+            "accepted_missing_row_count": accepted_ood_missing_rows,
         },
         "unresolved_gate_ids": sorted(unresolved_counter.keys()),
         "unresolved_coarse_gate_ids": sorted(unresolved_coarse_counter.keys()),
