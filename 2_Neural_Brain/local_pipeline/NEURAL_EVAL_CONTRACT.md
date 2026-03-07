@@ -17,6 +17,7 @@ infrastructure drift from being misread as model quality.
 1) Data Integrity
 - `freeze_ready == true` from strict post-pass report.
 - Manifest sync has zero mismatch reasons.
+- Any documented hard-OOD boundary accepted by strict post-pass must also be exported to `unresolved_gate_ids.json` so runtime fallback remains authoritative there.
 - Integrity failures are zero:
   - invalid JSON rows
   - distribution sum failures
@@ -75,4 +76,3 @@ If any hard gate fails:
 - remain in shadow mode,
 - keep fallback path authoritative,
 - remediate and re-evaluate.
-

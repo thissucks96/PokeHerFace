@@ -128,6 +128,7 @@ This is the best unattended run for the repository right now because dataset fre
 Post-pass unresolved gate export (for deterministic neural OOD blocking):
 
 ```powershell
+$bucket = "flop|p_lt10|f_0|spr_16p"
 .\.venv\Scripts\python.exe .\scripts\report_reference_label_postpass.py `
   --input-jsonl .\logs\neural_pilot_merged_20260303_3x500\reports\solver_teacher_rows.merged3x500.jsonl `
   --labels-jsonl .\2_Neural_Brain\local_pipeline\data\raw_spots\solver_reference_labels.jsonl `
@@ -135,8 +136,11 @@ Post-pass unresolved gate export (for deterministic neural OOD blocking):
   --manifest-json .\2_Neural_Brain\local_pipeline\reports\offline_label_manifest.json `
   --report-json .\2_Neural_Brain\local_pipeline\reports\reference_label_postpass_report.json `
   --unresolved-gate-json .\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json `
+  --accepted-systemic-bucket-id $bucket `
   --strict
 ```
+
+For this repository's current known hard-OOD boundary, `flop|p_lt10|f_0|spr_16p` is treated as a documented unresolved region rather than a silent gap. Strict post-pass counts those rows as `accepted_ood_missing_rows`, exports their unresolved gate IDs, and keeps `fast_live` fallback authoritative there.
 
 Bridge runtime deterministic unresolved gate (local-only, no cloud dependency):
 
