@@ -34,8 +34,12 @@ Files
 - Launches the manual tester UI.
 - Use this when you want to manually play against the 1v1 engine, inspect advice, or generate manual-vs-1v1 capture data.
 
+07_run_hotspot_shallow_pilot.ps1
+- Runs the 50-row shallow-salvage pilot for the remaining hotspot bucket.
+- Use this now that broad-tail is complete and the repo is testing whether the last 646 rows can be solved with a shallower reference profile.
+
 Notes
 -----
 - These wrappers do not replace the real scripts in scripts/.
 - The real implementation still lives in scripts/ or the repo root.
-- Right now the most important script in this folder is 01_run_broad_tail_away.ps1 because dataset freeze is still the main blocker for the neural path.
+- Right now the most important scripts in this folder are 01_run_broad_tail_away.ps1 for broad-tail burndown and 07_run_hotspot_shallow_pilot.ps1 for the remaining hotspot pilot.

@@ -50,7 +50,7 @@ DEFAULT_LLM_CONFIG = {
 RUNTIME_PROFILE_DEFAULT = str(os.environ.get("RUNTIME_PROFILE_DEFAULT", "normal")).strip().lower()
 if RUNTIME_PROFILE_DEFAULT == "fast":
     RUNTIME_PROFILE_DEFAULT = "fast_live"
-if RUNTIME_PROFILE_DEFAULT not in {"fast_live", "normal", "normal_neural", "shark_classic"}:
+if RUNTIME_PROFILE_DEFAULT not in {"fast_live", "normal", "normal_neural", "shark_classic", "shark_shallow"}:
     RUNTIME_PROFILE_DEFAULT = "normal"
 _FAST_PROFILE_DEPRECATED_WARNED = False
 ENFORCE_PRIMARY_LOCAL_ONLY = os.environ.get("ENFORCE_PRIMARY_LOCAL_ONLY", "1").strip() not in {"0", "false", "False"}
@@ -544,6 +544,26 @@ SHARK_CLASSIC_BET_SIZING = {
     "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
     "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
 }
+try:
+    SHARK_SHALLOW_DEFAULT_ITERATIONS = int(os.environ.get("SHARK_SHALLOW_DEFAULT_ITERATIONS", "25"))
+except ValueError:
+    SHARK_SHALLOW_DEFAULT_ITERATIONS = 25
+SHARK_SHALLOW_DEFAULT_ITERATIONS = max(1, SHARK_SHALLOW_DEFAULT_ITERATIONS)
+try:
+    SHARK_SHALLOW_ALL_IN_THRESHOLD = float(os.environ.get("SHARK_SHALLOW_ALL_IN_THRESHOLD", str(SHARK_CLASSIC_ALL_IN_THRESHOLD)))
+except ValueError:
+    SHARK_SHALLOW_ALL_IN_THRESHOLD = SHARK_CLASSIC_ALL_IN_THRESHOLD
+SHARK_SHALLOW_ALL_IN_THRESHOLD = max(0.50, min(0.95, SHARK_SHALLOW_ALL_IN_THRESHOLD))
+try:
+    SHARK_SHALLOW_RAISE_CAP = int(os.environ.get("SHARK_SHALLOW_RAISE_CAP", "1"))
+except ValueError:
+    SHARK_SHALLOW_RAISE_CAP = 1
+SHARK_SHALLOW_RAISE_CAP = max(1, min(6, SHARK_SHALLOW_RAISE_CAP))
+SHARK_SHALLOW_BET_SIZING = {
+    "flop": {"bet_sizes": [0.75], "raise_sizes": [1.0]},
+    "turn": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
+    "river": {"bet_sizes": [0.33, 0.66, 1.0], "raise_sizes": [0.5, 1.0]},
+}
 SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED = os.environ.get("SHARK_CLASSIC_COMPLEXITY_GUARD_ENABLED", "1").strip() not in {
     "0",
     "false",
@@ -928,7 +948,7 @@ class SolveRequest(BaseModel):
     )
     runtime_profile: Optional[str] = Field(
         default=None,
-        description="Runtime profile: fast_live | normal | normal_neural | shark_classic. 'fast' is deprecated and maps to fast_live.",
+        description="Runtime profile: fast_live | normal | normal_neural | shark_classic | shark_shallow. 'fast' is deprecated and maps to fast_live.",
     )
 
 
@@ -1938,7 +1958,7 @@ def _normalize_runtime_profile(profile: Optional[str]) -> str:
         if not _FAST_PROFILE_DEPRECATED_WARNED:
             print("bridge_server: runtime_profile 'fast' is deprecated; using 'fast_live'.")
             _FAST_PROFILE_DEPRECATED_WARNED = True
-    if value in {"fast_live", "normal", "normal_neural", "shark_classic"}:
+    if value in {"fast_live", "normal", "normal_neural", "shark_classic", "shark_shallow"}:
         return value
     return RUNTIME_PROFILE_DEFAULT
 
@@ -2372,6 +2392,46 @@ def _apply_shark_classic_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, A
         "all_in_threshold": SHARK_CLASSIC_ALL_IN_THRESHOLD,
         "raise_cap": SHARK_CLASSIC_RAISE_CAP,
         "default_iterations": SHARK_CLASSIC_DEFAULT_ITERATIONS,
+        "changes": changes,
+    }
+    return tuned, summary
+
+
+def _apply_shark_shallow_spot_profile(spot: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    tuned = dict(spot)
+    changes: Dict[str, Any] = {}
+
+    iterations = _to_float_or_none(tuned.get("iterations"))
+    if iterations is None or int(iterations) != int(SHARK_SHALLOW_DEFAULT_ITERATIONS):
+        tuned["iterations"] = int(SHARK_SHALLOW_DEFAULT_ITERATIONS)
+        changes["iterations"] = {"from": iterations, "to": int(SHARK_SHALLOW_DEFAULT_ITERATIONS)}
+
+    threshold = _to_float_or_none(tuned.get("all_in_threshold"))
+    if threshold is None or abs(float(threshold) - float(SHARK_SHALLOW_ALL_IN_THRESHOLD)) > 1e-9:
+        tuned["all_in_threshold"] = float(SHARK_SHALLOW_ALL_IN_THRESHOLD)
+        changes["all_in_threshold"] = {"from": threshold, "to": float(SHARK_SHALLOW_ALL_IN_THRESHOLD)}
+
+    raise_cap = _to_float_or_none(tuned.get("raise_cap"))
+    if raise_cap is None or int(raise_cap) != int(SHARK_SHALLOW_RAISE_CAP):
+        tuned["raise_cap"] = int(SHARK_SHALLOW_RAISE_CAP)
+        changes["raise_cap"] = {"from": raise_cap, "to": int(SHARK_SHALLOW_RAISE_CAP)}
+
+    if tuned.get("remove_donk_bets") is not True:
+        changes["remove_donk_bets"] = {"from": tuned.get("remove_donk_bets"), "to": True}
+    tuned["remove_donk_bets"] = True
+
+    old_bet_sizing = tuned.get("bet_sizing")
+    target_bet_sizing = json.loads(json.dumps(SHARK_SHALLOW_BET_SIZING))
+    if old_bet_sizing != target_bet_sizing:
+        changes["bet_sizing"] = "forced_to_shark_shallow_contract"
+    tuned["bet_sizing"] = target_bet_sizing
+
+    summary = {
+        "profile": "shark_shallow",
+        "applied": True,
+        "all_in_threshold": SHARK_SHALLOW_ALL_IN_THRESHOLD,
+        "raise_cap": SHARK_SHALLOW_RAISE_CAP,
+        "default_iterations": SHARK_SHALLOW_DEFAULT_ITERATIONS,
         "changes": changes,
     }
     return tuned, summary
@@ -4177,6 +4237,10 @@ def health() -> Dict[str, Any]:
         "shark_classic_all_in_threshold": SHARK_CLASSIC_ALL_IN_THRESHOLD,
         "shark_classic_raise_cap": SHARK_CLASSIC_RAISE_CAP,
         "shark_classic_bet_sizing": SHARK_CLASSIC_BET_SIZING,
+        "shark_shallow_default_iterations": SHARK_SHALLOW_DEFAULT_ITERATIONS,
+        "shark_shallow_all_in_threshold": SHARK_SHALLOW_ALL_IN_THRESHOLD,
+        "shark_shallow_raise_cap": SHARK_SHALLOW_RAISE_CAP,
+        "shark_shallow_bet_sizing": SHARK_SHALLOW_BET_SIZING,
         "enable_cloud_candidate_search": ENABLE_CLOUD_CANDIDATE_SEARCH,
         "cloud_candidate_count_cap": CLOUD_CANDIDATE_COUNT_CAP,
         "vision_root": str(VISION_ROOT),
@@ -4264,6 +4328,8 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
         effective_spot, fast_spot_profile_summary = _apply_normal_spot_profile(effective_spot, runtime_profile)
     elif runtime_profile == "shark_classic":
         effective_spot, fast_spot_profile_summary = _apply_shark_classic_spot_profile(effective_spot)
+    elif runtime_profile == "shark_shallow":
+        effective_spot, fast_spot_profile_summary = _apply_shark_shallow_spot_profile(effective_spot)
     elif runtime_profile == "fast":
         effective_spot, fast_spot_profile_summary = _apply_fast_spot_profile(effective_spot)
     elif runtime_profile == "fast_live":
