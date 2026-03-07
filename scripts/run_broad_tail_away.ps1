@@ -52,6 +52,26 @@ function Get-ExistingProcess {
     return @($procs)
 }
 
+function Stop-ExistingTailWindow {
+    param(
+        [string]$Path
+    )
+    $escapedPath = [Regex]::Escape($Path)
+    $tailProcs = Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -match "^pwsh(\.exe)?$|^powershell(\.exe)?$" -and
+        [string]$_.CommandLine -match "Get-Content" -and
+        [string]$_.CommandLine -match $escapedPath
+    }
+    foreach ($proc in @($tailProcs)) {
+        try {
+            Stop-Process -Id ([int]$proc.ProcessId) -Force -ErrorAction Stop
+            Write-Host "Closed existing tail window PID $($proc.ProcessId) for $Path"
+        } catch {
+            Write-Host "Failed to close existing tail window PID $($proc.ProcessId): $($_.Exception.Message)"
+        }
+    }
+}
+
 function Get-WatchdogTargetProcessId {
     param(
         [string]$CommandLine
@@ -97,7 +117,7 @@ function Ensure-Bridge {
     Write-Host "Starting bridge server..."
     Start-Process -FilePath $venvPython -ArgumentList @(
         $bridgeScript
-    ) -RedirectStandardOutput $bridgeOutLog -RedirectStandardError $bridgeErrLog -WindowStyle Minimized | Out-Null
+    ) -RedirectStandardOutput $bridgeOutLog -RedirectStandardError $bridgeErrLog -WindowStyle Hidden | Out-Null
 
     Start-Sleep -Seconds $BridgeStartupSeconds
 
@@ -114,6 +134,7 @@ function Start-VisibleTail {
         [string]$Title,
         [string]$Path
     )
+    Stop-ExistingTailWindow -Path $Path
     $tailCmd = "Set-Location '$repoRoot'; Write-Host '$Title'; if (-not (Test-Path '$Path')) { New-Item -ItemType File -Path '$Path' | Out-Null }; Get-Content '$Path' -Tail 20 -Wait"
     Start-Process -FilePath "pwsh" -ArgumentList @(
         "-NoExit",
@@ -155,7 +176,7 @@ if ($existingLabeler.Count -gt 0) {
         "--max-retries", "2",
         "--checkpoint-every", "25",
         "--resume"
-    ) -PassThru -RedirectStandardOutput $labelerOutLog -RedirectStandardError $labelerErrLog -WindowStyle Minimized
+    ) -PassThru -RedirectStandardOutput $labelerOutLog -RedirectStandardError $labelerErrLog -WindowStyle Hidden
     $labelerPid = $labeler.Id
     Write-Host "Broad-tail labeler started as PID $labelerPid"
 }
@@ -190,7 +211,7 @@ if (-not $reuseWatchdog) {
         "-ManifestPath", $manifestPath,
         "-StaleMinutes", $StaleMinutes,
         "-Loop"
-    ) -PassThru -RedirectStandardOutput $watchdogOutLog -RedirectStandardError $watchdogErrLog -WindowStyle Minimized
+    ) -PassThru -RedirectStandardOutput $watchdogOutLog -RedirectStandardError $watchdogErrLog -WindowStyle Hidden
     Write-Host "Broad-tail watchdog started as PID $($watchdog.Id)"
 }
 
