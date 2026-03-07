@@ -99,6 +99,27 @@ function Stop-ExistingProcessSet {
     }
 }
 
+function Rotate-RunLog {
+    param(
+        [string]$Path,
+        [string]$Stamp
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if ($item.Length -le 0) {
+        return
+    }
+    $directory = Split-Path -Parent $Path
+    $extension = [System.IO.Path]::GetExtension($Path)
+    $leafBase = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+    $archiveName = "$leafBase.$Stamp$extension"
+    $archivePath = Join-Path $directory $archiveName
+    Move-Item -LiteralPath $Path -Destination $archivePath -Force
+    Write-Host "Archived log: $archivePath"
+}
+
 function Get-BridgeHealth {
     try {
         return Invoke-RestMethod "http://127.0.0.1:8000/health" -TimeoutSec 5
@@ -151,10 +172,29 @@ Assert-RequiredFile -Path $broadTailInput -Label "Broad-tail input JSONL"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot "logs") | Out-Null
 
+$existingBridgeHealthy = $null -ne (Get-BridgeHealth)
+$existingLabelerBefore = @(Get-ExistingProcess -Pattern "label_reference_offline\.py.*missing_rows_except_flop_p_lt10_f_0_spr_16p\.jsonl")
+$existingWatchdogBefore = @(Get-ExistingProcess -Pattern "watch_offline_labeler_guard\.ps1.*offline_label_manifest_broad_tail\.json")
+$shouldRotateLogs = $RestartExisting -or (-not $existingBridgeHealthy -and $existingLabelerBefore.Count -eq 0 -and $existingWatchdogBefore.Count -eq 0)
+
 if ($RestartExisting) {
     Stop-ExistingProcessSet -Pattern "bridge_server\.py" -Label "bridge"
     Stop-ExistingProcessSet -Pattern "label_reference_offline\.py.*missing_rows_except_flop_p_lt10_f_0_spr_16p\.jsonl" -Label "broad-tail labeler"
     Stop-ExistingProcessSet -Pattern "watch_offline_labeler_guard\.ps1.*offline_label_manifest_broad_tail\.json" -Label "broad-tail watchdog"
+}
+
+if ($shouldRotateLogs) {
+    $logStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    foreach ($logPath in @(
+        $bridgeOutLog,
+        $bridgeErrLog,
+        $labelerOutLog,
+        $labelerErrLog,
+        $watchdogOutLog,
+        $watchdogErrLog
+    )) {
+        Rotate-RunLog -Path $logPath -Stamp $logStamp
+    }
 }
 
 Ensure-Bridge
