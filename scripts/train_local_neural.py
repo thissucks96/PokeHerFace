@@ -70,13 +70,16 @@ class TeacherRowsDataset(Dataset):
         rows: list[dict[str, Any]],
         action_to_index: dict[str, int],
         input_dim: int,
+        action_space: list[str],
         split_key_field: str = "split_key",
     ) -> None:
-        self.samples: list[tuple[torch.Tensor, int]] = []
+        self.samples: list[tuple[torch.Tensor, int, torch.Tensor]] = []
         self.split_tokens: list[str] = []
         self.contract_total_rows = 0
         self.contract_matching_rows = 0
         self.contract_mismatch_rows = 0
+        self.distribution_rows = 0
+        self.fallback_one_hot_rows = 0
         for row in rows:
             source_row = row.get("source_row") if isinstance(row.get("source_row"), dict) else {}
             target = source_row.get("target") if isinstance(source_row.get("target"), dict) else {}
@@ -117,7 +120,18 @@ class TeacherRowsDataset(Dataset):
                     self.contract_mismatch_rows += 1
             x = torch.tensor(feature_vector(source=source, features=features, input_dim=input_dim), dtype=torch.float32)
             y = action_to_index[action]
-            self.samples.append((x, y))
+            distribution_tensor, used_distribution = _distribution_tensor(
+                target=target,
+                features=features,
+                action_to_index=action_to_index,
+                action_space=action_space,
+                selected_action_index=y,
+            )
+            if used_distribution:
+                self.distribution_rows += 1
+            else:
+                self.fallback_one_hot_rows += 1
+            self.samples.append((x, y, distribution_tensor))
             split_token = str(row.get(split_key_field) or row.get("split_key") or row.get("row_id") or "").strip()
             if not split_token:
                 split_token = hashlib.sha256(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()
@@ -126,7 +140,7 @@ class TeacherRowsDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int, torch.Tensor]:
         return self.samples[idx]
 
 class PolicyMLP(nn.Module):
@@ -163,6 +177,48 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
             if isinstance(item, dict):
                 rows.append(item)
     return rows
+
+
+def _bucketize_action(action_raw: Any, amount: Any, pot: float) -> str:
+    action_token = _normalize_action(action_raw)
+    amt = _safe_float(amount, 0.0)
+    if action_token == "raise":
+        ratio = amt / pot if pot > 0 else 0.0
+        return "raise_big" if ratio >= 1.0 else "raise_small"
+    if action_token in {"raise_small", "raise_big"}:
+        return action_token
+    return action_token
+
+
+def _distribution_tensor(
+    target: dict[str, Any],
+    features: dict[str, Any],
+    action_to_index: dict[str, int],
+    action_space: list[str],
+    selected_action_index: int,
+) -> tuple[torch.Tensor, bool]:
+    probs = [0.0 for _ in action_space]
+    pot = max(1.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 1.0))
+    distribution = target.get("distribution")
+    used_distribution = False
+
+    if isinstance(distribution, list) and distribution:
+        for item in distribution:
+            if not isinstance(item, dict):
+                continue
+            mapped = _bucketize_action(item.get("action"), item.get("amount"), pot)
+            if mapped not in action_to_index:
+                continue
+            freq = max(0.0, _safe_float(item.get("frequency"), 0.0))
+            probs[action_to_index[mapped]] += freq
+        total = sum(probs)
+        if total > 0.0:
+            probs = [p / total for p in probs]
+            used_distribution = True
+
+    if not used_distribution:
+        probs[selected_action_index] = 1.0
+    return torch.tensor(probs, dtype=torch.float32), used_distribution
 
 
 def _split_indices_random(total: int, train_split: float, seed: int) -> tuple[list[int], list[int]]:
@@ -204,7 +260,7 @@ def _accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> flo
     correct = 0
     model.eval()
     with torch.no_grad():
-        for x, y in loader:
+        for x, y, _dist in loader:
             x = x.to(device)
             y = y.to(device)
             logits = model(x)
@@ -238,7 +294,7 @@ def _collect_class_metrics(
 
     model.eval()
     with torch.no_grad():
-        for x, y in loader:
+        for x, y, _dist in loader:
             x = x.to(device)
             y = y.to(device)
             logits = model(x)
@@ -289,7 +345,7 @@ def _dataset_targets(dataset: Dataset[Any]) -> list[int]:
         return [int(sample[1]) for sample in dataset.samples]
     targets: list[int] = []
     for i in range(len(dataset)):
-        _, y = dataset[i]
+        _, y, _dist = dataset[i]
         targets.append(int(y))
     return targets
 
@@ -353,6 +409,11 @@ def main() -> int:
         default=None,
         help="Class weighting mode for scalar CE training. Supported: none, inverse_frequency.",
     )
+    parser.add_argument(
+        "--target-mode",
+        default=None,
+        help="Training target mode. Supported: scalar, distribution.",
+    )
     parser.add_argument("--train", action="store_true", help="Run training. Default is validation-only.")
     args = parser.parse_args()
 
@@ -383,6 +444,10 @@ def main() -> int:
     input_dim = max(16, _safe_int(model_cfg.get("input_dim"), 128))
     split_key_field = str(data_cfg.get("split_key_field") or "split_key").strip() or "split_key"
     split_method = str(data_cfg.get("split_method") or "hash_split_key").strip().lower()
+    target_mode = str(args.target_mode or train_cfg.get("target_mode") or "scalar").strip().lower()
+    if target_mode not in {"scalar", "distribution"}:
+        print(json.dumps({"ok": False, "ready_for_training": False, "reason": f"unsupported_target_mode:{target_mode}"}))
+        return 2
 
     summary: dict[str, Any] = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -393,6 +458,7 @@ def main() -> int:
         "holdout_rows_total": len(holdout_rows),
         "action_space": action_space,
         "mode": "train" if args.train else "validate_only",
+        "target_mode": target_mode,
         "feature_contract_expected": {
             "schema_version": FEATURE_SCHEMA_VERSION,
             "contract_hash": FEATURE_CONTRACT_HASH,
@@ -409,6 +475,7 @@ def main() -> int:
         rows=rows,
         action_to_index=action_to_index,
         input_dim=input_dim,
+        action_space=action_space,
         split_key_field=split_key_field,
     )
     if len(dataset_full) == 0:
@@ -424,6 +491,7 @@ def main() -> int:
             rows=holdout_rows,
             action_to_index=action_to_index,
             input_dim=input_dim,
+            action_space=action_space,
             split_key_field=split_key_field,
         )
         val_set = val_dataset if len(val_dataset) > 0 else None
@@ -469,11 +537,15 @@ def main() -> int:
             "feature_contract_rows_checked": int(dataset_full.contract_total_rows),
             "feature_contract_rows_matching": int(dataset_full.contract_matching_rows),
             "feature_contract_rows_mismatching": int(dataset_full.contract_mismatch_rows),
+            "distribution_rows": int(dataset_full.distribution_rows),
+            "fallback_one_hot_rows": int(dataset_full.fallback_one_hot_rows),
             "train_rows": len(train_set),
             "val_rows": len(val_set) if val_set else 0,
             "holdout_feature_contract_rows_checked": int(val_dataset.contract_total_rows) if holdout_rows else 0,
             "holdout_feature_contract_rows_matching": int(val_dataset.contract_matching_rows) if holdout_rows else 0,
             "holdout_feature_contract_rows_mismatching": int(val_dataset.contract_mismatch_rows) if holdout_rows else 0,
+            "holdout_distribution_rows": int(val_dataset.distribution_rows) if holdout_rows else 0,
+            "holdout_fallback_one_hot_rows": int(val_dataset.fallback_one_hot_rows) if holdout_rows else 0,
             "split_method": effective_split_method,
             "split_key_field": split_key_field,
             "split_seed": split_seed,
@@ -502,10 +574,11 @@ def main() -> int:
     )
     class_weight_tensor = (
         torch.tensor(class_weights, dtype=torch.float32, device=device)
-        if class_weights
+        if class_weights and target_mode == "scalar"
         else None
     )
-    criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
+    scalar_criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
+    kl_criterion = nn.KLDivLoss(reduction="batchmean")
     epochs = max(1, _safe_int(train_cfg.get("epochs"), 30))
     clip_norm = max(0.0, _safe_float(train_cfg.get("gradient_clip_norm"), 1.0))
 
@@ -514,12 +587,17 @@ def main() -> int:
         model.train()
         epoch_loss = 0.0
         batches = 0
-        for x, y in train_loader:
+        for x, y, dist in train_loader:
             x = x.to(device)
             y = y.to(device)
+            dist = dist.to(device)
             optimizer.zero_grad(set_to_none=True)
             logits = model(x)
-            loss = criterion(logits, y)
+            if target_mode == "distribution":
+                log_probs = torch.log_softmax(logits, dim=1)
+                loss = kl_criterion(log_probs, dist)
+            else:
+                loss = scalar_criterion(logits, y)
             loss.backward()
             if clip_norm > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
@@ -553,6 +631,7 @@ def main() -> int:
             "input_dim": input_dim,
             "feature_schema_version": FEATURE_SCHEMA_VERSION,
             "feature_contract_hash": FEATURE_CONTRACT_HASH,
+            "target_mode": target_mode,
             "history": history,
         },
         ckpt_path,
