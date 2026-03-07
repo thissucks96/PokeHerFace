@@ -27,6 +27,10 @@ Read these first before significant implementation work:
 Full transfer-of-ownership reference:
 - `HANDOFF_NEW_DEVELOPER.md`
 
+User-facing launchers:
+- `USER_ONLY/README.txt`
+- `USER_ONLY/01_run_broad_tail_away.ps1`
+
 ## Project Layout
 
 - `1_Engine_Core/` C++ solver (`shark_cli.exe`, GUI sources)
@@ -106,6 +110,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\watch_offline_labeler_guard.p
 ```
 
 Note: the guard auto-applies a minimum quiet window derived from labeler `--timeout-sec` and `--max-retries` to avoid false restarts during legitimate long rows.
+
+Leave-the-PC broad-tail runbook (bridge + resume + watchdog + visible progress):
+
+```powershell
+.\USER_ONLY\01_run_broad_tail_away.ps1
+.\USER_ONLY\01_run_broad_tail_away.ps1 -RestartExisting
+```
+
+This is the best unattended run for the repository right now because dataset freeze is still the primary blocker. The launcher:
+- checks or starts the bridge
+- resumes the broad-tail `shark_classic` labeler
+- replaces stale watchdogs automatically
+- opens one visible progress tail and one visible error tail
+- hides backend bridge/labeler/watchdog consoles
 
 Post-pass unresolved gate export (for deterministic neural OOD blocking):
 
