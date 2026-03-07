@@ -53,7 +53,7 @@ Current position:
 - `shared_feature_contract.py`  
   Canonical feature contract used by both offline and live paths. Includes deterministic hashing, vectorization, and extraction validation metadata.
 
-- `AGENTS.MD`  
+- `AGENT.MD`  
   Repository-specific agent policy (commit/message/workflow constraints).
 
 ---
@@ -446,4 +446,3 @@ If neural eval looks overly optimistic:
   - "runtime promotion decisions"
 
 That separation is what prevents regressions and bad promotions.
-
