@@ -335,6 +335,18 @@ def _collect_class_metrics(
     }
 
 
+def _weighted_kl_divergence(
+    log_probs: torch.Tensor,
+    target_dist: torch.Tensor,
+    class_weights: torch.Tensor | None,
+) -> torch.Tensor:
+    safe_target = target_dist.clamp_min(1e-12)
+    kl_terms = target_dist * (safe_target.log() - log_probs)
+    if class_weights is not None:
+        kl_terms = kl_terms * class_weights.unsqueeze(0)
+    return kl_terms.sum(dim=1).mean()
+
+
 def _dataset_targets(dataset: Dataset[Any]) -> list[int]:
     if isinstance(dataset, torch.utils.data.Subset):
         base = dataset.dataset
@@ -574,11 +586,10 @@ def main() -> int:
     )
     class_weight_tensor = (
         torch.tensor(class_weights, dtype=torch.float32, device=device)
-        if class_weights and target_mode == "scalar"
+        if class_weights
         else None
     )
     scalar_criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
-    kl_criterion = nn.KLDivLoss(reduction="batchmean")
     epochs = max(1, _safe_int(train_cfg.get("epochs"), 30))
     clip_norm = max(0.0, _safe_float(train_cfg.get("gradient_clip_norm"), 1.0))
 
@@ -595,7 +606,7 @@ def main() -> int:
             logits = model(x)
             if target_mode == "distribution":
                 log_probs = torch.log_softmax(logits, dim=1)
-                loss = kl_criterion(log_probs, dist)
+                loss = _weighted_kl_divergence(log_probs, dist, class_weight_tensor)
             else:
                 loss = scalar_criterion(logits, y)
             loss.backward()
