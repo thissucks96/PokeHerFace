@@ -114,6 +114,8 @@ libs/*.zip
 # Local planning / notes
 task.md
 [Ll]og.md
+History.MD
+geminiagent.MD
 
 # vcpkg manifest install artifacts (local build outputs)
 1_Engine_Core/vcpkg_installed/
