@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from shared_feature_contract import feature_key_hash
 
@@ -24,12 +29,37 @@ def _row_feature_hash(row: dict[str, Any]) -> str:
         return existing
     source = row.get("source") if isinstance(row.get("source"), dict) else {}
     features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    if not source or not features:
+        source_row = row.get("source_row") if isinstance(row.get("source_row"), dict) else {}
+        if isinstance(source_row.get("source"), dict):
+            source = source_row.get("source") or {}
+        if isinstance(source_row.get("features"), dict):
+            features = source_row.get("features") or {}
     if source and features:
         try:
             return str(feature_key_hash(source=source, features=features)).strip()
         except Exception:
             return ""
     return ""
+
+
+def _load_unresolved_gate_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    out: set[str] = set()
+    items = payload.get("unresolved_gate_ids")
+    if isinstance(items, list):
+        for item in items:
+            token = str(item or "").strip()
+            if token:
+                out.add(token)
+    return out
 
 
 def _load_ids(path: Path) -> tuple[set[str], set[str], int, int]:
@@ -70,6 +100,12 @@ def main() -> int:
         default=Path("2_Neural_Brain/local_pipeline/reports/neural_airgap_report.json"),
         help="Output report JSON.",
     )
+    parser.add_argument(
+        "--unresolved-gate-json",
+        type=Path,
+        default=None,
+        help="Optional unresolved gate export JSON to ensure holdout rows are not inside the accepted OOD gate set.",
+    )
     parser.add_argument("--strict", action="store_true", help="Exit non-zero on overlap.")
     args = parser.parse_args()
 
@@ -87,12 +123,19 @@ def main() -> int:
 
     overlap_row_ids = sorted(train_ids & holdout_ids)
     overlap_feature_hashes = sorted(train_hashes & holdout_hashes)
+    unresolved_gate_ids = _load_unresolved_gate_ids(args.unresolved_gate_json.resolve()) if args.unresolved_gate_json else set()
+    holdout_unresolved_overlap = sorted(holdout_ids & unresolved_gate_ids)
 
-    ok = (len(overlap_row_ids) == 0) and (len(overlap_feature_hashes) == 0)
+    ok = (
+        (len(overlap_row_ids) == 0)
+        and (len(overlap_feature_hashes) == 0)
+        and (len(holdout_unresolved_overlap) == 0)
+    )
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "train_jsonl": str(train_path),
         "holdout_jsonl": str(holdout_path),
+        "unresolved_gate_json": str(args.unresolved_gate_json.resolve()) if args.unresolved_gate_json else None,
         "counts": {
             "train_rows": train_rows,
             "holdout_rows": holdout_rows,
@@ -102,12 +145,15 @@ def main() -> int:
             "holdout_feature_hashes": len(holdout_hashes),
             "train_missing_feature_hash_rows": train_missing_hash,
             "holdout_missing_feature_hash_rows": holdout_missing_hash,
+            "unresolved_gate_ids": len(unresolved_gate_ids),
         },
         "overlap": {
             "row_id_count": len(overlap_row_ids),
             "feature_hash_count": len(overlap_feature_hashes),
+            "holdout_unresolved_gate_count": len(holdout_unresolved_overlap),
             "sample_row_ids": overlap_row_ids[:20],
             "sample_feature_hashes": overlap_feature_hashes[:20],
+            "sample_holdout_unresolved_row_ids": holdout_unresolved_overlap[:20],
         },
         "ok": ok,
     }
@@ -124,4 +170,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
