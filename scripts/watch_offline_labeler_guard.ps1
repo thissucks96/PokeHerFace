@@ -158,6 +158,17 @@ function Get-ProcessStartTimeUtc {
     }
 }
 
+function Format-Duration {
+    param([TimeSpan]$Duration)
+    if ($Duration.TotalHours -ge 1) {
+        return ("{0}h {1}m {2}s" -f [int]$Duration.TotalHours, $Duration.Minutes, $Duration.Seconds)
+    }
+    if ($Duration.TotalMinutes -ge 1) {
+        return ("{0}m {1}s" -f [int]$Duration.TotalMinutes, $Duration.Seconds)
+    }
+    return ("{0}s" -f [int][Math]::Max(0, $Duration.TotalSeconds))
+}
+
 function Stop-LabelerAndSolver {
     param([int]$TargetProcessId)
     try {
@@ -189,6 +200,10 @@ function Invoke-GuardPass {
     $labelerPid = [int]$labeler.ProcessId
     $cmd = [string]$labeler.CommandLine
     $processStartUtc = Get-ProcessStartTimeUtc -TargetProcessId $labelerPid
+    $runDurationText = "unknown"
+    if ($null -ne $processStartUtc) {
+        $runDurationText = Format-Duration -Duration ((Get-Date).ToUniversalTime() - $processStartUtc)
+    }
 
     $latestWrite = Get-MostRecentWrite -Paths @($LabelsPath, $ErrorsPath, $ManifestPath)
     $now = Get-Date
@@ -215,19 +230,19 @@ function Invoke-GuardPass {
 
     if (-not $stale) {
         if ($null -ne $activityTimestamp -and $null -ne $latestWrite -and $activityTimestamp -ne $latestWrite) {
-            Write-Host ("Labeler healthy: no new writes since launch; process start {0} ({1:N1} min ago), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes)
+            Write-Host ("Labeler healthy: no new writes since launch; process start {0} ({1:N1} min ago, run={5}), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes, $runDurationText)
         } else {
-            Write-Host ("Labeler healthy: last activity {0} ({1:N1} min ago), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes)
+            Write-Host ("Labeler healthy: last activity {0} ({1:N1} min ago, run={5}), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes, $runDurationText)
         }
         return
     }
 
     if ($null -eq $activityTimestamp) {
-        Write-Host "Stale trigger: no output files found yet."
+        Write-Host ("Stale trigger: no output files found yet (run={0})." -f $runDurationText)
     } elseif ($null -ne $latestWrite -and $activityTimestamp -ne $latestWrite) {
-        Write-Host ("Stale trigger: no new writes since launch; process start {0} ({1:N1} min ago), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes)
+        Write-Host ("Stale trigger: no new writes since launch; process start {0} ({1:N1} min ago, run={5}), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes, $runDurationText)
     } else {
-        Write-Host ("Stale trigger: last activity {0} ({1:N1} min ago), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes)
+        Write-Host ("Stale trigger: last activity {0} ({1:N1} min ago, run={5}), threshold={2} min (configured={3}, computed_floor={4})." -f $activityTimestamp, $ageMin, $effectiveThreshold, $StaleMinutes, $minExpectedQuietMinutes, $runDurationText)
     }
 
     Stop-LabelerAndSolver -TargetProcessId $labelerPid
