@@ -73,7 +73,7 @@ class TeacherRowsDataset(Dataset):
         action_space: list[str],
         split_key_field: str = "split_key",
     ) -> None:
-        self.samples: list[tuple[torch.Tensor, int, torch.Tensor]] = []
+        self.samples: list[tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]] = []
         self.split_tokens: list[str] = []
         self.contract_total_rows = 0
         self.contract_matching_rows = 0
@@ -120,7 +120,7 @@ class TeacherRowsDataset(Dataset):
                     self.contract_mismatch_rows += 1
             x = torch.tensor(feature_vector(source=source, features=features, input_dim=input_dim), dtype=torch.float32)
             y = action_to_index[action]
-            distribution_tensor, used_distribution = _distribution_tensor(
+            distribution_tensor, used_distribution, legal_mask = _distribution_tensor(
                 target=target,
                 features=features,
                 action_to_index=action_to_index,
@@ -131,7 +131,7 @@ class TeacherRowsDataset(Dataset):
                 self.distribution_rows += 1
             else:
                 self.fallback_one_hot_rows += 1
-            self.samples.append((x, y, distribution_tensor))
+            self.samples.append((x, y, distribution_tensor, legal_mask))
             split_token = str(row.get(split_key_field) or row.get("split_key") or row.get("row_id") or "").strip()
             if not split_token:
                 split_token = hashlib.sha256(json.dumps(row, sort_keys=True).encode("utf-8")).hexdigest()
@@ -140,7 +140,7 @@ class TeacherRowsDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]:
         return self.samples[idx]
 
 class PolicyMLP(nn.Module):
@@ -196,8 +196,9 @@ def _distribution_tensor(
     action_to_index: dict[str, int],
     action_space: list[str],
     selected_action_index: int,
-) -> tuple[torch.Tensor, bool]:
+) -> tuple[torch.Tensor, bool, torch.Tensor]:
     probs = [0.0 for _ in action_space]
+    legal = [False for _ in action_space]
     pot = max(1.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 1.0))
     distribution = target.get("distribution")
     used_distribution = False
@@ -209,6 +210,7 @@ def _distribution_tensor(
             mapped = _bucketize_action(item.get("action"), item.get("amount"), pot)
             if mapped not in action_to_index:
                 continue
+            legal[action_to_index[mapped]] = True
             freq = max(0.0, _safe_float(item.get("frequency"), 0.0))
             probs[action_to_index[mapped]] += freq
         total = sum(probs)
@@ -218,7 +220,21 @@ def _distribution_tensor(
 
     if not used_distribution:
         probs[selected_action_index] = 1.0
-    return torch.tensor(probs, dtype=torch.float32), used_distribution
+    if not any(legal):
+        legal = [True for _ in action_space]
+    return (
+        torch.tensor(probs, dtype=torch.float32),
+        used_distribution,
+        torch.tensor(legal, dtype=torch.bool),
+    )
+
+
+def _apply_legal_action_mask(logits: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
+    if legal_mask.dtype != torch.bool:
+        legal_mask = legal_mask.to(dtype=torch.bool)
+    all_illegal = ~legal_mask.any(dim=1, keepdim=True)
+    effective_mask = torch.where(all_illegal, torch.ones_like(legal_mask, dtype=torch.bool), legal_mask)
+    return logits.masked_fill(~effective_mask, -1e9)
 
 
 def _split_indices_random(total: int, train_split: float, seed: int) -> tuple[list[int], list[int]]:
@@ -260,10 +276,11 @@ def _accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> flo
     correct = 0
     model.eval()
     with torch.no_grad():
-        for x, y, _dist in loader:
+        for x, y, _dist, legal_mask in loader:
             x = x.to(device)
             y = y.to(device)
-            logits = model(x)
+            legal_mask = legal_mask.to(device)
+            logits = _apply_legal_action_mask(model(x), legal_mask)
             pred = torch.argmax(logits, dim=1)
             total += int(y.numel())
             correct += int((pred == y).sum().item())
@@ -294,10 +311,11 @@ def _collect_class_metrics(
 
     model.eval()
     with torch.no_grad():
-        for x, y, _dist in loader:
+        for x, y, _dist, legal_mask in loader:
             x = x.to(device)
             y = y.to(device)
-            logits = model(x)
+            legal_mask = legal_mask.to(device)
+            logits = _apply_legal_action_mask(model(x), legal_mask)
             preds = torch.argmax(logits, dim=1)
             for y_i, p_i in zip(y.tolist(), preds.tolist()):
                 total += 1
@@ -357,7 +375,7 @@ def _dataset_targets(dataset: Dataset[Any]) -> list[int]:
         return [int(sample[1]) for sample in dataset.samples]
     targets: list[int] = []
     for i in range(len(dataset)):
-        _, y, _dist = dataset[i]
+        _, y, _dist, _mask = dataset[i]
         targets.append(int(y))
     return targets
 
@@ -598,12 +616,13 @@ def main() -> int:
         model.train()
         epoch_loss = 0.0
         batches = 0
-        for x, y, dist in train_loader:
+        for x, y, dist, legal_mask in train_loader:
             x = x.to(device)
             y = y.to(device)
             dist = dist.to(device)
+            legal_mask = legal_mask.to(device)
             optimizer.zero_grad(set_to_none=True)
-            logits = model(x)
+            logits = _apply_legal_action_mask(model(x), legal_mask)
             if target_mode == "distribution":
                 log_probs = torch.log_softmax(logits, dim=1)
                 loss = _weighted_kl_divergence(log_probs, dist, class_weight_tensor)
