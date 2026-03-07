@@ -127,7 +127,7 @@ if ($RestartExisting) {
 
 Ensure-Bridge
 
-$existingLabeler = Get-ExistingProcess -Pattern "label_reference_offline\.py.*missing_rows_except_flop_p_lt10_f_0_spr_16p\.jsonl"
+$existingLabeler = @(Get-ExistingProcess -Pattern "label_reference_offline\.py.*missing_rows_except_flop_p_lt10_f_0_spr_16p\.jsonl")
 if ($existingLabeler.Count -gt 0) {
     $labelerPid = [int]$existingLabeler[0].ProcessId
     Write-Host "Broad-tail labeler already running as PID $labelerPid"
@@ -149,7 +149,7 @@ if ($existingLabeler.Count -gt 0) {
     Write-Host "Broad-tail labeler started as PID $labelerPid"
 }
 
-$existingWatchdog = Get-ExistingProcess -Pattern "watch_offline_labeler_guard\.ps1.*$([Regex]::Escape($manifestPath))"
+$existingWatchdog = @(Get-ExistingProcess -Pattern "watch_offline_labeler_guard\.ps1.*$([Regex]::Escape($manifestPath))")
 if ($existingWatchdog.Count -gt 0) {
     Write-Host "Broad-tail watchdog already running as PID $($existingWatchdog[0].ProcessId)"
 } else {
