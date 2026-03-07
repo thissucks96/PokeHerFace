@@ -214,6 +214,71 @@ def _accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> flo
     return (correct / total) if total > 0 else 0.0
 
 
+def _collect_class_metrics(
+    model: nn.Module,
+    loader: DataLoader | None,
+    device: torch.device,
+    action_space: list[str],
+) -> dict[str, Any]:
+    labels = list(action_space)
+    num_classes = len(labels)
+    confusion = [[0 for _ in range(num_classes)] for _ in range(num_classes)]
+    support = [0 for _ in range(num_classes)]
+    predicted = [0 for _ in range(num_classes)]
+    total = 0
+    correct = 0
+
+    if loader is None:
+        return {
+            "overall_acc": 0.0,
+            "per_class": [],
+            "prediction_distribution": {label: 0 for label in labels},
+            "confusion_matrix": {"labels": labels, "rows": confusion},
+        }
+
+    model.eval()
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            logits = model(x)
+            preds = torch.argmax(logits, dim=1)
+            for y_i, p_i in zip(y.tolist(), preds.tolist()):
+                total += 1
+                support[y_i] += 1
+                predicted[p_i] += 1
+                confusion[y_i][p_i] += 1
+                if y_i == p_i:
+                    correct += 1
+
+    per_class: list[dict[str, Any]] = []
+    prediction_distribution: dict[str, int] = {}
+    for idx, label in enumerate(labels):
+        true_positive = confusion[idx][idx]
+        row_support = support[idx]
+        predicted_total = predicted[idx]
+        recall = (true_positive / row_support) if row_support else None
+        precision = (true_positive / predicted_total) if predicted_total else None
+        per_class.append(
+            {
+                "label": label,
+                "support": row_support,
+                "predicted": predicted_total,
+                "true_positive": true_positive,
+                "recall": recall,
+                "precision": precision,
+            }
+        )
+        prediction_distribution[label] = predicted_total
+
+    return {
+        "overall_acc": (correct / total) if total > 0 else 0.0,
+        "per_class": per_class,
+        "prediction_distribution": prediction_distribution,
+        "confusion_matrix": {"labels": labels, "rows": confusion},
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train local neural policy from frozen reference-label rows.")
     parser.add_argument(
@@ -225,8 +290,14 @@ def main() -> int:
     parser.add_argument(
         "--dataset-jsonl",
         type=Path,
-        default=Path("2_Neural_Brain/local_pipeline/data/raw_spots/solver_reference_labels.jsonl"),
-        help="Input JSONL of frozen reference labels.",
+        default=None,
+        help="Input JSONL for the training split. Defaults to config data.train_jsonl or the frozen corpus.",
+    )
+    parser.add_argument(
+        "--holdout-jsonl",
+        type=Path,
+        default=None,
+        help="Optional holdout JSONL for explicit evaluation. Defaults to config data.holdout_jsonl when present.",
     )
     parser.add_argument("--train", action="store_true", help="Run training. Default is validation-only.")
     args = parser.parse_args()
@@ -242,8 +313,17 @@ def main() -> int:
     train_cfg = cfg.get("training", {}) if isinstance(cfg.get("training"), dict) else {}
     out_cfg = cfg.get("outputs", {}) if isinstance(cfg.get("outputs"), dict) else {}
 
-    dataset_path = args.dataset_jsonl.resolve()
+    dataset_default = Path(
+        str(
+            data_cfg.get("train_jsonl")
+            or "2_Neural_Brain/local_pipeline/data/raw_spots/solver_reference_labels.jsonl"
+        )
+    )
+    holdout_default_raw = str(data_cfg.get("holdout_jsonl") or "").strip()
+    dataset_path = (args.dataset_jsonl or dataset_default).resolve()
+    holdout_path = (args.holdout_jsonl or Path(holdout_default_raw)).resolve() if holdout_default_raw or args.holdout_jsonl else None
     rows = _load_rows(dataset_path)
+    holdout_rows = _load_rows(holdout_path) if holdout_path else []
     action_space = model_cfg.get("output_actions", ["fold", "check", "call", "raise_small", "raise_big", "all_in"])
     action_to_index = {str(a): i for i, a in enumerate(action_space)}
     input_dim = max(16, _safe_int(model_cfg.get("input_dim"), 128))
@@ -254,7 +334,9 @@ def main() -> int:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "config_path": str(cfg_path),
         "dataset_path": str(dataset_path),
+        "holdout_path": str(holdout_path) if holdout_path else None,
         "rows_total": len(rows),
+        "holdout_rows_total": len(holdout_rows),
         "action_space": action_space,
         "mode": "train" if args.train else "validate_only",
         "feature_contract_expected": {
@@ -282,20 +364,32 @@ def main() -> int:
 
     train_split = _safe_float(data_cfg.get("train_split"), 0.9)
     split_seed = _safe_int(data_cfg.get("seed"), 4090)
-    if split_method == "random":
-        train_idx, val_idx = _split_indices_random(
-            total=len(dataset_full),
-            train_split=train_split,
-            seed=split_seed,
+    if holdout_rows:
+        train_set = dataset_full
+        val_dataset = TeacherRowsDataset(
+            rows=holdout_rows,
+            action_to_index=action_to_index,
+            input_dim=input_dim,
+            split_key_field=split_key_field,
         )
+        val_set = val_dataset if len(val_dataset) > 0 else None
+        effective_split_method = "explicit_holdout_jsonl"
     else:
-        train_idx, val_idx = _split_indices_hash(
-            split_tokens=dataset_full.split_tokens,
-            train_split=train_split,
-            seed=split_seed,
-        )
-    train_set = torch.utils.data.Subset(dataset_full, train_idx)
-    val_set = torch.utils.data.Subset(dataset_full, val_idx) if val_idx else None
+        if split_method == "random":
+            train_idx, val_idx = _split_indices_random(
+                total=len(dataset_full),
+                train_split=train_split,
+                seed=split_seed,
+            )
+        else:
+            train_idx, val_idx = _split_indices_hash(
+                split_tokens=dataset_full.split_tokens,
+                train_split=train_split,
+                seed=split_seed,
+            )
+        train_set = torch.utils.data.Subset(dataset_full, train_idx)
+        val_set = torch.utils.data.Subset(dataset_full, val_idx) if val_idx else None
+        effective_split_method = split_method
     batch_size = max(8, _safe_int(train_cfg.get("batch_size"), 512))
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False) if val_set else None
@@ -310,7 +404,10 @@ def main() -> int:
             "feature_contract_rows_mismatching": int(dataset_full.contract_mismatch_rows),
             "train_rows": len(train_set),
             "val_rows": len(val_set) if val_set else 0,
-            "split_method": split_method,
+            "holdout_feature_contract_rows_checked": int(val_dataset.contract_total_rows) if holdout_rows else 0,
+            "holdout_feature_contract_rows_matching": int(val_dataset.contract_matching_rows) if holdout_rows else 0,
+            "holdout_feature_contract_rows_mismatching": int(val_dataset.contract_mismatch_rows) if holdout_rows else 0,
+            "split_method": effective_split_method,
             "split_key_field": split_key_field,
             "split_seed": split_seed,
         }
@@ -395,7 +492,26 @@ def main() -> int:
             "final_val_acc": history[-1]["val_acc"] if history else 0.0,
         }
     )
-    report_path.write_text(json.dumps({"summary": summary, "history": history}, indent=2), encoding="utf-8")
+    train_metrics = _collect_class_metrics(model, train_loader, device, action_space)
+    val_metrics = _collect_class_metrics(model, val_loader, device, action_space) if val_loader else None
+    summary.update(
+        {
+            "train_per_class": train_metrics["per_class"],
+            "val_per_class": val_metrics["per_class"] if val_metrics else [],
+        }
+    )
+    report_path.write_text(
+        json.dumps(
+            {
+                "summary": summary,
+                "history": history,
+                "train_metrics": train_metrics,
+                "val_metrics": val_metrics,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print(json.dumps(summary, indent=2))
     return 0
 
