@@ -205,7 +205,17 @@ Rules:
 - do not assume the system Python has the required dependencies
 - default benchmark and acceptance workflows should target `local_qwen3_coder_30b` when applicable
 
-### 13. Neural Promotion Safety Rule
+### 13. Visible Run Rule
+
+For long-running broad-tail, trail, or unattended local runs, prefer the visible user-facing launcher when available.
+
+Rules:
+- default to the `USER_ONLY` launcher or the visible `.ps1` wrapper the user normally runs
+- prefer visible progress windows over hidden/background starts when the run is expected to last more than a few minutes
+- only run headless when there is a clear reason, and say so explicitly
+- if reusing an existing helper script preserves the same behavior, prefer the helper instead of reconstructing the run command manually
+
+### 14. Neural Promotion Safety Rule
 
 The core app may be functional while the neural path remains untrusted.
 
@@ -216,7 +226,7 @@ Rules:
 - treat `freeze_ready=true` as a hard prerequisite for trustworthy baseline train/eval readiness
 - preserve manifest, labels, errors, and post-pass consistency when working on the neural data path
 
-### 14. Runtime Profile Safety Rule
+### 15. Runtime Profile Safety Rule
 
 Rules:
 - treat `fast_live` as the live-safe runtime candidate unless the task explicitly targets another profile
@@ -224,7 +234,7 @@ Rules:
 - do not change runtime-profile defaults casually during unrelated work
 - do not blur the responsibilities of `fast_live`, `normal`, and `shark_classic` without explicit reason
 
-### 15. Generated Artifact Rule
+### 16. Generated Artifact Rule
 
 Treat these areas as generated or runtime output unless explicitly working on source files within them:
 - `logs/`
@@ -237,7 +247,7 @@ Rules:
 - do not commit generated outputs from these locations unless explicitly requested
 - when using artifacts from these locations as evidence, reference them clearly in updates
 
-### 16. Response Standard
+### 17. Response Standard
 
 Every meaningful implementation update should include:
 
