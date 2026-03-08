@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from shared_feature_contract import FEATURE_DEFAULT_INPUT_DIM, feature_contract_metadata
+from shared_feature_contract import FEATURE_DEFAULT_INPUT_DIM, canonical_feature_payload, feature_contract_metadata
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -50,41 +50,6 @@ def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> int
     return None
 
 
-def _effective_stack_under_pressure(features: dict[str, Any]) -> float:
-    hero_chips = _safe_float(features.get("hero_chips"), 0.0)
-    villain_chips = _safe_float(features.get("villain_chips"), 0.0)
-    if hero_chips > 0.0 and villain_chips > 0.0:
-        return min(hero_chips, villain_chips)
-
-    starting_stack = _safe_float(features.get("starting_stack"), 0.0)
-    hero_commit = _safe_float(features.get("hero_street_commit"), 0.0)
-    villain_commit = _safe_float(features.get("villain_street_commit"), 0.0)
-    if starting_stack > 0.0:
-        return min(
-            max(0.0, starting_stack - hero_commit),
-            max(0.0, starting_stack - villain_commit),
-        )
-    return 0.0
-
-
-def _pot_odds(features: dict[str, Any]) -> float:
-    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
-    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
-    denom = current_pot + facing_bet
-    if facing_bet <= 0.0 or denom <= 0.0:
-        return 0.0
-    return facing_bet / denom
-
-
-def _spr_under_pressure(features: dict[str, Any]) -> float:
-    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
-    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
-    denom = current_pot + facing_bet
-    if denom <= 0.0:
-        return 0.0
-    return _effective_stack_under_pressure(features) / denom
-
-
 def _repair_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     source_row = row.get("source_row") if isinstance(row.get("source_row"), dict) else None
     if not source_row:
@@ -103,14 +68,9 @@ def _repair_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             features["facing_bet"] = derived
             changed = True
 
-    expected_pot_odds = _pot_odds(features)
-    if abs(_safe_float(features.get("pot_odds"), -1.0) - expected_pot_odds) > 1e-9:
-        features["pot_odds"] = expected_pot_odds
-        changed = True
-
-    expected_spr = _spr_under_pressure(features)
-    if abs(_safe_float(features.get("spr_under_pressure"), -1.0) - expected_spr) > 1e-9:
-        features["spr_under_pressure"] = expected_spr
+    normalized_features = canonical_feature_payload(source=source, features=features)["features"]
+    if normalized_features != features:
+        features = normalized_features
         changed = True
 
     if not changed:

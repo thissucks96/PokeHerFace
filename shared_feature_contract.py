@@ -13,7 +13,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 
-FEATURE_SCHEMA_VERSION = "feature_contract_v2"
+FEATURE_SCHEMA_VERSION = "feature_contract_v3"
 FEATURE_DEFAULT_INPUT_DIM = 128
 
 
@@ -117,6 +117,15 @@ NUMERIC_CHANNELS = [
     "current_pot",
     "pot_odds",
     "spr_under_pressure",
+    "hand_category",
+    "board_paired",
+    "board_monotone",
+    "board_two_tone",
+    "board_connected",
+    "board_dry",
+    "flush_draw_present",
+    "oesd_present",
+    "gutshot_present",
     "hero_chips",
     "villain_chips",
     "hero_is_small_blind",
@@ -148,6 +157,21 @@ FEATURE_CONTRACT_HASH = hashlib.sha256(
 ).hexdigest()
 
 _CARD_TOKEN_RE = re.compile(r"^(10|[2-9TJQKA])[CDHS]$", re.IGNORECASE)
+_RANK_VALUE_MAP = {
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "T": 10,
+    "J": 11,
+    "Q": 12,
+    "K": 13,
+    "A": 14,
+}
 
 
 def _normalize_source(source: Dict[str, Any]) -> Dict[str, Any]:
@@ -160,6 +184,177 @@ def _normalize_source(source: Dict[str, Any]) -> Dict[str, Any]:
 
 def _is_valid_card_token(token: str) -> bool:
     return bool(_CARD_TOKEN_RE.match(str(token or "").strip().upper()))
+
+
+def _normalize_card_token(token: Any) -> str:
+    value = str(token or "").strip()
+    if not value:
+        return ""
+    upper = value.upper()
+    if upper.startswith("10") and len(upper) >= 3:
+        rank_token = "T"
+        suit_token = upper[2]
+    elif len(upper) >= 2:
+        rank_token = upper[0]
+        suit_token = upper[-1]
+    else:
+        return ""
+    normalized = f"{rank_token}{suit_token}"
+    return normalized if _is_valid_card_token(normalized) else ""
+
+
+def _parse_card(token: str) -> tuple[int, str] | None:
+    normalized = _normalize_card_token(token)
+    if not normalized:
+        return None
+    rank = _RANK_VALUE_MAP.get(normalized[0])
+    suit = normalized[1].lower()
+    if rank is None or suit not in {"s", "h", "d", "c"}:
+        return None
+    return rank, suit
+
+
+def _extract_board_texture_flags(board_tokens: list[str]) -> dict[str, bool]:
+    ranks: list[int] = []
+    suits: list[str] = []
+    for raw_card in board_tokens[:5]:
+        parsed = _parse_card(raw_card)
+        if parsed is None:
+            continue
+        rank, suit = parsed
+        ranks.append(rank)
+        suits.append(suit)
+    paired = len(set(ranks)) < len(ranks) if ranks else False
+    suit_counts = {suit: suits.count(suit) for suit in set(suits)}
+    max_suit_count = max(suit_counts.values()) if suit_counts else 0
+    monotone = max_suit_count >= 3
+    two_tone = max_suit_count == 2
+    unique_ranks = sorted(set(ranks))
+    connected = len(unique_ranks) >= 3 and (max(unique_ranks) - min(unique_ranks) <= (len(unique_ranks) + 1))
+    dry = bool(ranks) and not paired and not monotone and not connected
+    return {
+        "paired": paired,
+        "monotone": monotone,
+        "two_tone": two_tone,
+        "connected": connected,
+        "dry": dry,
+    }
+
+
+def _evaluate_five_cards(cards: list[str]) -> tuple[int, list[int]]:
+    parsed = []
+    for token in cards:
+        parsed_card = _parse_card(token)
+        if parsed_card is None:
+            return (0, [])
+        parsed.append(parsed_card)
+    parsed = sorted(parsed, key=lambda row: row[0], reverse=True)
+    ranks = [row[0] for row in parsed]
+    suits = [row[1] for row in parsed]
+    is_flush = len(set(suits)) == 1
+
+    unique_ranks = sorted(set(ranks), reverse=True)
+    is_straight = False
+    straight_high = 0
+    if len(unique_ranks) == 5:
+        if unique_ranks[0] - unique_ranks[4] == 4:
+            is_straight = True
+            straight_high = unique_ranks[0]
+        elif unique_ranks == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+
+    rank_counts: Dict[int, int] = {}
+    for rank in ranks:
+        rank_counts[rank] = rank_counts.get(rank, 0) + 1
+    groups = sorted([(count, rank) for rank, count in rank_counts.items()], reverse=True)
+
+    if is_straight and is_flush:
+        return (8, [straight_high])
+    if groups[0][0] == 4:
+        quad_rank = groups[0][1]
+        kicker = max(rank for rank in ranks if rank != quad_rank)
+        return (7, [quad_rank, kicker])
+    if groups[0][0] == 3 and groups[1][0] == 2:
+        return (6, [groups[0][1], groups[1][1]])
+    if is_flush:
+        return (5, sorted(ranks, reverse=True))
+    if is_straight:
+        return (4, [straight_high])
+    if groups[0][0] == 3:
+        trips = groups[0][1]
+        kickers = sorted([rank for rank in ranks if rank != trips], reverse=True)
+        return (3, [trips] + kickers)
+    if groups[0][0] == 2 and groups[1][0] == 2:
+        high_pair = max(groups[0][1], groups[1][1])
+        low_pair = min(groups[0][1], groups[1][1])
+        kicker = max(rank for rank in ranks if rank not in {high_pair, low_pair})
+        return (2, [high_pair, low_pair, kicker])
+    if groups[0][0] == 2:
+        pair_rank = groups[0][1]
+        kickers = sorted([rank for rank in ranks if rank != pair_rank], reverse=True)
+        return (1, [pair_rank] + kickers)
+    return (0, sorted(ranks, reverse=True))
+
+
+def _evaluate_best_hand_category(hero_cards: list[str], board_tokens: list[str]) -> int:
+    cards = [_normalize_card_token(card) for card in (hero_cards + board_tokens)]
+    cards = [card for card in cards if card]
+    if len(cards) < 5:
+        return 0
+    total = len(cards)
+    best: tuple[int, list[int]] | None = None
+    for i in range(total - 4):
+        for j in range(i + 1, total - 3):
+            for k in range(j + 1, total - 2):
+                for m in range(k + 1, total - 1):
+                    for n in range(m + 1, total):
+                        score = _evaluate_five_cards([cards[i], cards[j], cards[k], cards[m], cards[n]])
+                        if best is None or score > best:
+                            best = score
+    return int(best[0]) if best is not None else 0
+
+
+def _draw_flags(hero_cards: list[str], board_tokens: list[str], made_category: int) -> dict[str, bool]:
+    cards = [_normalize_card_token(card) for card in (hero_cards + board_tokens)]
+    cards = [card for card in cards if card]
+    parsed = [_parse_card(card) for card in cards]
+    parsed = [item for item in parsed if item is not None]
+    ranks = sorted(set(rank for rank, _suit in parsed))
+    suits = [suit for _rank, suit in parsed]
+
+    flush_draw = False
+    if made_category < 5:
+        suit_counts = {suit: suits.count(suit) for suit in set(suits)}
+        flush_draw = bool(suit_counts and max(suit_counts.values()) >= 4)
+
+    if 14 in ranks:
+        ranks_with_wheel = sorted(set(ranks + [1]))
+    else:
+        ranks_with_wheel = ranks
+
+    straight_present = made_category >= 4
+    oesd = False
+    gutshot = False
+    if not straight_present:
+        for start in range(1, 11):
+            sequence = list(range(start, start + 5))
+            present = [rank for rank in sequence if rank in ranks_with_wheel]
+            if len(present) != 4:
+                continue
+            missing = [rank for rank in sequence if rank not in ranks_with_wheel]
+            if not missing:
+                continue
+            miss = missing[0]
+            if miss == sequence[0] or miss == sequence[-1]:
+                oesd = True
+            else:
+                gutshot = True
+    return {
+        "flush_draw_present": flush_draw,
+        "oesd_present": oesd,
+        "gutshot_present": gutshot,
+    }
 
 
 def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
@@ -202,6 +397,18 @@ def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dic
     }
     out["pot_odds"] = _pot_odds(out)
     out["spr_under_pressure"] = _spr_under_pressure(out)
+    texture = _extract_board_texture_flags(board_tokens)
+    made_category = _evaluate_best_hand_category(hero_tokens, board_tokens)
+    draws = _draw_flags(hero_tokens, board_tokens, made_category)
+    out["hand_category"] = float(made_category)
+    out["board_paired"] = 1.0 if texture["paired"] else 0.0
+    out["board_monotone"] = 1.0 if texture["monotone"] else 0.0
+    out["board_two_tone"] = 1.0 if texture["two_tone"] else 0.0
+    out["board_connected"] = 1.0 if texture["connected"] else 0.0
+    out["board_dry"] = 1.0 if texture["dry"] else 0.0
+    out["flush_draw_present"] = 1.0 if draws["flush_draw_present"] else 0.0
+    out["oesd_present"] = 1.0 if draws["oesd_present"] else 0.0
+    out["gutshot_present"] = 1.0 if draws["gutshot_present"] else 0.0
     return out
 
 

@@ -24,6 +24,7 @@ from shared_feature_contract import (
     FEATURE_CONTRACT_HASH,
     FEATURE_DEFAULT_INPUT_DIM,
     FEATURE_SCHEMA_VERSION,
+    canonical_feature_payload,
     feature_contract_metadata,
 )
 
@@ -331,6 +332,7 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
     }
     features["pot_odds"] = _pot_odds(features)
     features["spr_under_pressure"] = _spr_under_pressure(features)
+    features = canonical_feature_payload(source=source, features=features)["features"]
     target = {
         "selected_action": chosen_action,
         "selected_amount": chosen_amount,
