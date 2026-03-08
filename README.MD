@@ -287,7 +287,7 @@ Bridge supports:
 - `prefer_on_fast_failover`
 
 Use shadow first for validation; promote only after agreement/latency gates are met.
-`neural_assist` is a narrow preflop-only influence mode: preflop may use the neural checkpoint, while all postflop streets stay non-authoritative and continue through the normal `fast_live` path.
+`neural_assist` is a narrow turn-only influence mode for non-passive spots: only `turn` decisions with `facing_bet = 0` may use the neural checkpoint, while all facing-bet spots and all other streets stay non-authoritative and continue through the normal `fast_live` path.
 Do not treat neural prefer-mode as ready until dataset freeze and evaluation gates pass cleanly.
 
 ## Important Notes

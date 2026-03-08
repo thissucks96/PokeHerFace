@@ -1646,7 +1646,7 @@ def _neural_preferred_for_spot(mode: str, spot: Dict[str, Any]) -> bool:
     if normalized_mode == "prefer":
         return True
     if normalized_mode == "neural_assist":
-        return _detect_spot_street(spot) == "preflop"
+        return _detect_spot_street(spot) == "turn" and _extract_spot_facing_bet(spot) <= 0.0
     return False
 
 
@@ -3918,7 +3918,7 @@ def _build_fast_failover_response(
     selected_strategy = "neural_brain" if neural_applied else "fallback_lookup_policy"
     effective_selection_reason = (
         (
-            "neural_brain_assist_preflop_on_fast_failover"
+            "neural_brain_assist_turn_nonpassive_on_fast_failover"
             if NEURAL_BRAIN_MODE == "neural_assist"
             else "neural_brain_preferred_on_fast_failover"
         )
@@ -4895,7 +4895,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                         result = _apply_neural_overlay_to_result(result, neural_payload)
                         selected_strategy = "neural_brain"
                         selection_reason = (
-                            "neural_brain_assist_preflop"
+                            "neural_brain_assist_turn_nonpassive"
                             if NEURAL_BRAIN_MODE == "neural_assist"
                             else "neural_brain_preferred"
                         )
