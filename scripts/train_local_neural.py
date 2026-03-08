@@ -16,6 +16,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
@@ -365,6 +366,39 @@ def _weighted_kl_divergence(
     return kl_terms.sum(dim=1).mean()
 
 
+def _passive_fold_call_rows(
+    legal_mask: torch.Tensor,
+    action_to_index: dict[str, int],
+) -> torch.Tensor:
+    fold_idx = action_to_index.get("fold")
+    call_idx = action_to_index.get("call")
+    if fold_idx is None or call_idx is None:
+        return torch.zeros(legal_mask.shape[0], dtype=torch.bool, device=legal_mask.device)
+    allowed = legal_mask.sum(dim=1) == 2
+    fold_legal = legal_mask[:, fold_idx]
+    call_legal = legal_mask[:, call_idx]
+    return allowed & fold_legal & call_legal
+
+
+def _scalar_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    legal_mask: torch.Tensor,
+    action_to_index: dict[str, int],
+    class_weight_tensor: torch.Tensor | None,
+    passive_subset_weighting: str,
+) -> torch.Tensor:
+    losses = F.cross_entropy(logits, targets, reduction="none")
+    sample_weights = torch.ones_like(losses)
+    if class_weight_tensor is not None:
+        sample_weights = class_weight_tensor.gather(0, targets)
+    if passive_subset_weighting == "balanced_fold_call":
+        passive_rows = _passive_fold_call_rows(legal_mask=legal_mask, action_to_index=action_to_index)
+        sample_weights = torch.where(passive_rows, torch.ones_like(sample_weights), sample_weights)
+    denom = sample_weights.sum().clamp_min(1e-12)
+    return (losses * sample_weights).sum() / denom
+
+
 def _dataset_targets(dataset: Dataset[Any]) -> list[int]:
     if isinstance(dataset, torch.utils.data.Subset):
         base = dataset.dataset
@@ -438,6 +472,11 @@ def main() -> int:
         "--class-weighting",
         default=None,
         help="Class weighting mode for scalar CE training. Supported: none, inverse_frequency.",
+    )
+    parser.add_argument(
+        "--passive-subset-weighting",
+        default=None,
+        help="Optional scalar-loss override for legal passive subsets. Supported: none, balanced_fold_call.",
     )
     parser.add_argument(
         "--target-mode",
@@ -550,6 +589,13 @@ def main() -> int:
         or train_cfg.get("class_weighting")
         or "none"
     ).strip().lower()
+    passive_subset_weighting = str(
+        args.passive_subset_weighting
+        or train_cfg.get("passive_subset_weighting")
+        or "none"
+    ).strip().lower()
+    if passive_subset_weighting not in {"none", "balanced_fold_call"}:
+        raise ValueError(f"unsupported_passive_subset_weighting:{passive_subset_weighting}")
     class_weight_cap = max(0.0, _safe_float(train_cfg.get("class_weight_cap"), 50.0))
     train_targets = _dataset_targets(train_set)
     class_weights = _build_class_weights(
@@ -580,6 +626,7 @@ def main() -> int:
             "split_key_field": split_key_field,
             "split_seed": split_seed,
             "class_weighting": class_weighting_mode,
+            "passive_subset_weighting": passive_subset_weighting,
             "class_weight_cap": class_weight_cap,
             "class_weights": class_weights or [],
         }
@@ -607,7 +654,6 @@ def main() -> int:
         if class_weights
         else None
     )
-    scalar_criterion = nn.CrossEntropyLoss(weight=class_weight_tensor)
     epochs = max(1, _safe_int(train_cfg.get("epochs"), 30))
     clip_norm = max(0.0, _safe_float(train_cfg.get("gradient_clip_norm"), 1.0))
 
@@ -627,7 +673,14 @@ def main() -> int:
                 log_probs = torch.log_softmax(logits, dim=1)
                 loss = _weighted_kl_divergence(log_probs, dist, class_weight_tensor)
             else:
-                loss = scalar_criterion(logits, y)
+                loss = _scalar_loss(
+                    logits=logits,
+                    targets=y,
+                    legal_mask=legal_mask,
+                    action_to_index=action_to_index,
+                    class_weight_tensor=class_weight_tensor,
+                    passive_subset_weighting=passive_subset_weighting,
+                )
             loss.backward()
             if clip_norm > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
