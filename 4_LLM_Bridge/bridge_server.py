@@ -688,6 +688,12 @@ NEURAL_BRAIN_ADAPTER_PATH = Path(
     os.environ.get("NEURAL_BRAIN_ADAPTER_PATH", str(ROOT / "4_LLM_Bridge" / "neural_brain_adapter.py"))
 ).expanduser()
 NEURAL_BRAIN_PYTHON = str(os.environ.get("NEURAL_BRAIN_PYTHON", "")).strip()
+NEURAL_BRAIN_POLICY_CHECKPOINT_PATH = Path(
+    os.environ.get(
+        "NEURAL_BRAIN_POLICY_CHECKPOINT_PATH",
+        str(ROOT / "2_Neural_Brain" / "local_pipeline" / "artifacts" / "checkpoints" / "neural_policy_shadow_v1.pt"),
+    )
+).expanduser()
 try:
     NEURAL_BRAIN_TIMEOUT_SEC = int(os.environ.get("NEURAL_BRAIN_TIMEOUT_SEC", "3"))
 except ValueError:
@@ -1304,6 +1310,7 @@ def _run_neural_brain_adapter(
     spot: Dict[str, Any],
     allowed_actions: list[str],
     timeout_sec: int,
+    runtime_profile: str,
 ) -> tuple[Optional[Dict[str, Any]], Optional[str], float]:
     if not NEURAL_BRAIN_ENABLED:
         return None, "neural_brain_disabled", 0.0
@@ -1331,6 +1338,7 @@ def _run_neural_brain_adapter(
     payload = {
         "spot": spot,
         "allowed_actions": normalized_allowed,
+        "runtime_profile": str(runtime_profile or "").strip().lower(),
     }
     env = os.environ.copy()
     env["DYYPHOLDEM_CFR_ITERS"] = str(NEURAL_BRAIN_CFR_ITERS)
@@ -3862,6 +3870,7 @@ def _build_fast_failover_response(
             spot=request.spot,
             allowed_actions=allowed_actions,
             timeout_sec=NEURAL_BRAIN_TIMEOUT_SEC,
+            runtime_profile=runtime_profile,
         )
         if NEURAL_BRAIN_ENABLED:
             neural_attempted = True
@@ -4115,6 +4124,7 @@ def health() -> Dict[str, Any]:
         "feature_extract_telemetry_window": FEATURE_EXTRACT_TELEMETRY_WINDOW,
         "feature_extract_stats": feature_extract_stats,
         "neural_brain_adapter_path": str(NEURAL_BRAIN_ADAPTER_PATH),
+        "neural_brain_policy_checkpoint_path": str(NEURAL_BRAIN_POLICY_CHECKPOINT_PATH),
         "neural_brain_timeout_sec": NEURAL_BRAIN_TIMEOUT_SEC,
         "neural_brain_cfr_iters": NEURAL_BRAIN_CFR_ITERS,
         "neural_brain_cfr_skip_iters": NEURAL_BRAIN_CFR_SKIP_ITERS,
@@ -4846,6 +4856,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                     spot=request.spot,
                     allowed_actions=allowed_root_actions,
                     timeout_sec=neural_timeout_effective,
+                    runtime_profile=runtime_profile,
                 )
                 if isinstance(neural_payload, dict):
                     neural_allowed = _normalize_action_summary_tokens(neural_payload.get("root_actions", []))

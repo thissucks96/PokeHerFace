@@ -28,6 +28,8 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _resolve_neural_root() -> Path:
@@ -49,6 +51,250 @@ NEURAL_SRC = (NEURAL_ROOT / "src").resolve()
 if str(NEURAL_SRC) not in sys.path:
     sys.path.insert(0, str(NEURAL_SRC))
 os.chdir(NEURAL_SRC)
+
+from shared_feature_contract import FEATURE_DEFAULT_INPUT_DIM, detect_street, feature_vector
+
+
+def _env_flag(name: str, default: str = "1") -> bool:
+    return str(os.environ.get(name, default)).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_local_policy_checkpoint() -> Path:
+    raw = str(
+        os.environ.get(
+            "NEURAL_BRAIN_POLICY_CHECKPOINT_PATH",
+            str(ROOT / "2_Neural_Brain" / "local_pipeline" / "artifacts" / "checkpoints" / "neural_policy_shadow_v1.pt"),
+        )
+    ).strip()
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = (ROOT / candidate).resolve()
+    return candidate
+
+
+LOCAL_POLICY_ENABLED = _env_flag("NEURAL_BRAIN_LOCAL_POLICY_ENABLED", "1")
+LOCAL_POLICY_CHECKPOINT = _resolve_local_policy_checkpoint()
+_LOCAL_POLICY_BUNDLE: dict[str, Any] | None = None
+
+
+def _hero_range_from_cards(hero_cards: list[str]) -> str:
+    tokens = [_normalize_card_token(card) for card in hero_cards]
+    tokens = [token for token in tokens if token]
+    if len(tokens) != 2:
+        return ""
+    rank_value = {r: idx for idx, r in enumerate("23456789TJQKA", start=2)}
+    ranks = sorted((token[0] for token in tokens), key=lambda r: rank_value.get(r, 0), reverse=True)
+    if ranks[0] == ranks[1]:
+        return f"{ranks[0]}{ranks[1]}"
+    suited = "s" if tokens[0][1] == tokens[1][1] else "o"
+    return f"{ranks[0]}{ranks[1]}{suited}"
+
+
+def _build_policy_feature_inputs(spot: Dict[str, Any], runtime_profile: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    meta = spot.get("meta") if isinstance(spot.get("meta"), dict) else {}
+    board = spot.get("board") if isinstance(spot.get("board"), list) else []
+    hero_cards = meta.get("hero_cards") if isinstance(meta.get("hero_cards"), list) else []
+    hero_range = str(spot.get("hero_range") or "").strip()
+    if not hero_range:
+        hero_range = _hero_range_from_cards(hero_cards)
+    source = {
+        "runtime_profile": str(runtime_profile or "unknown").strip().lower(),
+        "street": detect_street(board),
+    }
+    features = {
+        "hero_range": hero_range,
+        "villain_range": str(spot.get("villain_range") or "").strip(),
+        "board": board,
+        "active_node_path": str(spot.get("active_node_path") or "").strip(),
+        "in_position_player": int(float(spot.get("in_position_player", 2) or 2)),
+        "starting_stack": int(float(spot.get("starting_stack", 0) or 0)),
+        "starting_pot": int(float(spot.get("starting_pot", 0) or 0)),
+        "minimum_bet": int(float(spot.get("minimum_bet", 0) or 0)),
+        "all_in_threshold": float(spot.get("all_in_threshold", 0.67) or 0.67),
+        "iterations": int(float(spot.get("iterations", 0) or 0)),
+        "min_exploitability": float(spot.get("min_exploitability", -1.0) or -1.0),
+        "thread_count": int(float(spot.get("thread_count", 0) or 0)),
+        "remove_donk_bets": bool(spot.get("remove_donk_bets", True)),
+        "raise_cap": int(float(spot.get("raise_cap", 0) or 0)),
+        "compress_strategy": bool(spot.get("compress_strategy", True)),
+        "bet_sizing": spot.get("bet_sizing") if isinstance(spot.get("bet_sizing"), dict) else {},
+        "facing_bet": _safe_int(meta.get("facing_bet"), 0) or _extract_last_bet_from_node_path(spot.get("active_node_path", "")),
+        "hero_street_commit": _safe_int(meta.get("hero_street_commit"), 0),
+        "villain_street_commit": _safe_int(meta.get("villain_street_commit"), 0),
+        "current_pot": _safe_int(meta.get("current_pot", spot.get("starting_pot")), 0),
+        "hero_chips": _safe_int(meta.get("current_hero_chips"), 0),
+        "villain_chips": _safe_int(meta.get("current_villain_chips"), 0),
+        "hero_is_small_blind": bool(meta.get("hero_is_small_blind", True)),
+        "hero_cards": hero_cards,
+    }
+    return source, features
+
+
+def _load_local_policy_bundle() -> tuple[dict[str, Any] | None, str | None]:
+    global _LOCAL_POLICY_BUNDLE
+    if not LOCAL_POLICY_ENABLED:
+        return None, "local_policy_disabled"
+    if _LOCAL_POLICY_BUNDLE is not None:
+        return _LOCAL_POLICY_BUNDLE, None
+    if not LOCAL_POLICY_CHECKPOINT.exists():
+        return None, f"local_policy_checkpoint_missing:{LOCAL_POLICY_CHECKPOINT}"
+    try:
+        from scripts.train_local_neural import PolicyMLP, _predict_logits
+    except Exception as exc:  # pylint: disable=broad-except
+        return None, f"local_policy_import_failure:{exc}"
+    try:
+        checkpoint = torch.load(LOCAL_POLICY_CHECKPOINT, map_location="cpu")
+        action_space = checkpoint.get("action_space")
+        if not isinstance(action_space, list) or not action_space:
+            return None, "local_policy_missing_action_space"
+        architecture = str(checkpoint.get("architecture") or "flat").strip().lower()
+        input_dim = int(checkpoint.get("input_dim") or FEATURE_DEFAULT_INPUT_DIM)
+        model = PolicyMLP(
+            input_dim=input_dim,
+            hidden_dim=256,
+            num_layers=3,
+            dropout=0.1,
+            output_dim=len(action_space),
+            architecture=architecture,
+        )
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.eval()
+        _LOCAL_POLICY_BUNDLE = {
+            "model": model,
+            "action_space": [str(a) for a in action_space],
+            "action_to_index": {str(a): i for i, a in enumerate(action_space)},
+            "input_dim": input_dim,
+            "architecture": architecture,
+            "feature_schema_version": str(checkpoint.get("feature_schema_version") or ""),
+            "feature_contract_hash": str(checkpoint.get("feature_contract_hash") or ""),
+            "predict_logits": _predict_logits,
+        }
+        return _LOCAL_POLICY_BUNDLE, None
+    except Exception as exc:  # pylint: disable=broad-except
+        return None, f"local_policy_load_failure:{exc}"
+
+
+def _build_legal_mask_from_allowed(allowed_actions: list[str], action_to_index: dict[str, int]) -> torch.Tensor:
+    legal = [False for _ in action_to_index]
+    raise_count = 0
+    for token in allowed_actions:
+        normalized = _normalize_action_token(token)
+        if normalized == "fold" and "fold" in action_to_index:
+            legal[action_to_index["fold"]] = True
+        elif normalized == "check" and "check" in action_to_index:
+            legal[action_to_index["check"]] = True
+        elif normalized == "call" and "call" in action_to_index:
+            legal[action_to_index["call"]] = True
+        elif normalized == "raise" or normalized.startswith("raise:"):
+            raise_count += 1
+    if raise_count > 0:
+        for name in ("raise_small", "raise_big", "all_in"):
+            if name in action_to_index:
+                legal[action_to_index[name]] = True
+    if not any(legal):
+        legal = [True for _ in action_to_index]
+    return torch.tensor([legal], dtype=torch.bool)
+
+
+def _sorted_raise_tokens(allowed_actions: list[str]) -> list[str]:
+    rows: list[tuple[str, int]] = []
+    for token in allowed_actions:
+        normalized = _normalize_action_token(token)
+        if not normalized.startswith("raise:"):
+            continue
+        try:
+            rows.append((normalized, int(float(normalized.split(":", 1)[1]))))
+        except (TypeError, ValueError):
+            continue
+    rows.sort(key=lambda item: item[1])
+    return [token for token, _amount in rows]
+
+
+def _map_model_action_to_token(action: str, allowed_actions: list[str]) -> str:
+    action = str(action or "").strip().lower()
+    if action in {"fold", "check", "call"}:
+        if _token_allowed(action, allowed_actions):
+            return action
+        return "call" if action == "check" and _token_allowed("call", allowed_actions) else action
+    raise_tokens = _sorted_raise_tokens(allowed_actions)
+    if action == "raise_small":
+        return raise_tokens[0] if raise_tokens else ("raise" if _token_allowed("raise", allowed_actions) else "")
+    if action == "raise_big":
+        if len(raise_tokens) >= 2:
+            return raise_tokens[-2]
+        return raise_tokens[-1] if raise_tokens else ("raise" if _token_allowed("raise", allowed_actions) else "")
+    if action == "all_in":
+        return raise_tokens[-1] if raise_tokens else ("raise" if _token_allowed("raise", allowed_actions) else "")
+    return ""
+
+
+def _run_local_policy(spot: Dict[str, Any], allowed_actions: list[str], runtime_profile: str) -> tuple[dict[str, Any] | None, str | None]:
+    bundle, error = _load_local_policy_bundle()
+    if bundle is None:
+        return None, error
+    started = time.perf_counter()
+    try:
+        source, features = _build_policy_feature_inputs(spot, runtime_profile)
+        x = torch.tensor(
+            [feature_vector(source=source, features=features, input_dim=int(bundle["input_dim"]))],
+            dtype=torch.float32,
+        )
+        legal_mask = _build_legal_mask_from_allowed(allowed_actions, bundle["action_to_index"])
+        logits, _aux = bundle["predict_logits"](
+            bundle["model"],
+            x,
+            legal_mask,
+            bundle["action_space"],
+            bundle["action_to_index"],
+            bundle["architecture"],
+        )
+        probs = torch.softmax(logits, dim=1)[0].tolist()
+        weighted_tokens: dict[str, float] = {}
+        for action_name, prob in zip(bundle["action_space"], probs):
+            token = _map_model_action_to_token(action_name, allowed_actions)
+            if not token or prob <= 0.0:
+                continue
+            weighted_tokens[token] = weighted_tokens.get(token, 0.0) + float(prob)
+        if not weighted_tokens:
+            return None, "local_policy_no_allowed_projection"
+        ordered = sorted(weighted_tokens.items(), key=lambda row: row[1], reverse=True)
+        total = sum(freq for _token, freq in ordered) or 1.0
+        root_actions = [_row_from_token(token, freq / total) for token, freq in ordered]
+        elapsed = time.perf_counter() - started
+        return {
+            "ok": True,
+            "chosen_action": ordered[0][0],
+            "root_actions": root_actions,
+            "meta": {
+                "elapsed_sec": elapsed,
+                "adapter": "local_policy_checkpoint",
+                "surrogate": False,
+                "checkpoint_path": str(LOCAL_POLICY_CHECKPOINT),
+                "architecture": str(bundle["architecture"]),
+                "feature_schema_version": str(bundle["feature_schema_version"]),
+                "allowed_actions_in": allowed_actions,
+            },
+        }, None
+    except Exception as exc:  # pylint: disable=broad-except
+        return None, f"local_policy_runtime_failure:{exc}"
 
 
 def _normalize_card_token(raw: Any) -> str:
@@ -90,6 +336,19 @@ def _parse_sizes(cfg: Any, fallback: List[float]) -> List[float]:
         if fval > 0:
             out.append(fval)
     return out or list(fallback)
+
+
+def _normalize_action_token(raw: Any) -> str:
+    token = str(raw or "").strip().lower()
+    if not token:
+        return ""
+    if token.startswith("bet:"):
+        token = "raise:" + token.split(":", 1)[1]
+    if token == "bet":
+        return "raise"
+    if token in {"all in", "allin", "all_in"}:
+        return "all_in"
+    return token
 
 
 def _normalize_allowed_tokens(tokens: Any) -> List[str]:
@@ -408,6 +667,12 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": "missing_spot"}))
         return 0
     allowed_actions = _normalize_allowed_tokens(payload.get("allowed_actions", []))
+    runtime_profile = str(payload.get("runtime_profile") or "unknown").strip().lower()
+
+    local_payload, local_error = _run_local_policy(spot, allowed_actions, runtime_profile)
+    if isinstance(local_payload, dict):
+        print(json.dumps(local_payload))
+        return 0
 
     try:
         import settings.arguments as arguments
@@ -418,7 +683,8 @@ def main() -> int:
         from terminal_equity.terminal_equity import TerminalEquity
         from lookahead.resolving import Resolving
     except Exception as exc:  # pylint: disable=broad-except
-        fallback = _surrogate_neural_policy(spot, allowed_actions, reason=f"import_failure:{exc}")
+        reason = local_error or f"import_failure:{exc}"
+        fallback = _surrogate_neural_policy(spot, allowed_actions, reason=reason)
         print(json.dumps(fallback))
         return 0
 
@@ -491,7 +757,8 @@ def main() -> int:
         return 0
     except Exception as exc:  # pylint: disable=broad-except
         elapsed = time.perf_counter() - started
-        fallback = _surrogate_neural_policy(spot, allowed_actions, reason=f"runtime_failure:{exc}")
+        reason = local_error or f"runtime_failure:{exc}"
+        fallback = _surrogate_neural_policy(spot, allowed_actions, reason=reason)
         if isinstance(fallback.get("meta"), dict):
             fallback["meta"]["elapsed_sec"] = elapsed
         print(json.dumps(fallback))
