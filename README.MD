@@ -282,10 +282,12 @@ Manual vs 1v1 dataset capture:
 
 Bridge supports:
 - `shadow`
+- `neural_assist`
 - `prefer`
 - `prefer_on_fast_failover`
 
 Use shadow first for validation; promote only after agreement/latency gates are met.
+`neural_assist` is a narrow preflop-only influence mode: preflop may use the neural checkpoint, while all postflop streets stay non-authoritative and continue through the normal `fast_live` path.
 Do not treat neural prefer-mode as ready until dataset freeze and evaluation gates pass cleanly.
 
 ## Important Notes

@@ -663,7 +663,7 @@ if CANARY_KILL_SWITCH_MODE not in {"baseline_only", "reject"}:
 CANARY_AUTO_EXIT_ON_TRIP = os.environ.get("CANARY_AUTO_EXIT_ON_TRIP", "0").strip() not in {"0", "false", "False"}
 NEURAL_BRAIN_ENABLED = os.environ.get("NEURAL_BRAIN_ENABLED", "0").strip() not in {"0", "false", "False"}
 NEURAL_BRAIN_MODE = str(os.environ.get("NEURAL_BRAIN_MODE", "shadow")).strip().lower()
-if NEURAL_BRAIN_MODE not in {"shadow", "prefer", "prefer_on_fast_failover"}:
+if NEURAL_BRAIN_MODE not in {"shadow", "prefer", "prefer_on_fast_failover", "neural_assist"}:
     NEURAL_BRAIN_MODE = "shadow"
 NEURAL_UNRESOLVED_GATE_ENABLED = os.environ.get("NEURAL_UNRESOLVED_GATE_ENABLED", "0").strip() not in {
     "0",
@@ -1629,11 +1629,25 @@ def _extract_node_lock_catalog(result_payload: Dict[str, Any]) -> list[Dict[str,
 def _detect_spot_street(spot: Dict[str, Any]) -> str:
     board = spot.get("board", [])
     if isinstance(board, list):
+        if len(board) == 0:
+            return "preflop"
         if len(board) >= 5:
             return "river"
         if len(board) == 4:
             return "turn"
-    return "flop"
+        if len(board) == 3:
+            return "flop"
+        return f"partial_{len(board)}"
+    return "unknown"
+
+
+def _neural_preferred_for_spot(mode: str, spot: Dict[str, Any]) -> bool:
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode == "prefer":
+        return True
+    if normalized_mode == "neural_assist":
+        return _detect_spot_street(spot) == "preflop"
+    return False
 
 
 def _estimate_range_width(range_text: str) -> int:
@@ -3896,14 +3910,20 @@ def _build_fast_failover_response(
             allowed_actions = neural_allowed
         if neural_choice:
             chosen_action = neural_choice
-        if NEURAL_BRAIN_MODE in {"prefer", "prefer_on_fast_failover"} and not neural_surrogate:
+        if _neural_preferred_for_spot(NEURAL_BRAIN_MODE, request.spot) and not neural_surrogate:
             neural_applied = True
-        elif NEURAL_BRAIN_MODE in {"prefer", "prefer_on_fast_failover"} and neural_surrogate:
+        elif _neural_preferred_for_spot(NEURAL_BRAIN_MODE, request.spot) and neural_surrogate:
             neural_error = "surrogate_shadow_only"
 
     selected_strategy = "neural_brain" if neural_applied else "fallback_lookup_policy"
     effective_selection_reason = (
-        "neural_brain_preferred_on_fast_failover" if neural_applied else selection_reason
+        (
+            "neural_brain_assist_preflop_on_fast_failover"
+            if NEURAL_BRAIN_MODE == "neural_assist"
+            else "neural_brain_preferred_on_fast_failover"
+        )
+        if neural_applied
+        else selection_reason
     )
     result_payload = {
         "runtime_fallback": True,
@@ -4853,7 +4873,7 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
     unresolved_neural_gate = _evaluate_neural_unresolved_gate(request.spot)
     feature_contract_meta = _feature_contract_meta_for_spot(request.spot, runtime_profile)
     allowed_actions_before_neural = list(allowed_root_actions)
-    if NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE in {"shadow", "prefer"}:
+    if NEURAL_BRAIN_ENABLED and NEURAL_BRAIN_MODE in {"shadow", "prefer", "neural_assist"}:
         if bool(unresolved_neural_gate.get("hit")):
             neural_error = "unresolved_spot_gate_skip"
         else:
@@ -4871,15 +4891,19 @@ def solve(request: SolveRequest) -> Dict[str, Any]:
                     neural_allowed = _normalize_action_summary_tokens(neural_payload.get("root_actions", []))
                     neural_meta = neural_payload.get("meta") if isinstance(neural_payload.get("meta"), dict) else {}
                     neural_surrogate = bool(neural_meta.get("surrogate", False))
-                    if NEURAL_BRAIN_MODE == "prefer" and not neural_surrogate:
+                    if _neural_preferred_for_spot(NEURAL_BRAIN_MODE, request.spot) and not neural_surrogate:
                         result = _apply_neural_overlay_to_result(result, neural_payload)
                         selected_strategy = "neural_brain"
-                        selection_reason = "neural_brain_preferred"
+                        selection_reason = (
+                            "neural_brain_assist_preflop"
+                            if NEURAL_BRAIN_MODE == "neural_assist"
+                            else "neural_brain_preferred"
+                        )
                         node_lock_kept = False
                         if neural_allowed:
                             allowed_root_actions = neural_allowed
                         neural_applied = True
-                    elif NEURAL_BRAIN_MODE == "prefer" and neural_surrogate:
+                    elif _neural_preferred_for_spot(NEURAL_BRAIN_MODE, request.spot) and neural_surrogate:
                         neural_error = "surrogate_shadow_only"
             else:
                 neural_error = "global_budget_exhausted_before_neural_stage"
