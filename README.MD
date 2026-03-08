@@ -147,10 +147,13 @@ Bridge runtime deterministic unresolved gate (local-only, no cloud dependency):
 ```powershell
 $env:NEURAL_BRAIN_ENABLED = "1"
 $env:NEURAL_BRAIN_MODE = "shadow"
+$env:NEURAL_BRAIN_POLICY_CHECKPOINT_PATH = "A:\PokeHerFace\Version1\2_Neural_Brain\local_pipeline\artifacts\checkpoints\neural_policy_shadow_v1.pt"
 $env:NEURAL_UNRESOLVED_GATE_ENABLED = "1"
 $env:NEURAL_UNRESOLVED_COARSE_GATE_ENABLED = "0"   # optional tier-2 adjacency gate
 $env:NEURAL_UNRESOLVED_GATE_JSON = "A:\PokeHerFace\Version1\2_Neural_Brain\local_pipeline\reports\unresolved_gate_ids.json"
 ```
+
+The neural adapter now tries the local checkpoint path first for shadow/prefer decisions and only falls back to the older adapter path if that checkpoint is missing or unusable. The bridge `/health` output includes `neural_brain_policy_checkpoint_path` so you can confirm which shadow checkpoint is configured.
 
 Direct reproducible A/B (same seed):
 
