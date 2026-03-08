@@ -31,6 +31,9 @@ from shared_feature_contract import (
     feature_vector,
 )
 
+PASSIVE_ACTIONS = ["fold", "call", "check"]
+AGGRESSIVE_ACTIONS = ["raise_small", "raise_big", "all_in"]
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -145,8 +148,17 @@ class TeacherRowsDataset(Dataset):
         return self.samples[idx]
 
 class PolicyMLP(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float, output_dim: int) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        output_dim: int,
+        architecture: str = "flat",
+    ) -> None:
         super().__init__()
+        self.architecture = architecture
         layers: list[nn.Module] = []
         in_dim = input_dim
         for _ in range(max(1, num_layers)):
@@ -155,11 +167,27 @@ class PolicyMLP(nn.Module):
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
             in_dim = hidden_dim
-        layers.append(nn.Linear(in_dim, output_dim))
-        self.net = nn.Sequential(*layers)
+        self.trunk = nn.Sequential(*layers)
+        if architecture == "hierarchical":
+            self.head_posture = nn.Linear(in_dim, 2)
+            self.head_passive = nn.Linear(in_dim, len(PASSIVE_ACTIONS))
+            self.head_aggro = nn.Linear(in_dim, len(AGGRESSIVE_ACTIONS))
+            self.head = None
+        else:
+            self.head = nn.Linear(in_dim, output_dim)
+            self.head_posture = None
+            self.head_passive = None
+            self.head_aggro = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor | dict[str, torch.Tensor]:
+        hidden = self.trunk(x)
+        if self.architecture == "hierarchical":
+            return {
+                "posture": self.head_posture(hidden),
+                "passive": self.head_passive(hidden),
+                "aggressive": self.head_aggro(hidden),
+            }
+        return self.head(hidden)
 
 
 def _load_rows(path: Path) -> list[dict[str, Any]]:
@@ -238,6 +266,109 @@ def _apply_legal_action_mask(logits: torch.Tensor, legal_mask: torch.Tensor) -> 
     return logits.masked_fill(~effective_mask, -1e9)
 
 
+def _hierarchical_mappings(action_to_index: dict[str, int]) -> dict[str, Any]:
+    passive_global = [action_to_index[name] for name in PASSIVE_ACTIONS if name in action_to_index]
+    aggressive_global = [action_to_index[name] for name in AGGRESSIVE_ACTIONS if name in action_to_index]
+    return {
+        "passive_global": passive_global,
+        "aggressive_global": aggressive_global,
+        "passive_local": {global_idx: local_idx for local_idx, global_idx in enumerate(passive_global)},
+        "aggressive_local": {global_idx: local_idx for local_idx, global_idx in enumerate(aggressive_global)},
+    }
+
+
+def _hierarchical_targets(
+    targets: torch.Tensor,
+    mappings: dict[str, Any],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    posture_targets = torch.ones_like(targets)
+    passive_mask = torch.zeros_like(targets, dtype=torch.bool)
+    aggressive_mask = torch.zeros_like(targets, dtype=torch.bool)
+    passive_local = torch.zeros_like(targets)
+    aggressive_local = torch.zeros_like(targets)
+
+    for global_idx, local_idx in mappings["passive_local"].items():
+        rows = targets == global_idx
+        posture_targets = torch.where(rows, torch.zeros_like(posture_targets), posture_targets)
+        passive_mask |= rows
+        passive_local = torch.where(rows, torch.full_like(passive_local, local_idx), passive_local)
+
+    for global_idx, local_idx in mappings["aggressive_local"].items():
+        rows = targets == global_idx
+        aggressive_mask |= rows
+        aggressive_local = torch.where(rows, torch.full_like(aggressive_local, local_idx), aggressive_local)
+
+    return posture_targets, passive_mask, aggressive_mask, passive_local, aggressive_local
+
+
+def _hierarchical_legal_masks(
+    legal_mask: torch.Tensor,
+    mappings: dict[str, Any],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    passive_global = mappings["passive_global"]
+    aggressive_global = mappings["aggressive_global"]
+    passive_mask = legal_mask[:, passive_global]
+    aggressive_mask = legal_mask[:, aggressive_global]
+    posture_mask = torch.stack(
+        [
+            passive_mask.any(dim=1),
+            aggressive_mask.any(dim=1),
+        ],
+        dim=1,
+    )
+    return posture_mask, passive_mask, aggressive_mask
+
+
+def _weighted_ce_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    class_weight_tensor: torch.Tensor | None,
+) -> torch.Tensor:
+    losses = F.cross_entropy(logits, targets, reduction="none")
+    if class_weight_tensor is None:
+        return losses.mean()
+    sample_weights = class_weight_tensor.gather(0, targets)
+    denom = sample_weights.sum().clamp_min(1e-12)
+    return (losses * sample_weights).sum() / denom
+
+
+def _hierarchical_reconstruct_logits(
+    outputs: dict[str, torch.Tensor],
+    legal_mask: torch.Tensor,
+    action_space: list[str],
+    action_to_index: dict[str, int],
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    mappings = _hierarchical_mappings(action_to_index)
+    posture_mask, passive_mask, aggressive_mask = _hierarchical_legal_masks(legal_mask, mappings)
+    posture_logits = _apply_legal_action_mask(outputs["posture"], posture_mask)
+    passive_logits = _apply_legal_action_mask(outputs["passive"], passive_mask)
+    aggressive_logits = _apply_legal_action_mask(outputs["aggressive"], aggressive_mask)
+
+    posture_pred = torch.argmax(posture_logits, dim=1)
+    final_logits = torch.full(
+        (legal_mask.shape[0], len(action_space)),
+        -1e9,
+        dtype=posture_logits.dtype,
+        device=posture_logits.device,
+    )
+
+    passive_rows = posture_pred == 0
+    aggressive_rows = posture_pred == 1
+    if passive_rows.any():
+        for local_idx, global_idx in enumerate(mappings["passive_global"]):
+            final_logits[passive_rows, global_idx] = passive_logits[passive_rows, local_idx]
+    if aggressive_rows.any():
+        for local_idx, global_idx in enumerate(mappings["aggressive_global"]):
+            final_logits[aggressive_rows, global_idx] = aggressive_logits[aggressive_rows, local_idx]
+    return final_logits, {
+        "posture_logits": posture_logits,
+        "passive_logits": passive_logits,
+        "aggressive_logits": aggressive_logits,
+        "posture_pred": posture_pred,
+        "mappings": mappings,
+    }
+
+
 def _split_indices_random(total: int, train_split: float, seed: int) -> tuple[list[int], list[int]]:
     idx = list(range(total))
     keyed = []
@@ -272,7 +403,34 @@ def _split_indices_hash(split_tokens: list[str], train_split: float, seed: int) 
     return train_idx, val_idx
 
 
-def _accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
+def _predict_logits(
+    model: nn.Module,
+    x: torch.Tensor,
+    legal_mask: torch.Tensor,
+    action_space: list[str],
+    action_to_index: dict[str, int],
+    architecture: str,
+) -> tuple[torch.Tensor, dict[str, Any] | None]:
+    outputs = model(x)
+    if architecture == "hierarchical":
+        logits, aux = _hierarchical_reconstruct_logits(
+            outputs=outputs,
+            legal_mask=legal_mask,
+            action_space=action_space,
+            action_to_index=action_to_index,
+        )
+        return logits, aux
+    return _apply_legal_action_mask(outputs, legal_mask), None
+
+
+def _accuracy(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    action_space: list[str],
+    action_to_index: dict[str, int],
+    architecture: str,
+) -> float:
     total = 0
     correct = 0
     model.eval()
@@ -281,7 +439,14 @@ def _accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> flo
             x = x.to(device)
             y = y.to(device)
             legal_mask = legal_mask.to(device)
-            logits = _apply_legal_action_mask(model(x), legal_mask)
+            logits, _aux = _predict_logits(
+                model=model,
+                x=x,
+                legal_mask=legal_mask,
+                action_space=action_space,
+                action_to_index=action_to_index,
+                architecture=architecture,
+            )
             pred = torch.argmax(logits, dim=1)
             total += int(y.numel())
             correct += int((pred == y).sum().item())
@@ -293,6 +458,8 @@ def _collect_class_metrics(
     loader: DataLoader | None,
     device: torch.device,
     action_space: list[str],
+    action_to_index: dict[str, int],
+    architecture: str,
 ) -> dict[str, Any]:
     labels = list(action_space)
     num_classes = len(labels)
@@ -316,7 +483,14 @@ def _collect_class_metrics(
             x = x.to(device)
             y = y.to(device)
             legal_mask = legal_mask.to(device)
-            logits = _apply_legal_action_mask(model(x), legal_mask)
+            logits, _aux = _predict_logits(
+                model=model,
+                x=x,
+                legal_mask=legal_mask,
+                action_space=action_space,
+                action_to_index=action_to_index,
+                architecture=architecture,
+            )
             preds = torch.argmax(logits, dim=1)
             for y_i, p_i in zip(y.tolist(), preds.tolist()):
                 total += 1
@@ -483,6 +657,11 @@ def main() -> int:
         default=None,
         help="Training target mode. Supported: scalar, distribution.",
     )
+    parser.add_argument(
+        "--architecture",
+        default=None,
+        help="Model architecture. Supported: flat, hierarchical.",
+    )
     parser.add_argument("--train", action="store_true", help="Run training. Default is validation-only.")
     args = parser.parse_args()
 
@@ -514,8 +693,15 @@ def main() -> int:
     split_key_field = str(data_cfg.get("split_key_field") or "split_key").strip() or "split_key"
     split_method = str(data_cfg.get("split_method") or "hash_split_key").strip().lower()
     target_mode = str(args.target_mode or train_cfg.get("target_mode") or "scalar").strip().lower()
+    architecture = str(args.architecture or model_cfg.get("architecture") or "flat").strip().lower()
     if target_mode not in {"scalar", "distribution"}:
         print(json.dumps({"ok": False, "ready_for_training": False, "reason": f"unsupported_target_mode:{target_mode}"}))
+        return 2
+    if architecture not in {"flat", "hierarchical"}:
+        print(json.dumps({"ok": False, "ready_for_training": False, "reason": f"unsupported_architecture:{architecture}"}))
+        return 2
+    if architecture == "hierarchical" and target_mode != "scalar":
+        print(json.dumps({"ok": False, "ready_for_training": False, "reason": "hierarchical_requires_scalar_targets"}))
         return 2
 
     summary: dict[str, Any] = {
@@ -528,6 +714,7 @@ def main() -> int:
         "action_space": action_space,
         "mode": "train" if args.train else "validate_only",
         "target_mode": target_mode,
+        "architecture": architecture,
         "feature_contract_expected": {
             "schema_version": FEATURE_SCHEMA_VERSION,
             "contract_hash": FEATURE_CONTRACT_HASH,
@@ -643,6 +830,7 @@ def main() -> int:
         num_layers=max(1, _safe_int(model_cfg.get("num_layers"), 3)),
         dropout=max(0.0, min(0.8, _safe_float(model_cfg.get("dropout"), 0.1))),
         output_dim=len(action_space),
+        architecture=architecture,
     ).to(device)
     optimizer = optim.AdamW(
         model.parameters(),
@@ -654,6 +842,53 @@ def main() -> int:
         if class_weights
         else None
     )
+    posture_class_weights = None
+    passive_class_weights = None
+    aggressive_class_weights = None
+    hierarchical_mappings = _hierarchical_mappings(action_to_index)
+    if architecture == "hierarchical":
+        posture_targets_train, passive_mask_train, aggressive_mask_train, passive_local_train, aggressive_local_train = _hierarchical_targets(
+            targets=torch.tensor(train_targets, dtype=torch.long),
+            mappings=hierarchical_mappings,
+        )
+        posture_weight_values = _build_class_weights(
+            targets=posture_targets_train.tolist(),
+            num_classes=2,
+            mode=class_weighting_mode,
+            cap=class_weight_cap,
+        )
+        passive_weight_values = _build_class_weights(
+            targets=passive_local_train[passive_mask_train].tolist(),
+            num_classes=len(PASSIVE_ACTIONS),
+            mode=class_weighting_mode,
+            cap=class_weight_cap,
+        )
+        aggressive_weight_values = _build_class_weights(
+            targets=aggressive_local_train[aggressive_mask_train].tolist(),
+            num_classes=len(AGGRESSIVE_ACTIONS),
+            mode=class_weighting_mode,
+            cap=class_weight_cap,
+        )
+        posture_class_weights = (
+            torch.tensor(posture_weight_values, dtype=torch.float32, device=device)
+            if posture_weight_values
+            else None
+        )
+        passive_class_weights = (
+            torch.tensor(passive_weight_values, dtype=torch.float32, device=device)
+            if passive_weight_values
+            else None
+        )
+        aggressive_class_weights = (
+            torch.tensor(aggressive_weight_values, dtype=torch.float32, device=device)
+            if aggressive_weight_values
+            else None
+        )
+        summary["hierarchical_class_weights"] = {
+            "posture": posture_weight_values or [],
+            "passive": passive_weight_values or [],
+            "aggressive": aggressive_weight_values or [],
+        }
     epochs = max(1, _safe_int(train_cfg.get("epochs"), 30))
     clip_norm = max(0.0, _safe_float(train_cfg.get("gradient_clip_norm"), 1.0))
 
@@ -668,19 +903,43 @@ def main() -> int:
             dist = dist.to(device)
             legal_mask = legal_mask.to(device)
             optimizer.zero_grad(set_to_none=True)
-            logits = _apply_legal_action_mask(model(x), legal_mask)
-            if target_mode == "distribution":
-                log_probs = torch.log_softmax(logits, dim=1)
-                loss = _weighted_kl_divergence(log_probs, dist, class_weight_tensor)
-            else:
-                loss = _scalar_loss(
-                    logits=logits,
+            outputs = model(x)
+            if architecture == "hierarchical":
+                posture_targets, passive_rows, aggressive_rows, passive_targets, aggressive_targets = _hierarchical_targets(
                     targets=y,
-                    legal_mask=legal_mask,
-                    action_to_index=action_to_index,
-                    class_weight_tensor=class_weight_tensor,
-                    passive_subset_weighting=passive_subset_weighting,
+                    mappings=hierarchical_mappings,
                 )
+                posture_mask, passive_mask, aggressive_mask = _hierarchical_legal_masks(legal_mask, hierarchical_mappings)
+                posture_logits = _apply_legal_action_mask(outputs["posture"], posture_mask)
+                passive_logits = _apply_legal_action_mask(outputs["passive"], passive_mask)
+                aggressive_logits = _apply_legal_action_mask(outputs["aggressive"], aggressive_mask)
+                loss = _weighted_ce_loss(posture_logits, posture_targets, posture_class_weights)
+                if passive_rows.any():
+                    loss = loss + _weighted_ce_loss(
+                        passive_logits[passive_rows],
+                        passive_targets[passive_rows],
+                        passive_class_weights,
+                    )
+                if aggressive_rows.any():
+                    loss = loss + _weighted_ce_loss(
+                        aggressive_logits[aggressive_rows],
+                        aggressive_targets[aggressive_rows],
+                        aggressive_class_weights,
+                    )
+            else:
+                logits = _apply_legal_action_mask(outputs, legal_mask)
+                if target_mode == "distribution":
+                    log_probs = torch.log_softmax(logits, dim=1)
+                    loss = _weighted_kl_divergence(log_probs, dist, class_weight_tensor)
+                else:
+                    loss = _scalar_loss(
+                        logits=logits,
+                        targets=y,
+                        legal_mask=legal_mask,
+                        action_to_index=action_to_index,
+                        class_weight_tensor=class_weight_tensor,
+                        passive_subset_weighting=passive_subset_weighting,
+                    )
             loss.backward()
             if clip_norm > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
@@ -688,8 +947,8 @@ def main() -> int:
             epoch_loss += float(loss.item())
             batches += 1
         train_loss = epoch_loss / max(1, batches)
-        train_acc = _accuracy(model, train_loader, device)
-        val_acc = _accuracy(model, val_loader, device) if val_loader else 0.0
+        train_acc = _accuracy(model, train_loader, device, action_space, action_to_index, architecture)
+        val_acc = _accuracy(model, val_loader, device, action_space, action_to_index, architecture) if val_loader else 0.0
         history.append(
             {
                 "epoch": epoch,
@@ -715,6 +974,7 @@ def main() -> int:
             "feature_schema_version": FEATURE_SCHEMA_VERSION,
             "feature_contract_hash": FEATURE_CONTRACT_HASH,
             "target_mode": target_mode,
+            "architecture": architecture,
             "history": history,
         },
         ckpt_path,
@@ -729,8 +989,8 @@ def main() -> int:
             "final_val_acc": history[-1]["val_acc"] if history else 0.0,
         }
     )
-    train_metrics = _collect_class_metrics(model, train_loader, device, action_space)
-    val_metrics = _collect_class_metrics(model, val_loader, device, action_space) if val_loader else None
+    train_metrics = _collect_class_metrics(model, train_loader, device, action_space, action_to_index, architecture)
+    val_metrics = _collect_class_metrics(model, val_loader, device, action_space, action_to_index, architecture) if val_loader else None
     summary.update(
         {
             "train_per_class": train_metrics["per_class"],
