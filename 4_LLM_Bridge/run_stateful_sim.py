@@ -168,6 +168,9 @@ def _build_engine_spot(
         "compress_strategy": bool(scenario["compress_strategy"]),
         "bet_sizing": scenario["bet_sizing"],
         "active_node_path": active_node_path,
+        "meta": {
+            "hero_cards": list(hero_cards),
+        },
     }
 
 
