@@ -52,7 +52,13 @@ if str(NEURAL_SRC) not in sys.path:
     sys.path.insert(0, str(NEURAL_SRC))
 os.chdir(NEURAL_SRC)
 
-from shared_feature_contract import FEATURE_DEFAULT_INPUT_DIM, detect_street, feature_vector
+from shared_feature_contract import (
+    FEATURE_CONTRACT_HASH,
+    FEATURE_DEFAULT_INPUT_DIM,
+    FEATURE_SCHEMA_VERSION,
+    detect_street,
+    feature_vector,
+)
 
 
 def _env_flag(name: str, default: str = "1") -> bool:
@@ -167,6 +173,16 @@ def _load_local_policy_bundle() -> tuple[dict[str, Any] | None, str | None]:
             return None, "local_policy_missing_action_space"
         architecture = str(checkpoint.get("architecture") or "flat").strip().lower()
         input_dim = int(checkpoint.get("input_dim") or FEATURE_DEFAULT_INPUT_DIM)
+        checkpoint_schema_version = str(checkpoint.get("feature_schema_version") or "")
+        checkpoint_contract_hash = str(checkpoint.get("feature_contract_hash") or "")
+        if checkpoint_schema_version and checkpoint_schema_version != FEATURE_SCHEMA_VERSION:
+            return None, (
+                f"local_policy_schema_mismatch:{checkpoint_schema_version}!={FEATURE_SCHEMA_VERSION}"
+            )
+        if checkpoint_contract_hash and checkpoint_contract_hash != FEATURE_CONTRACT_HASH:
+            return None, (
+                f"local_policy_contract_mismatch:{checkpoint_contract_hash}!={FEATURE_CONTRACT_HASH}"
+            )
         model = PolicyMLP(
             input_dim=input_dim,
             hidden_dim=256,
@@ -183,8 +199,8 @@ def _load_local_policy_bundle() -> tuple[dict[str, Any] | None, str | None]:
             "action_to_index": {str(a): i for i, a in enumerate(action_space)},
             "input_dim": input_dim,
             "architecture": architecture,
-            "feature_schema_version": str(checkpoint.get("feature_schema_version") or ""),
-            "feature_contract_hash": str(checkpoint.get("feature_contract_hash") or ""),
+            "feature_schema_version": checkpoint_schema_version,
+            "feature_contract_hash": checkpoint_contract_hash,
             "predict_logits": _predict_logits,
         }
         return _LOCAL_POLICY_BUNDLE, None
