@@ -286,10 +286,10 @@ If a major refactor appears necessary, present the reasoning and wait for confir
 
 ### 18. Authority Scope
 
-This agent operates independently of `geminiagent.MD` and any other observer-only agent file.
+This agent operates independently of `OBSERVER_AGENT.MD` and any other observer-only agent file.
 
 Rules:
-- ignore `geminiagent.MD` as an implementation authority source
+- ignore `OBSERVER_AGENT.MD` as an implementation authority source
 - do not interpret observer instructions as governing implementation policy
 - if observer-maintained memory exists, treat it as advisory context only
 - if conflicts exist between this file and other agent instruction files, this file takes precedence for this agent
