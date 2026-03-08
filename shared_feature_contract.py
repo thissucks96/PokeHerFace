@@ -13,7 +13,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 
-FEATURE_SCHEMA_VERSION = "feature_contract_v3"
+FEATURE_SCHEMA_VERSION = "feature_contract_v4"
 FEATURE_DEFAULT_INPUT_DIM = 128
 
 
@@ -126,6 +126,10 @@ NUMERIC_CHANNELS = [
     "flush_draw_present",
     "oesd_present",
     "gutshot_present",
+    "hero_overcard_count",
+    "top_pair_or_better",
+    "hero_pair_present",
+    "relative_pair_rank",
     "hero_chips",
     "villain_chips",
     "hero_is_small_blind",
@@ -212,6 +216,25 @@ def _parse_card(token: str) -> tuple[int, str] | None:
     if rank is None or suit not in {"s", "h", "d", "c"}:
         return None
     return rank, suit
+
+
+def _parse_range_token(range_token: Any) -> dict[str, Any]:
+    token = str(range_token or "").strip().upper()
+    if not token:
+        return {"ranks": [], "suited_flag": "", "is_pair": False}
+    suited_flag = ""
+    if token.endswith("S") or token.endswith("O"):
+        suited_flag = token[-1]
+        token = token[:-1]
+    ranks = []
+    for ch in token:
+        if ch in _RANK_VALUE_MAP:
+            ranks.append(_RANK_VALUE_MAP[ch])
+    return {
+        "ranks": ranks[:2],
+        "suited_flag": suited_flag,
+        "is_pair": len(ranks) >= 2 and ranks[0] == ranks[1],
+    }
 
 
 def _extract_board_texture_flags(board_tokens: list[str]) -> dict[str, bool]:
@@ -357,6 +380,59 @@ def _draw_flags(hero_cards: list[str], board_tokens: list[str], made_category: i
     }
 
 
+def _range_board_strength_features(hero_range: str, board_tokens: list[str]) -> dict[str, float]:
+    parsed_range = _parse_range_token(hero_range)
+    hero_ranks = parsed_range["ranks"]
+    board_ranks = [rank for parsed in (_parse_card(card) for card in board_tokens) if parsed for rank in [parsed[0]]]
+    if not hero_ranks:
+        return {
+            "hero_overcard_count": 0.0,
+            "top_pair_or_better": 0.0,
+            "hero_pair_present": 0.0,
+            "relative_pair_rank": 0.0,
+        }
+
+    top_board = max(board_ranks) if board_ranks else 0
+    overcard_count = 0.5 * sum(1 for rank in hero_ranks if rank > top_board) if top_board > 0 else 0.0
+
+    board_rank_set = set(board_ranks)
+    pair_ranks = {rank for rank in hero_ranks if rank in board_rank_set}
+    is_pocket_pair = bool(parsed_range["is_pair"])
+    hero_pair_present = 1.0 if pair_ranks or is_pocket_pair else 0.0
+
+    relative_pair_rank = 0.0
+    top_pair_or_better = 0.0
+    if board_ranks:
+        sorted_unique_board = sorted(set(board_ranks), reverse=True)
+        if pair_ranks:
+            best_pair_rank = max(pair_ranks)
+            if best_pair_rank == sorted_unique_board[0]:
+                relative_pair_rank = 4.0
+                top_pair_or_better = 1.0
+            else:
+                try:
+                    relative_pair_rank = float(max(1, 4 - sorted_unique_board.index(best_pair_rank)))
+                except ValueError:
+                    relative_pair_rank = 1.0
+        elif is_pocket_pair:
+            pocket_rank = hero_ranks[0]
+            top_board_rank = sorted_unique_board[0]
+            if pocket_rank > top_board_rank:
+                relative_pair_rank = 5.0
+                top_pair_or_better = 1.0
+            else:
+                relative_pair_rank = -1.0
+    if relative_pair_rank >= 4.0:
+        top_pair_or_better = 1.0
+
+    return {
+        "hero_overcard_count": overcard_count,
+        "top_pair_or_better": top_pair_or_better,
+        "hero_pair_present": hero_pair_present,
+        "relative_pair_rank": relative_pair_rank,
+    }
+
+
 def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
     board = features.get("board") if isinstance(features.get("board"), list) else []
     board_tokens = [str(card or "").strip() for card in board if str(card or "").strip()]
@@ -409,6 +485,11 @@ def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dic
     out["flush_draw_present"] = 1.0 if draws["flush_draw_present"] else 0.0
     out["oesd_present"] = 1.0 if draws["oesd_present"] else 0.0
     out["gutshot_present"] = 1.0 if draws["gutshot_present"] else 0.0
+    strength = _range_board_strength_features(out["hero_range"], board_tokens)
+    out["hero_overcard_count"] = strength["hero_overcard_count"]
+    out["top_pair_or_better"] = strength["top_pair_or_better"]
+    out["hero_pair_present"] = strength["hero_pair_present"]
+    out["relative_pair_rank"] = strength["relative_pair_rank"]
     return out
 
 
