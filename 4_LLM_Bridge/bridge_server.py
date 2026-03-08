@@ -1508,6 +1508,7 @@ def _build_neural_shadow_summary(
     neural_root_count = 0
     neural_adapter = ""
     neural_surrogate = False
+    selected_action_in_allowed = False
     if isinstance(payload, dict):
         neural_choice = _normalize_action_token(str(payload.get("chosen_action", "")).strip().lower())
         neural_actions = _normalize_action_summary_tokens(payload.get("root_actions", []))
@@ -1518,8 +1519,15 @@ def _build_neural_shadow_summary(
         if isinstance(meta, dict):
             neural_adapter = str(meta.get("adapter") or "")
             neural_surrogate = bool(meta.get("surrogate", False))
+    normalized_allowed = [_normalize_action_token(token) for token in allowed_actions_in]
+    normalized_allowed = [token for token in normalized_allowed if token]
+    if selected_action:
+        selected_action_in_allowed = (
+            selected_action in normalized_allowed
+            or (selected_action.startswith("raise") and any(token.startswith("raise") for token in normalized_allowed))
+        )
     agree: Optional[bool] = None
-    if neural_choice and selected_action:
+    if neural_choice and selected_action and selected_action_in_allowed:
         if neural_choice == selected_action:
             agree = True
         else:
@@ -1536,6 +1544,7 @@ def _build_neural_shadow_summary(
         "timeout_sec": int(max(0, timeout_sec)),
         "error": error,
         "selected_action": selected_action,
+        "selected_action_in_allowed": selected_action_in_allowed,
         "neural_chosen_action": neural_choice,
         "agrees_with_selected": agree,
         "allowed_actions_in": list(allowed_actions_in),

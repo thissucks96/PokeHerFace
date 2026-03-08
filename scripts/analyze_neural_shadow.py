@@ -31,6 +31,34 @@ def _safe_bool(value: Any) -> bool:
     return False
 
 
+def _normalize_action_token(raw: Any) -> str:
+    token = str(raw or "").strip().lower()
+    if not token:
+        return ""
+    if token.startswith("bet:"):
+        suffix = token.split(":", 1)[1]
+        return f"raise:{suffix}" if suffix else "raise"
+    if token.startswith("raise:"):
+        suffix = token.split(":", 1)[1]
+        return f"raise:{suffix}" if suffix else "raise"
+    if token.startswith("bet"):
+        return "raise"
+    return token
+
+
+def _selected_action_comparable(selected_action: str, allowed_actions: list[str]) -> bool:
+    selected = _normalize_action_token(selected_action)
+    if not selected:
+        return False
+    normalized_allowed = [_normalize_action_token(token) for token in allowed_actions]
+    normalized_allowed = [token for token in normalized_allowed if token]
+    if selected in normalized_allowed:
+        return True
+    if selected.startswith("raise") and any(token.startswith("raise") for token in normalized_allowed):
+        return True
+    return False
+
+
 def _detect_street(board: Any) -> str:
     if not isinstance(board, list):
         return "unknown"
@@ -113,6 +141,12 @@ def build_report(
             "neural_elapsed_sec": _safe_float(neural.get("elapsed_sec") or metrics.get("neural_time_sec"), 0.0),
             "neural_error": str(neural.get("error") or metrics.get("neural_error") or ""),
             "selected_action": str(neural.get("selected_action") or ""),
+            "selected_action_in_allowed": _safe_bool(neural.get("selected_action_in_allowed"))
+            if "selected_action_in_allowed" in neural
+            else _selected_action_comparable(
+                str(neural.get("selected_action") or ""),
+                payload.get("allowed_root_actions") if isinstance(payload.get("allowed_root_actions"), list) else [],
+            ),
             "neural_chosen_action": str(neural.get("neural_chosen_action") or ""),
             "agrees_with_selected": neural.get("agrees_with_selected"),
             "neural_adapter": str(neural.get("neural_adapter") or ""),
@@ -122,7 +156,11 @@ def build_report(
 
     rows.sort(key=lambda r: r["bridge_total_sec"], reverse=True)
 
-    agree_rows = [r for r in rows if isinstance(r.get("agrees_with_selected"), bool)]
+    agree_rows = [
+        r
+        for r in rows
+        if bool(r.get("selected_action_in_allowed")) and isinstance(r.get("agrees_with_selected"), bool)
+    ]
     agree_true = sum(1 for r in agree_rows if bool(r["agrees_with_selected"]))
     agree_rate = (agree_true / len(agree_rows)) if agree_rows else None
     attempted_rows = [r for r in rows if r["neural_attempted"]]
@@ -139,7 +177,11 @@ def build_report(
         grouped_street[row["street"]].append(row)
 
     for key, group in grouped_profile.items():
-        agree_subset = [r for r in group if isinstance(r.get("agrees_with_selected"), bool)]
+        agree_subset = [
+            r
+            for r in group
+            if bool(r.get("selected_action_in_allowed")) and isinstance(r.get("agrees_with_selected"), bool)
+        ]
         by_profile[key] = {
             "count": len(group),
             "attempted": sum(1 for r in group if r["neural_attempted"]),
@@ -156,7 +198,11 @@ def build_report(
         }
 
     for key, group in grouped_street.items():
-        agree_subset = [r for r in group if isinstance(r.get("agrees_with_selected"), bool)]
+        agree_subset = [
+            r
+            for r in group
+            if bool(r.get("selected_action_in_allowed")) and isinstance(r.get("agrees_with_selected"), bool)
+        ]
         by_street[key] = {
             "count": len(group),
             "attempted": sum(1 for r in group if r["neural_attempted"]),
@@ -189,7 +235,7 @@ def build_report(
 
     disagreement_counter = Counter()
     for row in rows:
-        if row.get("agrees_with_selected") is False:
+        if bool(row.get("selected_action_in_allowed")) and row.get("agrees_with_selected") is False:
             key = f"{row.get('selected_action') or '?'} -> {row.get('neural_chosen_action') or '?'}"
             disagreement_counter[key] += 1
 
@@ -203,6 +249,7 @@ def build_report(
             "neural_applied": len(applied_rows),
             "agree_rows": len(agree_rows),
             "agree_rate": agree_rate,
+            "invalid_comparison_rows": sum(1 for r in rows if not bool(r.get("selected_action_in_allowed"))),
             "neural_elapsed_p50_sec": _quantile([r["neural_elapsed_sec"] for r in rows], 0.5),
             "neural_elapsed_p95_sec": _quantile([r["neural_elapsed_sec"] for r in rows], 0.95),
             "bridge_total_p95_sec": _quantile([r["bridge_total_sec"] for r in rows], 0.95),
@@ -219,7 +266,9 @@ def build_report(
     csv_path = output_dir / f"neural_shadow_disagreements_{timestamp}.csv"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    disagreement_rows = [r for r in rows if r.get("agrees_with_selected") is False]
+    disagreement_rows = [
+        r for r in rows if bool(r.get("selected_action_in_allowed")) and r.get("agrees_with_selected") is False
+    ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
