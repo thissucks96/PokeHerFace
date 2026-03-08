@@ -124,6 +124,41 @@ def _extract_effective_facing_bet(meta: dict[str, Any], effective_spot: dict[str
     return _safe_int(_extract_last_bet_amount_from_active_node_path(active), 0)
 
 
+def _effective_stack_under_pressure(features: dict[str, Any]) -> float:
+    hero_chips = _safe_float(features.get("hero_chips"), 0.0)
+    villain_chips = _safe_float(features.get("villain_chips"), 0.0)
+    if hero_chips > 0.0 and villain_chips > 0.0:
+        return min(hero_chips, villain_chips)
+
+    starting_stack = _safe_float(features.get("starting_stack"), 0.0)
+    hero_commit = _safe_float(features.get("hero_street_commit"), 0.0)
+    villain_commit = _safe_float(features.get("villain_street_commit"), 0.0)
+    if starting_stack > 0.0:
+        return min(
+            max(0.0, starting_stack - hero_commit),
+            max(0.0, starting_stack - villain_commit),
+        )
+    return 0.0
+
+
+def _pot_odds(features: dict[str, Any]) -> float:
+    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
+    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
+    denom = current_pot + facing_bet
+    if facing_bet <= 0.0 or denom <= 0.0:
+        return 0.0
+    return facing_bet / denom
+
+
+def _spr_under_pressure(features: dict[str, Any]) -> float:
+    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
+    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
+    denom = current_pot + facing_bet
+    if denom <= 0.0:
+        return 0.0
+    return _effective_stack_under_pressure(features) / denom
+
+
 def _iter_response_paths(response_dir: Path, max_files: int) -> list[Path]:
     paths = sorted(response_dir.glob("*_response_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if max_files > 0:
@@ -294,6 +329,8 @@ def _build_row(stage: str, payload: dict[str, Any], response: dict[str, Any], re
         "hero_cards": meta.get("hero_cards") if isinstance(meta.get("hero_cards"), list) else [],
         "engine_input_applied": bool(engine_input),
     }
+    features["pot_odds"] = _pot_odds(features)
+    features["spr_under_pressure"] = _spr_under_pressure(features)
     target = {
         "selected_action": chosen_action,
         "selected_amount": chosen_amount,

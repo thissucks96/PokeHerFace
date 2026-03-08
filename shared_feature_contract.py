@@ -13,7 +13,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 
-FEATURE_SCHEMA_VERSION = "feature_contract_v1"
+FEATURE_SCHEMA_VERSION = "feature_contract_v2"
 FEATURE_DEFAULT_INPUT_DIM = 128
 
 
@@ -68,6 +68,40 @@ def detect_street(board: Any) -> str:
     return f"partial_{size}"
 
 
+def _effective_stack_under_pressure(features: Dict[str, Any]) -> float:
+    hero_chips = _safe_float(features.get("hero_chips"), 0.0)
+    villain_chips = _safe_float(features.get("villain_chips"), 0.0)
+    if hero_chips > 0.0 and villain_chips > 0.0:
+        return min(hero_chips, villain_chips)
+
+    starting_stack = _safe_float(features.get("starting_stack"), 0.0)
+    hero_commit = _safe_float(features.get("hero_street_commit"), 0.0)
+    villain_commit = _safe_float(features.get("villain_street_commit"), 0.0)
+    if starting_stack > 0.0:
+        hero_remaining = max(0.0, starting_stack - hero_commit)
+        villain_remaining = max(0.0, starting_stack - villain_commit)
+        return min(hero_remaining, villain_remaining)
+    return 0.0
+
+
+def _pot_odds(features: Dict[str, Any]) -> float:
+    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
+    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
+    denom = current_pot + facing_bet
+    if facing_bet <= 0.0 or denom <= 0.0:
+        return 0.0
+    return facing_bet / denom
+
+
+def _spr_under_pressure(features: Dict[str, Any]) -> float:
+    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
+    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
+    denom = current_pot + facing_bet
+    if denom <= 0.0:
+        return 0.0
+    return _effective_stack_under_pressure(features) / denom
+
+
 NUMERIC_CHANNELS = [
     "starting_stack",
     "starting_pot",
@@ -81,6 +115,8 @@ NUMERIC_CHANNELS = [
     "hero_street_commit",
     "villain_street_commit",
     "current_pot",
+    "pot_odds",
+    "spr_under_pressure",
     "hero_chips",
     "villain_chips",
     "hero_is_small_blind",
@@ -137,7 +173,7 @@ def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dic
         street = detect_street(board_tokens)
         source["street"] = street
 
-    return {
+    out = {
         "hero_range": str(features.get("hero_range") or "").strip(),
         "villain_range": str(features.get("villain_range") or "").strip(),
         "board": board_tokens,
@@ -164,6 +200,9 @@ def _normalize_features(features: Dict[str, Any], source: Dict[str, Any]) -> Dic
         "hero_cards": hero_tokens,
         "street": street,
     }
+    out["pot_odds"] = _pot_odds(out)
+    out["spr_under_pressure"] = _spr_under_pressure(out)
+    return out
 
 
 def validate_feature_inputs(source: Dict[str, Any], features: Dict[str, Any]) -> Dict[str, Any]:
@@ -236,6 +275,8 @@ def _numeric_values(source: Dict[str, Any], features: Dict[str, Any]) -> List[fl
         _safe_float(features.get("hero_street_commit"), 0.0),
         _safe_float(features.get("villain_street_commit"), 0.0),
         _safe_float(features.get("current_pot"), 0.0),
+        _safe_float(features.get("pot_odds"), 0.0),
+        _safe_float(features.get("spr_under_pressure"), 0.0),
         _safe_float(features.get("hero_chips"), 0.0),
         _safe_float(features.get("villain_chips"), 0.0),
         1.0 if bool(features.get("hero_is_small_blind", True)) else 0.0,

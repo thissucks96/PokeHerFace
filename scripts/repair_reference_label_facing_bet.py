@@ -50,6 +50,41 @@ def _extract_last_bet_amount_from_active_node_path(active_node_path: str) -> int
     return None
 
 
+def _effective_stack_under_pressure(features: dict[str, Any]) -> float:
+    hero_chips = _safe_float(features.get("hero_chips"), 0.0)
+    villain_chips = _safe_float(features.get("villain_chips"), 0.0)
+    if hero_chips > 0.0 and villain_chips > 0.0:
+        return min(hero_chips, villain_chips)
+
+    starting_stack = _safe_float(features.get("starting_stack"), 0.0)
+    hero_commit = _safe_float(features.get("hero_street_commit"), 0.0)
+    villain_commit = _safe_float(features.get("villain_street_commit"), 0.0)
+    if starting_stack > 0.0:
+        return min(
+            max(0.0, starting_stack - hero_commit),
+            max(0.0, starting_stack - villain_commit),
+        )
+    return 0.0
+
+
+def _pot_odds(features: dict[str, Any]) -> float:
+    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
+    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
+    denom = current_pot + facing_bet
+    if facing_bet <= 0.0 or denom <= 0.0:
+        return 0.0
+    return facing_bet / denom
+
+
+def _spr_under_pressure(features: dict[str, Any]) -> float:
+    facing_bet = max(0.0, _safe_float(features.get("facing_bet"), 0.0))
+    current_pot = max(0.0, _safe_float(features.get("current_pot", features.get("starting_pot")), 0.0))
+    denom = current_pot + facing_bet
+    if denom <= 0.0:
+        return 0.0
+    return _effective_stack_under_pressure(features) / denom
+
+
 def _repair_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     source_row = row.get("source_row") if isinstance(row.get("source_row"), dict) else None
     if not source_row:
@@ -59,28 +94,37 @@ def _repair_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     if not features:
         return row, False
 
+    changed = False
     current_facing = _safe_int(features.get("facing_bet"), 0)
-    if current_facing > 0:
-        return row, False
+    if current_facing <= 0:
+        active = str(features.get("active_node_path") or "").strip()
+        derived = _safe_int(_extract_last_bet_amount_from_active_node_path(active), 0)
+        if derived > 0:
+            features["facing_bet"] = derived
+            changed = True
 
-    active = str(features.get("active_node_path") or "").strip()
-    derived = _safe_int(_extract_last_bet_amount_from_active_node_path(active), 0)
-    if derived <= 0:
-        return row, False
+    expected_pot_odds = _pot_odds(features)
+    if abs(_safe_float(features.get("pot_odds"), -1.0) - expected_pot_odds) > 1e-9:
+        features["pot_odds"] = expected_pot_odds
+        changed = True
 
-    features["facing_bet"] = derived
+    expected_spr = _spr_under_pressure(features)
+    if abs(_safe_float(features.get("spr_under_pressure"), -1.0) - expected_spr) > 1e-9:
+        features["spr_under_pressure"] = expected_spr
+        changed = True
+
+    if not changed:
+        current_contract = row.get("feature_contract") if isinstance(row.get("feature_contract"), dict) else {}
+        source_contract = source_row.get("feature_contract") if isinstance(source_row.get("feature_contract"), dict) else {}
+        expected = feature_contract_metadata(source=source, features=features, input_dim=FEATURE_DEFAULT_INPUT_DIM)
+        if current_contract == expected and source_contract == expected:
+            return row, False
+
     source_row["features"] = features
-    source_row["feature_contract"] = feature_contract_metadata(
-        source=source,
-        features=features,
-        input_dim=FEATURE_DEFAULT_INPUT_DIM,
-    )
+    refreshed_contract = feature_contract_metadata(source=source, features=features, input_dim=FEATURE_DEFAULT_INPUT_DIM)
+    source_row["feature_contract"] = refreshed_contract
     row["source_row"] = source_row
-    row["feature_contract"] = feature_contract_metadata(
-        source=source,
-        features=features,
-        input_dim=FEATURE_DEFAULT_INPUT_DIM,
-    )
+    row["feature_contract"] = refreshed_contract
     return row, True
 
 
